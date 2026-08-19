@@ -152,14 +152,13 @@ fun MenuScreen(
                 scrollView.addView(container)
                 scrollView.tag = holder
 
-                // 物理表冠旋转与滚轮支持：更舒适的步进灵敏度与振感反馈
+                // 物理表冠旋转与滚轮支持：精准 60px 步进与原厂触觉齿轮振感
                 scrollView.setOnGenericMotionListener { v, event ->
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
                         val delta = CrownScrollHelper.extractCrownDelta(event)
                         if (abs(delta) > 0.001f) {
-                            // 提升表冠在菜单页的滚动响应度（每次步进 60dp，让切换菜单项目更敏捷）
-                            val stepPixels = (delta * 60 * density).toInt()
-                            scrollView.smoothScrollBy(0, stepPixels)
+                            val stepPixels = (delta * 60f).toInt()
+                            scrollView.scrollBy(0, stepPixels)
                             RotaryHapticManager.performScrollTick(ctx, v)
                             return@setOnGenericMotionListener true
                         }

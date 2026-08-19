@@ -292,8 +292,8 @@ fun BookshelfScreen(
                 if (CrownScrollHelper.isCrownScrollEvent(event)) {
                     val delta = CrownScrollHelper.extractCrownDelta(event)
                     if (kotlin.math.abs(delta) > 0.001f) {
-                        val stepPixels = (delta * 60 * density).toInt()
-                        scrollView.smoothScrollBy(0, stepPixels)
+                        val stepPixels = (delta * 60f).toInt()
+                        scrollView.scrollBy(0, stepPixels)
                         RotaryHapticManager.performScrollTick(context, v)
                         return@setOnGenericMotionListener true
                     }

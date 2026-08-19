@@ -89,8 +89,8 @@ fun ChapterListScreen(
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
                         val delta = CrownScrollHelper.extractCrownDelta(event)
                         if (kotlin.math.abs(delta) > 0.001f) {
-                            val stepPixels = (delta * 60 * density).toInt()
-                            listView.smoothScrollBy(stepPixels, 0)
+                            val stepPixels = (delta * 60f).toInt()
+                            listView.scrollListBy(stepPixels)
                             RotaryHapticManager.performScrollTick(context, v)
                             return@setOnGenericMotionListener true
                         }
