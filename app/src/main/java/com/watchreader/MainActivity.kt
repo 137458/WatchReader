@@ -151,9 +151,17 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 顶层分发事件：优先让原生 View 树（ScrollView / ListView）原生处理表冠转动与物理减速
+     * 顶层分发事件：优先处理 RSVP / 全局表冠转动，再分发给原生 View 树（ScrollView / ListView）
      */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (CrownScrollHelper.isCrownScrollEvent(event)) {
+            val delta = CrownScrollHelper.extractCrownDelta(event)
+            if (abs(delta) > 0.001f) {
+                if (viewModel.handleRotaryScroll(delta)) {
+                    return true
+                }
+            }
+        }
         if (super.dispatchGenericMotionEvent(event)) {
             return true
         }
@@ -286,21 +294,6 @@ class MainActivity : ComponentActivity() {
                 onBack = { viewModel.closeWifiTransfer() }
             )
         }
-    }
-
-    /**
-     * 响应硬件物理表冠滚动事件
-     */
-    override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
-        if (event != null && CrownScrollHelper.isCrownScrollEvent(event)) {
-            val delta = CrownScrollHelper.extractCrownDelta(event)
-            if (abs(delta) > 0.001f) {
-                if (viewModel.handleRotaryScroll(delta)) {
-                    return true
-                }
-            }
-        }
-        return super.onGenericMotionEvent(event)
     }
 }
 
