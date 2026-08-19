@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.abs
 
 /**
  * 菜单视图节点持有器（永久节点复用池，零 View 分配与销毁）
@@ -115,7 +116,12 @@ fun MenuScreen(
                 val padTop = (44 * density).toInt()   // 避让顶部弧形标题
                 val padBottom = (52 * density).toInt()// 避让底部弧边
 
-                val scrollView = ScrollView(ctx).apply {
+                val scrollView = object : ScrollView(ctx) {
+                    override fun fling(velocityY: Int) {
+                        // 提升惯性滑动灵敏度（1.35x 速度放大，让滑动更轻快灵敏）
+                        super.fling((velocityY * 1.35f).toInt())
+                    }
+                }.apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
@@ -146,10 +152,17 @@ fun MenuScreen(
                 scrollView.addView(container)
                 scrollView.tag = holder
 
-                // 原生物理表冠旋转监听（附带触觉齿轮微振，直接由原生 ScrollView 满帧驱动）
+                // 物理表冠旋转与滚轮支持：更舒适的步进灵敏度与振感反馈
                 scrollView.setOnGenericMotionListener { v, event ->
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
-                        RotaryHapticManager.performScrollTick(ctx, v)
+                        val delta = CrownScrollHelper.extractCrownDelta(event)
+                        if (abs(delta) > 0.001f) {
+                            // 提升表冠在菜单页的滚动响应度（每次步进 60dp，让切换菜单项目更敏捷）
+                            val stepPixels = (delta * 60 * density).toInt()
+                            scrollView.smoothScrollBy(0, stepPixels)
+                            RotaryHapticManager.performScrollTick(ctx, v)
+                            return@setOnGenericMotionListener true
+                        }
                     }
                     false
                 }

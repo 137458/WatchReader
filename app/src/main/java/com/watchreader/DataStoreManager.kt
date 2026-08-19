@@ -212,7 +212,7 @@ object DataStoreManager {
         charOffset: Int,
         totalChars: Int = 0,
         chapterTitle: String = ""
-    ) {
+    ): List<BookItem> {
         val uriStr = uri.toString()
         val currentList = loadBookShelf(context).toMutableList()
         val existingIdx = currentList.indexOfFirst { it.uriString == uriStr }
@@ -236,6 +236,7 @@ object DataStoreManager {
         }
 
         saveBookShelfList(context, currentList)
+        return currentList
     }
 
     suspend fun removeBookFromShelf(context: Context, uriString: String) {

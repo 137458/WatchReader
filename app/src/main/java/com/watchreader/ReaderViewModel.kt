@@ -216,10 +216,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 // 异步预热相邻章节
                 prefetchAdjacentChapters(text, chapters, chapterIndex)
 
-                withContext(Dispatchers.IO) {
+                val updatedShelf = withContext(Dispatchers.IO) {
                     DataStoreManager.updateBookInShelf(appCtx, uri, safeOffset, fullLen, chapterTitle)
                 }
-                val updatedShelf = withContext(Dispatchers.IO) { DataStoreManager.loadBookShelf(appCtx) }
 
                 _uiState.update {
                     it.copy(

@@ -269,7 +269,11 @@ fun BookshelfScreen(
             val padTop = (38 * density).toInt()
             val padBottom = (42 * density).toInt()
 
-            val scrollView = ScrollView(context).apply {
+            val scrollView = object : ScrollView(context) {
+                override fun fling(velocityY: Int) {
+                    super.fling((velocityY * 1.35f).toInt())
+                }
+            }.apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
@@ -281,6 +285,20 @@ fun BookshelfScreen(
                 setPadding(padH, padTop, padH, padBottom)
                 clipToPadding = false
                 overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            }
+
+            // 支持表冠在书架界面的灵敏滚动与振感
+            scrollView.setOnGenericMotionListener { v, event ->
+                if (CrownScrollHelper.isCrownScrollEvent(event)) {
+                    val delta = CrownScrollHelper.extractCrownDelta(event)
+                    if (kotlin.math.abs(delta) > 0.001f) {
+                        val stepPixels = (delta * 60 * density).toInt()
+                        scrollView.smoothScrollBy(0, stepPixels)
+                        RotaryHapticManager.performScrollTick(context, v)
+                        return@setOnGenericMotionListener true
+                    }
+                }
+                false
             }
 
             val container = LinearLayout(context).apply {

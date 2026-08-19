@@ -27,10 +27,12 @@ Lcom/watchreader/BookItem;
 Lcom/watchreader/Chapter;
 
 # DataStore Manager & Preferences Migration
+HSPLcom/watchreader/DataStoreManager;->loadInitialConfig(Landroid/content/Context;)Lcom/watchreader/AppInitialConfig;
 HSPLcom/watchreader/DataStoreManager;->loadBookShelf(Landroid/content/Context;)Ljava/util/List;
 HSPLcom/watchreader/DataStoreManager;->loadReadingPosition(Landroid/content/Context;)Lkotlin/Pair;
 HSPLcom/watchreader/DataStoreManager;->parseBookShelf(Ljava/lang/String;)Ljava/util/List;
 Lcom/watchreader/DataStoreManager;
+Lcom/watchreader/AppInitialConfig;
 
 # Chapter Detector & Text Processing Pipeline
 HSPLcom/watchreader/ChapterDetectorKt;->detectChapters(Ljava/lang/String;)Ljava/util/List;
