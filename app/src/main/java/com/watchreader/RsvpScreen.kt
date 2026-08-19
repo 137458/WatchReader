@@ -1,12 +1,12 @@
 package com.watchreader
 
 import android.app.Activity
-import android.os.Handler
-import android.os.Looper
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,7 +16,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -46,12 +49,11 @@ fun RsvpScreen(
     onNextChapter: () -> Unit,
     onBack: () -> Unit
 ) {
-    BackHandler {
-        onBack()
-    }
+    BackHandler(onBack = onBack)
 
     val context = LocalContext.current
     val window = (context as? Activity)?.window
+    val focusRequester = remember { FocusRequester() }
 
     // 闪读模式常亮
     DisposableEffect(Unit) {
@@ -59,6 +61,10 @@ fun RsvpScreen(
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+    }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
     }
 
     val colorScheme = MaterialTheme.colorScheme
@@ -109,36 +115,68 @@ fun RsvpScreen(
         }
     }
 
-    // 表冠旋转调速与按键拦截
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(colorScheme.background)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) {
-                isPlaying = !isPlaying
+            .focusRequester(focusRequester)
+            .focusable()
+            // 1. 表冠旋转实时调速
+            .onRotaryScrollEvent { event ->
+                val delta = event.verticalScrollPixels
+                if (abs(delta) > 1f) {
+                    val step = if (delta > 0) 25f else -25f
+                    wordsPerMinute = (wordsPerMinute + step).coerceIn(150f, 900f)
+                    RotaryHapticManager.performScrollTick(context, null)
+                    true
+                } else false
+            }
+            // 2. 右滑手势极速退出返回阅读
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures { _, dragAmount ->
+                    if (dragAmount > 25f) {
+                        onBack()
+                    }
+                }
             },
         contentAlignment = Alignment.Center
     ) {
-        // 1. 顶部圆周弧形章节标题
+        // 顶部圆周弧形章节标题
         CurvedChapterHeader(
-            title = chapterContent?.title ?: "",
+            title = chapterContent?.title ?: "闪读模式",
             modifier = Modifier.align(Alignment.TopCenter)
         )
 
-        // 2. 侧边弧形电量与时间
+        // 顶部透明点击感应区（点击顶部直接返回）
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .align(Alignment.TopCenter)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onBack
+                )
+        )
+
+        // 侧边弧形电量与时间
         CurvedSideStatusBar(
             modifier = Modifier.fillMaxSize(),
             textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
         )
 
-        // 3. 屏幕正中心 RSVP 闪读文字核心呈现区
+        // 屏幕正中心 RSVP 闪读文字呈现区（轻触中央切换暂停/播放）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 32.dp),
+                .padding(horizontal = 28.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    isPlaying = !isPlaying
+                },
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
@@ -146,10 +184,10 @@ fun RsvpScreen(
                 Text(
                     text = currentToken.text,
                     style = TextStyle(
-                        fontSize = 30.sp,
+                        fontSize = 32.sp,
                         fontWeight = FontWeight.Bold,
                         color = colorScheme.primary,
-                        letterSpacing = 1.2.sp,
+                        letterSpacing = 1.5.sp,
                         textAlign = TextAlign.Center
                     ),
                     maxLines = 1
@@ -161,7 +199,7 @@ fun RsvpScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // 进度小字
             val progressPercent = if (tokens.isNotEmpty()) {
@@ -169,26 +207,50 @@ fun RsvpScreen(
             } else 0
 
             Text(
-                text = "${currentIndex + 1} / ${tokens.size} · $progressPercent%",
+                text = "${currentIndex + 1}/${tokens.size} · $progressPercent%",
                 style = TextStyle(fontSize = 10.sp, color = colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
             )
         }
 
-        // 4. 底部播放/暂停与语速控制浮标
-        Box(
+        // 底部多功能胶囊操作栏（返回 / 暂停播放 / 调速）
+        Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 14.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(colorScheme.surfaceVariant.copy(alpha = 0.92f))
-                .clickable { isPlaying = !isPlaying }
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            contentAlignment = Alignment.Center
+                .padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = if (isPlaying) "⏸ ${wordsPerMinute.toInt()} 字/分" else "▶ 已暂停 (轻触继续)",
-                style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold, color = colorScheme.primary)
-            )
+            // 退出按钮
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
+                    .clickable { onBack() }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "‹ 退出",
+                    style = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = colorScheme.onSurfaceVariant)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(6.dp))
+
+            // 播放/暂停状态胶囊
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
+                    .clickable { isPlaying = !isPlaying }
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (isPlaying) "⏸ ${wordsPerMinute.toInt()}字/分" else "▶ 已暂停",
+                    style = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = colorScheme.primary)
+                )
+            }
         }
     }
 }

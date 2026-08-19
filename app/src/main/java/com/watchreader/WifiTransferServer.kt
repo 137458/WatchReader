@@ -22,8 +22,9 @@ import java.net.URLDecoder
  *
  * 特性：
  * 1. 0 第三方依赖：纯原生 ServerSocket 构建，包体积 0 增加。
- * 2. 现代响应式 Web UI：手机与电脑端浏览器自适应，支持多文件拖拽上传与实时进度反馈。
- * 3. 自动入库：上传完成自动校验、保存并即时录入书架。
+ * 2. 双协议支持：同时支持高速 Direct Stream 与标准 Multipart Form-Data 上传。
+ * 3. 跨平台现代 Web UI：手机与电脑端浏览器自适应，多文件拖拽上传与实时进度反馈。
+ * 4. 自动入库：上传完成自动校验、保存至私有存储并即时录入书架。
  */
 class WifiTransferServer(
     private val context: Context,
@@ -48,6 +49,24 @@ class WifiTransferServer(
      * 获取手表当前局域网 IP 地址
      */
     fun getLocalIpAddress(): String? {
+        // 1. 优先通过 WifiManager 获取当前连接的 Wi-Fi IP
+        try {
+            val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val ipInt = wifiManager?.connectionInfo?.ipAddress ?: 0
+            if (ipInt != 0) {
+                val ipStr = String.format(
+                    java.util.Locale.US,
+                    "%d.%d.%d.%d",
+                    ipInt and 0xff,
+                    ipInt shr 8 and 0xff,
+                    ipInt shr 16 and 0xff,
+                    ipInt shr 24 and 0xff
+                )
+                if (ipStr != "0.0.0.0") return ipStr
+            }
+        } catch (_: Exception) {}
+
+        // 2. 遍历网络接口枚举活跃 IPv4
         try {
             val interfaces = NetworkInterface.getNetworkInterfaces()
             while (interfaces.hasMoreElements()) {
@@ -76,6 +95,7 @@ class WifiTransferServer(
         if (isRunning) return true
         return try {
             serverSocket = ServerSocket(port)
+            serverSocket?.reuseAddress = true
             isRunning = true
             scope.launch {
                 listenForClients()
@@ -123,7 +143,6 @@ class WifiTransferServer(
             val input = BufferedInputStream(socket.getInputStream())
             val output = BufferedOutputStream(socket.getOutputStream())
 
-            // 读取 HTTP 请求行与头部
             val requestHeader = readHeader(input)
             if (requestHeader.isEmpty()) {
                 socket.close()
@@ -141,12 +160,22 @@ class WifiTransferServer(
             val method = parts[0].uppercase()
             val rawPath = parts[1]
 
-            if (method == "GET" && (rawPath == "/" || rawPath.startsWith("/?"))) {
-                serveWebPage(output)
-            } else if (method == "POST" && rawPath.startsWith("/upload")) {
-                handleFileUpload(lines, input, output)
-            } else {
-                sendResponse(output, 404, "text/plain", "Not Found")
+            when {
+                method == "GET" && (rawPath == "/" || rawPath.startsWith("/?")) -> {
+                    serveWebPage(output)
+                }
+                method == "GET" && rawPath == "/favicon.ico" -> {
+                    sendResponse(output, 204, "image/x-icon", "")
+                }
+                method == "GET" && rawPath == "/status" -> {
+                    sendResponse(output, 200, "application/json", """{"status":"ok","uploaded":${_uploadedCount.value}}""")
+                }
+                method == "POST" && rawPath.startsWith("/upload") -> {
+                    handleFileUpload(rawPath, lines, input, output)
+                }
+                else -> {
+                    sendResponse(output, 404, "text/plain", "Not Found")
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Error handling client request", e)
@@ -168,14 +197,30 @@ class WifiTransferServer(
             } else if (b != '\r'.code) {
                 consecutiveNewlines = 0
             }
-            if (baos.size() > 65536) break // 防止恶意超大头部
+            if (baos.size() > 65536) break
         }
         return baos.toString("UTF-8")
     }
 
-    private fun handleFileUpload(headers: List<String>, input: InputStream, output: OutputStream) {
+    private fun handleFileUpload(rawPath: String, headers: List<String>, input: InputStream, output: OutputStream) {
         var contentType = ""
         var contentLength = -1L
+        var queryFileName = ""
+
+        // 解析 Query 参数中的 filename (例如 /upload?filename=斗破苍穹.txt)
+        val qIdx = rawPath.indexOf('?')
+        if (qIdx >= 0 && qIdx + 1 < rawPath.length) {
+            val queryStr = rawPath.substring(qIdx + 1)
+            val params = queryStr.split("&")
+            for (p in params) {
+                val kv = p.split("=")
+                if (kv.size == 2 && kv[0].equals("filename", ignoreCase = true)) {
+                    try {
+                        queryFileName = URLDecoder.decode(kv[1], "UTF-8")
+                    } catch (_: Exception) {}
+                }
+            }
+        }
 
         for (h in headers) {
             val lower = h.lowercase()
@@ -183,10 +228,21 @@ class WifiTransferServer(
                 contentType = h.substring(13).trim()
             } else if (lower.startsWith("content-length:")) {
                 contentLength = h.substring(15).trim().toLongOrNull() ?: -1L
+            } else if (lower.startsWith("x-filename:")) {
+                try {
+                    queryFileName = URLDecoder.decode(h.substring(11).trim(), "UTF-8")
+                } catch (_: Exception) {}
             }
         }
 
+        if (queryFileName.isNotEmpty()) {
+            // 模式 1：Direct Binary Stream 直接流式写入（最稳定极速）
+            saveDirectStreamUpload(queryFileName, contentLength, input, output)
+            return
+        }
+
         if (contentType.contains("multipart/form-data")) {
+            // 模式 2：Multipart Form-Data 表单解析
             val boundaryMatch = Regex("""boundary=(?:["']?)([^"';\s]+)""").find(contentType)
             val boundary = boundaryMatch?.groupValues?.get(1)
             if (boundary != null) {
@@ -195,7 +251,41 @@ class WifiTransferServer(
             }
         }
 
-        sendResponse(output, 400, "application/json", """{"status":"error","message":"Invalid Content-Type"}""")
+        sendResponse(output, 400, "application/json", """{"status":"error","message":"Invalid Content-Type or missing filename"}""")
+    }
+
+    private fun saveDirectStreamUpload(
+        fileName: String,
+        contentLength: Long,
+        input: InputStream,
+        output: OutputStream
+    ) {
+        try {
+            val cleanName = File(fileName).name
+            if (!cleanName.endsWith(".txt", ignoreCase = true) && !cleanName.endsWith(".epub", ignoreCase = true)) {
+                sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持 .txt 和 .epub 格式"}""")
+                return
+            }
+
+            val savedFile = File(booksDir, cleanName)
+            FileOutputStream(savedFile).use { fos ->
+                val buf = ByteArray(32768)
+                var read: Int
+                var totalRead = 0L
+                while (input.read(buf).also { read = it } != -1) {
+                    fos.write(buf, 0, read)
+                    totalRead += read
+                    if (contentLength > 0 && totalRead >= contentLength) {
+                        break
+                    }
+                }
+            }
+
+            onFileSuccessfullySaved(savedFile, cleanName, output)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in saveDirectStreamUpload", e)
+            sendResponse(output, 500, "application/json", """{"status":"error","message":"${e.localizedMessage}"}""")
+        }
     }
 
     private fun parseMultipartUpload(
@@ -209,7 +299,6 @@ class WifiTransferServer(
             var savedFile: File? = null
             var originalFileName = ""
 
-            // 解析 Multipart 数据段
             val partHeader = readHeader(input)
             val fnMatch = Regex("""filename=(?:["']?)([^"';\r\n]+)""").find(partHeader)
             if (fnMatch != null) {
@@ -237,25 +326,7 @@ class WifiTransferServer(
                     }
                 }
 
-                val uri = Uri.fromFile(savedFile)
-                val bookTitle = EpubParser.cleanBookTitle(originalFileName)
-                val bookItem = BookItem(
-                    uriString = uri.toString(),
-                    title = bookTitle,
-                    charOffset = 0,
-                    totalChars = savedFile.length().toInt(),
-                    lastChapterTitle = "新导入",
-                    lastReadTime = System.currentTimeMillis()
-                )
-
-                scope.launch(Dispatchers.IO) {
-                    DataStoreManager.updateBookInShelf(context, uri, 0, savedFile.length().toInt(), "新导入")
-                }
-                _uploadedCount.value += 1
-                onBookUploaded?.invoke(bookItem)
-
-                val responseJson = """{"status":"ok","fileName":"$originalFileName"}"""
-                sendResponse(output, 200, "application/json", responseJson)
+                onFileSuccessfullySaved(savedFile, originalFileName, output)
             } else {
                 sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持 .txt 和 .epub 格式文件"}""")
             }
@@ -265,10 +336,33 @@ class WifiTransferServer(
         }
     }
 
+    private fun onFileSuccessfullySaved(file: File, fileName: String, output: OutputStream) {
+        val uri = Uri.fromFile(file)
+        val bookTitle = EpubParser.cleanBookTitle(fileName)
+        val bookItem = BookItem(
+            uriString = uri.toString(),
+            title = bookTitle,
+            charOffset = 0,
+            totalChars = file.length().toInt(),
+            lastChapterTitle = "新导入",
+            lastReadTime = System.currentTimeMillis()
+        )
+
+        scope.launch(Dispatchers.IO) {
+            DataStoreManager.updateBookInShelf(context, uri, 0, file.length().toInt(), "新导入")
+        }
+        _uploadedCount.value += 1
+        onBookUploaded?.invoke(bookItem)
+
+        val responseJson = """{"status":"ok","fileName":"$fileName"}"""
+        sendResponse(output, 200, "application/json", responseJson)
+    }
+
     private fun sendResponse(output: OutputStream, statusCode: Int, contentType: String, content: String) {
         val bytes = content.toByteArray(Charsets.UTF_8)
         val statusText = when (statusCode) {
             200 -> "OK"
+            204 -> "No Content"
             400 -> "Bad Request"
             404 -> "Not Found"
             else -> "Internal Server Error"
@@ -277,6 +371,7 @@ class WifiTransferServer(
                 "Content-Type: $contentType; charset=utf-8\r\n" +
                 "Content-Length: ${bytes.size}\r\n" +
                 "Access-Control-Allow-Origin: *\r\n" +
+                "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
                 "Connection: close\r\n\r\n"
         output.write(header.toByteArray(Charsets.UTF_8))
         output.write(bytes)
@@ -368,11 +463,16 @@ class WifiTransferServer(
                             statusEl.innerText = '传输中...';
                             statusEl.style.color = '#58a6ff';
 
-                            const formData = new FormData();
-                            formData.append('file', file, file.name);
-
                             try {
-                                const res = await fetch('/upload', { method: 'POST', body: formData });
+                                const uploadUrl = '/upload?filename=' + encodeURIComponent(file.name);
+                                const res = await fetch(uploadUrl, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/octet-stream',
+                                        'X-Filename': encodeURIComponent(file.name)
+                                    },
+                                    body: file
+                                });
                                 const data = await res.json();
                                 if (data.status === 'ok') {
                                     statusEl.innerText = '已送达手表';

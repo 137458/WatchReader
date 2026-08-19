@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- 网络权限 — 局域网 Wi-Fi 网页无线传书 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
     <!-- 读取外部存储 — Android 11 上仅用于访问通过 ADB 推送的文件 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="29" />
@@ -13,6 +18,7 @@
         android:supportsRtl="true"
         android:hardwareAccelerated="true"
         android:largeHeap="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.WatchReader">
 
         <activity
