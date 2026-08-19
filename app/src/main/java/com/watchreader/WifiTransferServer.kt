@@ -433,10 +433,11 @@ class WifiTransferServer(
 
         scope.launch(Dispatchers.IO) {
             DataStoreManager.updateBookInShelf(context, uri, 0, file.length().toInt(), "新导入")
+            onBookUploaded?.invoke(bookItem)
         }
         _uploadedCount.value += 1
 
-        // 设置 100% 满环动画状态
+        // 设置 100% 状态
         _transferProgress.value = TransferProgress(
             isTransferring = true,
             fileName = bookTitle,
@@ -446,7 +447,6 @@ class WifiTransferServer(
         )
 
         RotaryHapticManager.performSuccessFeedback(context)
-        onBookUploaded?.invoke(bookItem)
 
         val responseJson = """{"status":"ok","fileName":"$fileName"}"""
         sendResponse(output, 200, "application/json", responseJson)

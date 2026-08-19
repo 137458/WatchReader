@@ -573,14 +573,18 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun closeWifiTransfer() {
         wifiServer?.stop()
-        _uiState.update {
-            it.copy(
-                screen = Screen.Home,
-                isWifiServerRunning = false,
-                isTransferring = false,
-                transferProgress = 0f,
-                transferFileName = ""
-            )
+        viewModelScope.launch(Dispatchers.IO) {
+            val shelf = DataStoreManager.loadBookShelf(appCtx)
+            _uiState.update {
+                it.copy(
+                    screen = Screen.Home,
+                    isWifiServerRunning = false,
+                    isTransferring = false,
+                    transferProgress = 0f,
+                    transferFileName = "",
+                    bookshelf = shelf
+                )
+            }
         }
     }
 
