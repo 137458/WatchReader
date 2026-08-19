@@ -6,6 +6,7 @@ import android.net.wifi.WifiManager
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,14 +20,25 @@ import java.net.Socket
 import java.net.URLDecoder
 
 /**
+ * 传书进度数据模型
+ */
+data class TransferProgress(
+    val isTransferring: Boolean = false,
+    val fileName: String = "",
+    val progress: Float = 0f,
+    val bytesRead: Long = 0L,
+    val totalBytes: Long = 0L
+)
+
+/**
  * 局域网 Wi-Fi 网页无线传书轻量级 HTTP 服务
  *
  * 特性：
  * 1. 0 第三方依赖：纯原生 ServerSocket 构建，包体积 0 增加。
  * 2. 智能多端口回退：自动规避端口占用（8888 -> 8080 -> 8989 -> 9090 -> 动态分配），彻底解决 EADDRINUSE。
- * 3. 双协议支持：同时支持高速 Direct Stream 与标准 Multipart Form-Data 上传。
- * 4. 跨平台现代 Web UI：手机与电脑端浏览器自适应，多文件拖拽上传与实时进度反馈。
- * 5. 自动入库：上传完成自动校验、保存至私有存储并即时录入书架。
+ * 3. 全链路进度追踪：实时向手表端与 Web 浏览器推送毫秒级传输字节与百分比进度。
+ * 4. 跨平台现代 Web UI：支持 XHR Upload Progress，实时展示上传百分比与动画。
+ * 5. 自动入库与触觉反馈：上传完成自动校验、保存至私有存储并即时录入书架，触发双重确认震感。
  */
 class WifiTransferServer(
     private val context: Context,
@@ -43,6 +55,9 @@ class WifiTransferServer(
 
     private val _uploadedCount = MutableStateFlow(0)
     val uploadedCount: StateFlow<Int> = _uploadedCount.asStateFlow()
+
+    private val _transferProgress = MutableStateFlow(TransferProgress())
+    val transferProgress: StateFlow<TransferProgress> = _transferProgress.asStateFlow()
 
     private val booksDir: File by lazy {
         val dir = File(context.filesDir, "books")
@@ -131,6 +146,7 @@ class WifiTransferServer(
             serverSocket?.close()
         } catch (_: Exception) {}
         serverSocket = null
+        _transferProgress.value = TransferProgress()
         Log.i(TAG, "Wi-Fi transfer server stopped")
     }
 
@@ -219,7 +235,6 @@ class WifiTransferServer(
         var contentLength = -1L
         var queryFileName = ""
 
-        // 解析 Query 参数中的 filename
         val qIdx = rawPath.indexOf('?')
         if (qIdx >= 0 && qIdx + 1 < rawPath.length) {
             val queryStr = rawPath.substring(qIdx + 1)
@@ -277,14 +292,42 @@ class WifiTransferServer(
                 return
             }
 
+            // 初始化进度
+            _transferProgress.value = TransferProgress(
+                isTransferring = true,
+                fileName = cleanName,
+                progress = 0.05f,
+                bytesRead = 0,
+                totalBytes = contentLength
+            )
+            RotaryHapticManager.performScrollTick(context, null)
+
             val savedFile = File(booksDir, cleanName)
             FileOutputStream(savedFile).use { fos ->
                 val buf = ByteArray(32768)
                 var read: Int
                 var totalRead = 0L
+                var lastMilestone = 0
+
                 while (input.read(buf).also { read = it } != -1) {
                     fos.write(buf, 0, read)
                     totalRead += read
+
+                    val p = if (contentLength > 0) (totalRead.toFloat() / contentLength).coerceIn(0.05f, 0.98f) else 0.5f
+                    _transferProgress.value = TransferProgress(
+                        isTransferring = true,
+                        fileName = cleanName,
+                        progress = p,
+                        bytesRead = totalRead,
+                        totalBytes = contentLength
+                    )
+
+                    val milestone = (p * 4).toInt()
+                    if (milestone > lastMilestone) {
+                        lastMilestone = milestone
+                        RotaryHapticManager.performScrollTick(context, null)
+                    }
+
                     if (contentLength > 0 && totalRead >= contentLength) {
                         break
                     }
@@ -294,6 +337,7 @@ class WifiTransferServer(
             onFileSuccessfullySaved(savedFile, cleanName, output)
         } catch (e: Exception) {
             Log.e(TAG, "Error in saveDirectStreamUpload", e)
+            _transferProgress.value = TransferProgress(isTransferring = false)
             sendResponse(output, 500, "application/json", """{"status":"error","message":"${e.localizedMessage}"}""")
         }
     }
@@ -323,13 +367,40 @@ class WifiTransferServer(
             }
 
             if (savedFile != null) {
+                _transferProgress.value = TransferProgress(
+                    isTransferring = true,
+                    fileName = originalFileName,
+                    progress = 0.1f,
+                    bytesRead = 0,
+                    totalBytes = contentLength
+                )
+                RotaryHapticManager.performScrollTick(context, null)
+
                 FileOutputStream(savedFile).use { fos ->
                     val buf = ByteArray(32768)
                     var read: Int
                     var totalRead = 0L
+                    var lastMilestone = 0
+
                     while (input.read(buf).also { read = it } != -1) {
                         fos.write(buf, 0, read)
                         totalRead += read
+
+                        val p = if (contentLength > 0) (totalRead.toFloat() / contentLength).coerceIn(0.1f, 0.98f) else 0.5f
+                        _transferProgress.value = TransferProgress(
+                            isTransferring = true,
+                            fileName = originalFileName,
+                            progress = p,
+                            bytesRead = totalRead,
+                            totalBytes = contentLength
+                        )
+
+                        val milestone = (p * 4).toInt()
+                        if (milestone > lastMilestone) {
+                            lastMilestone = milestone
+                            RotaryHapticManager.performScrollTick(context, null)
+                        }
+
                         if (contentLength > 0 && totalRead >= contentLength - delimiter.size - 32) {
                             break
                         }
@@ -338,10 +409,12 @@ class WifiTransferServer(
 
                 onFileSuccessfullySaved(savedFile, originalFileName, output)
             } else {
+                _transferProgress.value = TransferProgress(isTransferring = false)
                 sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持 .txt 和 .epub 格式文件"}""")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error in parseMultipartUpload", e)
+            _transferProgress.value = TransferProgress(isTransferring = false)
             sendResponse(output, 500, "application/json", """{"status":"error","message":"${e.localizedMessage}"}""")
         }
     }
@@ -362,11 +435,27 @@ class WifiTransferServer(
             DataStoreManager.updateBookInShelf(context, uri, 0, file.length().toInt(), "新导入")
         }
         _uploadedCount.value += 1
+
+        // 设置 100% 满环动画状态
+        _transferProgress.value = TransferProgress(
+            isTransferring = true,
+            fileName = bookTitle,
+            progress = 1.0f,
+            bytesRead = file.length(),
+            totalBytes = file.length()
+        )
+
         RotaryHapticManager.performSuccessFeedback(context)
         onBookUploaded?.invoke(bookItem)
 
         val responseJson = """{"status":"ok","fileName":"$fileName"}"""
         sendResponse(output, 200, "application/json", responseJson)
+
+        // 1.2 秒后平滑恢复常驻就绪视图
+        scope.launch {
+            delay(1200)
+            _transferProgress.value = TransferProgress(isTransferring = false)
+        }
     }
 
     private fun sendResponse(output: OutputStream, statusCode: Int, contentType: String, content: String) {
@@ -412,12 +501,14 @@ class WifiTransferServer(
                     .btn:disabled { background: #234c2e; color: #8b949e; cursor: not-allowed; }
                     #fileInput { display: none; }
                     .file-list { margin-top: 20px; list-style: none; }
-                    .file-item { display: flex; justify-content: space-between; align-items: center; background: #21262d; padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 8px; }
-                    .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 75%; }
+                    .file-item { display: flex; flex-direction: column; background: #21262d; padding: 12px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 8px; }
+                    .file-header { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+                    .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; font-weight: 500; }
                     .file-status { font-weight: 600; font-size: 12px; }
                     .success { color: #3fb950; }
                     .error { color: #f85149; }
-                    .progress-bar { height: 4px; background: #388bfd; width: 0%; border-radius: 2px; transition: width 0.2s; margin-top: 12px; }
+                    .progress-track { height: 6px; background: #30363d; border-radius: 3px; overflow: hidden; margin-top: 8px; display: none; width: 100%; }
+                    .progress-fill { height: 100%; background: #388bfd; width: 0%; transition: width 0.15s ease-out; }
                 </style>
             </head>
             <body>
@@ -426,11 +517,10 @@ class WifiTransferServer(
                     <div class="desc">支持将本地 TXT 与 EPUB 小说直接无线推送到手表书架</div>
                     <div class="drop-zone" id="dropZone">
                         <div class="drop-text">点击或拖拽小说文件到此处</div>
-                        <div class="drop-sub">支持 .txt、.epub 格式</div>
+                        <div class="drop-sub">支持 .txt、.epub 格式（自动排版）</div>
                     </div>
                     <input type="file" id="fileInput" multiple accept=".txt,.epub">
                     <button class="btn" id="uploadBtn" disabled>开始传输到手表</button>
-                    <div class="progress-bar" id="progressBar"></div>
                     <ul class="file-list" id="fileList"></ul>
                 </div>
 
@@ -439,7 +529,6 @@ class WifiTransferServer(
                     const fileInput = document.getElementById('fileInput');
                     const uploadBtn = document.getElementById('uploadBtn');
                     const fileList = document.getElementById('fileList');
-                    const progressBar = document.getElementById('progressBar');
                     let selectedFiles = [];
 
                     dropZone.addEventListener('click', () => fileInput.click());
@@ -458,7 +547,13 @@ class WifiTransferServer(
                                 selectedFiles.push(f);
                                 const li = document.createElement('li');
                                 li.className = 'file-item';
-                                li.innerHTML = `<span class="file-name">${'$'}{f.name}</span><span class="file-status" style="color:#8b949e">待传输</span>`;
+                                li.innerHTML = `
+                                    <div class="file-header">
+                                        <span class="file-name">${'$'}{f.name}</span>
+                                        <span class="file-status" style="color:#8b949e">待传输</span>
+                                    </div>
+                                    <div class="progress-track"><div class="progress-fill"></div></div>
+                                `;
                                 fileList.appendChild(li);
                             }
                         }
@@ -468,35 +563,54 @@ class WifiTransferServer(
                     uploadBtn.addEventListener('click', async () => {
                         uploadBtn.disabled = true;
                         const items = fileList.querySelectorAll('.file-item');
+
                         for (let i = 0; i < selectedFiles.length; i++) {
                             const file = selectedFiles[i];
-                            const statusEl = items[i].querySelector('.file-status');
-                            statusEl.innerText = '传输中...';
+                            const item = items[i];
+                            const statusEl = item.querySelector('.file-status');
+                            const progressTrack = item.querySelector('.progress-track');
+                            const progressFill = item.querySelector('.progress-fill');
+
+                            progressTrack.style.display = 'block';
+                            statusEl.innerText = '正在传输 0%...';
                             statusEl.style.color = '#58a6ff';
 
-                            try {
+                            await new Promise((resolve) => {
+                                const xhr = new XMLHttpRequest();
                                 const uploadUrl = '/upload?filename=' + encodeURIComponent(file.name);
-                                const res = await fetch(uploadUrl, {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/octet-stream',
-                                        'X-Filename': encodeURIComponent(file.name)
-                                    },
-                                    body: file
-                                });
-                                const data = await res.json();
-                                if (data.status === 'ok') {
-                                    statusEl.innerText = '已送达手表';
-                                    statusEl.className = 'file-status success';
-                                } else {
-                                    statusEl.innerText = data.message || '失败';
+                                xhr.open('POST', uploadUrl, true);
+                                xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+                                xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
+
+                                xhr.upload.onprogress = (e) => {
+                                    if (e.lengthComputable) {
+                                        const pct = Math.round((e.loaded / e.total) * 100);
+                                        progressFill.style.width = pct + '%';
+                                        statusEl.innerText = `正在传输 ${'$'}{pct}%...`;
+                                    }
+                                };
+
+                                xhr.onload = () => {
+                                    if (xhr.status === 200) {
+                                        progressFill.style.width = '100%';
+                                        progressFill.style.background = '#3fb950';
+                                        statusEl.innerText = '已送达手表';
+                                        statusEl.className = 'file-status success';
+                                    } else {
+                                        statusEl.innerText = '上传失败';
+                                        statusEl.className = 'file-status error';
+                                    }
+                                    resolve();
+                                };
+
+                                xhr.onerror = () => {
+                                    statusEl.innerText = '连接中断';
                                     statusEl.className = 'file-status error';
-                                }
-                            } catch (e) {
-                                statusEl.innerText = '连接超时';
-                                statusEl.className = 'file-status error';
-                            }
-                            progressBar.style.width = ((i + 1) / selectedFiles.length * 100) + '%';
+                                    resolve();
+                                };
+
+                                xhr.send(file);
+                            });
                         }
                         selectedFiles = [];
                     });

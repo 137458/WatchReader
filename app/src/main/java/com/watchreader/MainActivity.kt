@@ -274,6 +274,9 @@ class MainActivity : ComponentActivity() {
                 port = uiState.wifiPort,
                 uploadedCount = uiState.wifiUploadedCount,
                 isServerRunning = uiState.isWifiServerRunning,
+                isTransferring = uiState.isTransferring,
+                transferProgress = uiState.transferProgress,
+                transferFileName = uiState.transferFileName,
                 onToggleServer = {
                     if (uiState.isWifiServerRunning) viewModel.closeWifiTransfer() else viewModel.openWifiTransfer()
                 },
@@ -312,9 +315,9 @@ fun BookshelfScreen(
         modifier = Modifier.fillMaxSize(),
         factory = { context ->
             val density = context.resources.displayMetrics.density
-            val padH = (20 * density).toInt()
-            val padTop = (34 * density).toInt()
-            val padBottom = (40 * density).toInt()
+            val padH = (22 * density).toInt()
+            val padTop = (44 * density).toInt()
+            val padBottom = (64 * density).toInt()
 
             val scrollView = ScrollView(context).apply {
                 layoutParams = ViewGroup.LayoutParams(
@@ -429,14 +432,14 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
-            setMargins((4 * density).toInt(), 0, (4 * density).toInt(), (6 * density).toInt())
+            setMargins(0, 0, 0, (8 * density).toInt())
         }
         gravity = Gravity.CENTER_VERTICAL
     }
 
     val titleTv = TextView(context).apply {
         text = "书架"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
         typeface = Typeface.DEFAULT_BOLD
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
     }
@@ -444,9 +447,9 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
 
     val wifiBtn = TextView(context).apply {
         text = "📶传书"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
         typeface = Typeface.DEFAULT_BOLD
-        setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
+        setPadding((7 * density).toInt(), (4.5f * density).toInt(), (7 * density).toInt(), (4.5f * density).toInt())
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -457,9 +460,9 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
     headerLayout.addView(wifiBtn)
 
     val themeBtn = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
         typeface = Typeface.DEFAULT_BOLD
-        setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
+        setPadding((7 * density).toInt(), (4.5f * density).toInt(), (7 * density).toInt(), (4.5f * density).toInt())
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -473,7 +476,7 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
         text = "+ 导入"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
         typeface = Typeface.DEFAULT_BOLD
-        setPadding((8 * density).toInt(), (4 * density).toInt(), (8 * density).toInt(), (4 * density).toInt())
+        setPadding((8 * density).toInt(), (4.5f * density).toInt(), (8 * density).toInt(), (4.5f * density).toInt())
     }
     headerLayout.addView(importBtn)
     container.addView(headerLayout)
@@ -488,7 +491,7 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
-            setMargins((4 * density).toInt(), 0, (4 * density).toInt(), (8 * density).toInt())
+            setMargins(0, 0, 0, (8 * density).toInt())
         }
         setPadding((10 * density).toInt(), (6 * density).toInt(), (10 * density).toInt(), (6 * density).toInt())
     }
@@ -551,7 +554,7 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
-            setMargins(0, (10 * density).toInt(), 0, (12 * density).toInt())
+            setMargins(0, (12 * density).toInt(), 0, (20 * density).toInt())
         }
         gravity = Gravity.CENTER_VERTICAL
     }

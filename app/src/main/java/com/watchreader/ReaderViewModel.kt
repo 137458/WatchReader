@@ -58,7 +58,10 @@ data class ReaderUiState(
     val isWifiServerRunning: Boolean = false,
     val wifiIpAddress: String? = null,
     val wifiPort: Int = 8888,
-    val wifiUploadedCount: Int = 0
+    val wifiUploadedCount: Int = 0,
+    val isTransferring: Boolean = false,
+    val transferProgress: Float = 0f,
+    val transferFileName: String = ""
 )
 
 /**
@@ -552,6 +555,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update { it.copy(wifiUploadedCount = count) }
             }
         }
+        viewModelScope.launch {
+            wifiServer?.transferProgress?.collect { tp ->
+                _uiState.update {
+                    it.copy(
+                        isTransferring = tp.isTransferring,
+                        transferProgress = tp.progress,
+                        transferFileName = tp.fileName
+                    )
+                }
+            }
+        }
     }
 
     /**
@@ -562,7 +576,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update {
             it.copy(
                 screen = Screen.Home,
-                isWifiServerRunning = false
+                isWifiServerRunning = false,
+                isTransferring = false,
+                transferProgress = 0f,
+                transferFileName = ""
             )
         }
     }
