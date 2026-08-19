@@ -11,8 +11,8 @@ android {
         applicationId = "com.watchreader"
         minSdk = 27          // Android 8.1，覆盖绝大多数手表
         targetSdk = 34       // 编译与目标 SDK 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     lint {
