@@ -271,6 +271,7 @@ class MainActivity : ComponentActivity() {
 
             is Screen.WifiTransfer -> WifiTransferScreen(
                 ipAddress = uiState.wifiIpAddress,
+                port = uiState.wifiPort,
                 uploadedCount = uiState.wifiUploadedCount,
                 isServerRunning = uiState.isWifiServerRunning,
                 onToggleServer = {

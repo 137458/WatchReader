@@ -57,6 +57,7 @@ data class ReaderUiState(
     val searchQuery: String = "",
     val isWifiServerRunning: Boolean = false,
     val wifiIpAddress: String? = null,
+    val wifiPort: Int = 8888,
     val wifiUploadedCount: Int = 0
 )
 
@@ -525,7 +526,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (wifiServer == null) {
             wifiServer = WifiTransferServer(
                 context = appCtx,
-                port = 8888,
+                preferredPort = 8888,
                 onBookUploaded = { _ ->
                     viewModelScope.launch(Dispatchers.IO) {
                         val shelf = DataStoreManager.loadBookShelf(appCtx)
@@ -534,13 +535,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
             )
         }
-        val ip = wifiServer?.getLocalIpAddress()
         val started = wifiServer?.start() ?: false
+        val ip = wifiServer?.getLocalIpAddress()
+        val port = wifiServer?.activePort ?: 8888
         _uiState.update {
             it.copy(
                 screen = Screen.WifiTransfer,
                 isWifiServerRunning = started,
                 wifiIpAddress = ip,
+                wifiPort = port,
                 wifiUploadedCount = 0
             )
         }

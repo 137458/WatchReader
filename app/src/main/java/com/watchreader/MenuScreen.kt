@@ -126,22 +126,18 @@ fun MenuScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
+                    isFocusable = true
+                    isFocusableInTouchMode = true
                     isVerticalScrollBarEnabled = false
                     overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                    setBackgroundColor(bgColor)
                     setPadding(padH, padTop, padH, padBottom)
                     clipToPadding = false
-                    setBackgroundColor(bgColor)
                 }
 
-                // 表冠物理旋转无缝滚动 + 线性马达触觉反馈
-                scrollView.setOnGenericMotionListener { v, event ->
-                    if (CrownScrollHelper.isCrownScrollEvent(event)) {
-                        val delta = CrownScrollHelper.extractCrownDelta(event)
-                        CrownScrollHelper.dispatchScroll(delta, scrollView, ctx, v)
-                        true
-                    } else {
-                        false
-                    }
+                // 原生物理表冠旋转监听（完全对齐 ReaderScreen：由原生 ScrollView 满帧驱动并由系统分发微振）
+                scrollView.setOnGenericMotionListener { _, _ ->
+                    false
                 }
 
                 val container = LinearLayout(ctx).apply {

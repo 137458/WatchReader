@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun WifiTransferScreen(
     ipAddress: String?,
+    port: Int = 8888,
     uploadedCount: Int,
     isServerRunning: Boolean,
     onToggleServer: () -> Unit,
@@ -50,9 +51,9 @@ fun WifiTransferScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // 1. 标题与状态指示
+            // 1. 顶部标题与图标
             Text(
-                text = "Wi-Fi 无线传书",
+                text = "📶 腕上无线传书",
                 style = TextStyle(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
@@ -63,7 +64,7 @@ fun WifiTransferScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // 2. 状态卡片
+            // 2. IP 地址与传输状态卡片
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -87,7 +88,7 @@ fun WifiTransferScreen(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "http://$ipAddress:8888",
+                            text = "http://$ipAddress:$port",
                             style = TextStyle(
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.Bold,

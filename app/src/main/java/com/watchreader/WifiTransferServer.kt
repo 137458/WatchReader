@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.*
 import java.net.Inet4Address
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
@@ -22,19 +23,23 @@ import java.net.URLDecoder
  *
  * 特性：
  * 1. 0 第三方依赖：纯原生 ServerSocket 构建，包体积 0 增加。
- * 2. 双协议支持：同时支持高速 Direct Stream 与标准 Multipart Form-Data 上传。
- * 3. 跨平台现代 Web UI：手机与电脑端浏览器自适应，多文件拖拽上传与实时进度反馈。
- * 4. 自动入库：上传完成自动校验、保存至私有存储并即时录入书架。
+ * 2. 智能多端口回退：自动规避端口占用（8888 -> 8080 -> 8989 -> 9090 -> 动态分配），彻底解决 EADDRINUSE。
+ * 3. 双协议支持：同时支持高速 Direct Stream 与标准 Multipart Form-Data 上传。
+ * 4. 跨平台现代 Web UI：手机与电脑端浏览器自适应，多文件拖拽上传与实时进度反馈。
+ * 5. 自动入库：上传完成自动校验、保存至私有存储并即时录入书架。
  */
 class WifiTransferServer(
     private val context: Context,
-    private val port: Int = 8888,
+    private val preferredPort: Int = 8888,
     private val onBookUploaded: ((BookItem) -> Unit)? = null
 ) {
     private val TAG = "WifiTransferServer"
     private var serverSocket: ServerSocket? = null
     private var isRunning = false
     private val scope = CoroutineScope(Dispatchers.IO)
+
+    var activePort: Int = preferredPort
+        private set
 
     private val _uploadedCount = MutableStateFlow(0)
     val uploadedCount: StateFlow<Int> = _uploadedCount.asStateFlow()
@@ -88,25 +93,32 @@ class WifiTransferServer(
     }
 
     /**
-     * 启动 HTTP 传书服务
+     * 启动 HTTP 传书服务（支持端口自动回退，消除 EADDRINUSE 异常）
      */
     @Synchronized
     fun start(): Boolean {
         if (isRunning) return true
-        return try {
-            serverSocket = ServerSocket(port)
-            serverSocket?.reuseAddress = true
-            isRunning = true
-            scope.launch {
-                listenForClients()
+        val portCandidates = intArrayOf(preferredPort, 8080, 8989, 9090, 8889, 0)
+
+        for (p in portCandidates) {
+            try {
+                val ss = ServerSocket()
+                ss.reuseAddress = true
+                ss.bind(InetSocketAddress(p))
+                serverSocket = ss
+                activePort = ss.localPort
+                isRunning = true
+                scope.launch {
+                    listenForClients()
+                }
+                Log.i(TAG, "Wi-Fi transfer server successfully bound to port $activePort")
+                return true
+            } catch (e: Exception) {
+                Log.w(TAG, "Port $p bind failed, trying next candidate...", e)
             }
-            Log.i(TAG, "Wi-Fi transfer server started on port $port")
-            true
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start Wi-Fi transfer server on port $port", e)
-            isRunning = false
-            false
         }
+        isRunning = false
+        return false
     }
 
     /**
@@ -207,7 +219,7 @@ class WifiTransferServer(
         var contentLength = -1L
         var queryFileName = ""
 
-        // 解析 Query 参数中的 filename (例如 /upload?filename=斗破苍穹.txt)
+        // 解析 Query 参数中的 filename
         val qIdx = rawPath.indexOf('?')
         if (qIdx >= 0 && qIdx + 1 < rawPath.length) {
             val queryStr = rawPath.substring(qIdx + 1)
@@ -236,13 +248,11 @@ class WifiTransferServer(
         }
 
         if (queryFileName.isNotEmpty()) {
-            // 模式 1：Direct Binary Stream 直接流式写入（最稳定极速）
             saveDirectStreamUpload(queryFileName, contentLength, input, output)
             return
         }
 
         if (contentType.contains("multipart/form-data")) {
-            // 模式 2：Multipart Form-Data 表单解析
             val boundaryMatch = Regex("""boundary=(?:["']?)([^"';\s]+)""").find(contentType)
             val boundary = boundaryMatch?.groupValues?.get(1)
             if (boundary != null) {
