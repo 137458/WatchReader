@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 底部环境光晕 -->
+    <path
+        android:pathData="M 54,42 A 20,20 0 1,1 53.99,42"
+        android:fillColor="#00E5FF"
+        android:fillAlpha="0.12" />
+
+    <!-- 展开的书脊中心轴线 -->
+    <path
+        android:pathData="M 54,34 L 54,74"
+        android:strokeWidth="2.5"
+        android:strokeColor="#3877A6"
+        android:strokeLineCap="round" />
+
+    <!-- 左侧书页（渐变青蓝） -->
+    <path
+        android:pathData="M 54,36 C 45,33 34,35 27,39 C 26.2,39.4 25.5,40.2 25.5,41.2 L 25.5,69.5 C 25.5,70.6 26.4,71.4 27.5,71 C 34.2,67.8 44.5,66.8 54,72 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="25"
+                android:startY="35"
+                android:endX="54"
+                android:endY="72"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#29B6F6" />
+                <item android:offset="0.7" android:color="#0288D1" />
+                <item android:offset="1.0" android:color="#01579B" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 右侧书页（高亮天蓝） -->
+    <path
+        android:pathData="M 54,36 C 63,33 74,35 81,39 C 81.8,39.4 82.5,40.2 82.5,41.2 L 82.5,69.5 C 82.5,70.6 81.6,71.4 80.5,71 C 73.8,67.8 63.5,66.8 54,72 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="54"
+                android:startY="35"
+                android:endX="83"
+                android:endY="72"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#81D4FA" />
+                <item android:offset="0.5" android:color="#29B6F6" />
+                <item android:offset="1.0" android:color="#0288D1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 左页排版纹理线条 -->
+    <path
+        android:pathData="M 33,46 C 39,44.5 45,45 50,47"
+        android:strokeWidth="1.6"
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.8"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M 33,52 C 39,50.5 45,51 50,53"
+        android:strokeWidth="1.6"
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.6"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M 33,58 C 39,56.5 45,57 48,58.5"
+        android:strokeWidth="1.6"
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.4"
+        android:strokeLineCap="round" />
+
+    <!-- 右页排版纹理线条 -->
+    <path
+        android:pathData="M 58,47 C 63,45 69,44.5 75,46"
+        android:strokeWidth="1.6"
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.8"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M 58,53 C 63,51 69,50.5 75,52"
+        android:strokeWidth="1.6"
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.6"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M 60,58.5 C 65,57 70,56.5 75,58"
+        android:strokeWidth="1.6"
+        android:strokeColor="#FFFFFF"
+        android:strokeAlpha="0.4"
+        android:strokeLineCap="round" />
+
+    <!-- 活力金色书签彩带（从书顶垂下） -->
+    <path
+        android:pathData="M 51,32 L 57,32 L 57,48 L 54,45 L 51,48 Z"
+        android:fillColor="#FFA000" />
+    <path
+        android:pathData="M 51,32 L 54,32 L 54,45 L 51,48 Z"
+        android:fillColor="#FFC107" />
+
+    <!-- 右上角闪读电芒/极速光芒微标 -->
+    <path
+        android:pathData="M 77,29 L 72,37 L 76,37 L 74,45 L 81,35 L 77,35 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="72"
+                android:startY="29"
+                android:endX="81"
+                android:endY="45"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#FFE082" />
+                <item android:offset="1.0" android:color="#FF8F00" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
