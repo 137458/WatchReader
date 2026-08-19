@@ -761,29 +761,31 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private var rsvpRotaryAccumulator = 0f
     private var lastRotaryTimeMs = 0L
+    private var lastStepTimeMs = 0L
 
     /**
-     * 响应硬件物理表冠旋转（带平滑防抖累加器，避免灵敏度过高骤变）
+     * 响应硬件物理表冠旋转（强阻尼 + 防抖滤波 + 10字/分稳健步进）
      */
     fun handleRotaryScroll(delta: Float): Boolean {
         when (_uiState.value.screen) {
             is Screen.Rsvp -> {
                 val now = System.currentTimeMillis()
-                if (now - lastRotaryTimeMs > 350L) {
+                if (now - lastRotaryTimeMs > 400L) {
                     rsvpRotaryAccumulator = 0f
                 }
                 lastRotaryTimeMs = now
 
                 rsvpRotaryAccumulator += delta
 
-                // 根据 delta 粒度自适应门限（档位值 ±1.0 或 像素值 ±28px）
-                val threshold = if (abs(delta) < 5f) 1.0f else 28f
+                // 强阻尼累加门限：较大幅度的物理转动才计为一格有效步进
+                val threshold = if (abs(delta) < 5f) 2.5f else 75f
                 
-                if (abs(rsvpRotaryAccumulator) >= threshold) {
-                    val notches = (rsvpRotaryAccumulator / threshold).toInt()
-                    rsvpRotaryAccumulator -= notches * threshold
+                if (abs(rsvpRotaryAccumulator) >= threshold && (now - lastStepTimeMs >= 75L)) {
+                    val direction = if (rsvpRotaryAccumulator > 0) 1 else -1
+                    rsvpRotaryAccumulator = 0f
+                    lastStepTimeMs = now
 
-                    val step = notches * 15f // 每格刻度平滑微调 15 字/分
+                    val step = direction * 10f // 每格稳健微调 10 字/分
                     val current = _uiState.value.rsvpSpeed
                     val newSpeed = (current + step).coerceIn(100f, 900f)
                     if (newSpeed != current) {
