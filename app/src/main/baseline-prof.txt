@@ -1,0 +1,70 @@
+# Baseline Profile Rules for WatchReader (OPPO Watch X2 / ColorOS Watch)
+# Pre-compiled AOT routes for ultra-fast startup and smooth 60/120fps scrolling
+
+# Core UI & Activity
+HSPLcom/watchreader/MainActivity;->onCreate(Landroid/os/Bundle;)V
+HSPLcom/watchreader/MainActivity;->dispatchGenericMotionEvent(Landroid/view/MotionEvent;)Z
+HSPLcom/watchreader/MainActivity;->onPause()V
+Lcom/watchreader/MainActivity;
+Lcom/watchreader/Screen;
+Lcom/watchreader/Screen$Home;
+Lcom/watchreader/Screen$Loading;
+Lcom/watchreader/Screen$Reader;
+Lcom/watchreader/Screen$ChapterList;
+Lcom/watchreader/Screen$Menu;
+
+# ViewModel & Data Layer
+HSPLcom/watchreader/ReaderViewModel;-><init>(Landroid/app/Application;)V
+HSPLcom/watchreader/ReaderViewModel;->init()V
+HSPLcom/watchreader/ReaderViewModel;->loadFile(Landroid/net/Uri;I)V
+HSPLcom/watchreader/ReaderViewModel;->goToChapter(II)V
+HSPLcom/watchreader/ReaderViewModel;->updateCharOffset(I)V
+HSPLcom/watchreader/ReaderViewModel;->buildChapterContent(Ljava/lang/String;Ljava/util/List;I)Lcom/watchreader/ChapterContent;
+Lcom/watchreader/ReaderViewModel;
+Lcom/watchreader/ReaderUiState;
+Lcom/watchreader/ChapterContent;
+Lcom/watchreader/BookItem;
+Lcom/watchreader/Chapter;
+
+# DataStore Manager & Preferences Migration
+HSPLcom/watchreader/DataStoreManager;->loadBookShelf(Landroid/content/Context;)Ljava/util/List;
+HSPLcom/watchreader/DataStoreManager;->loadReadingPosition(Landroid/content/Context;)Lkotlin/Pair;
+HSPLcom/watchreader/DataStoreManager;->parseBookShelf(Ljava/lang/String;)Ljava/util/List;
+Lcom/watchreader/DataStoreManager;
+
+# Chapter Detector & Text Processing Pipeline
+HSPLcom/watchreader/ChapterDetectorKt;->detectChapters(Ljava/lang/String;)Ljava/util/List;
+HSPLcom/watchreader/ChapterDetectorKt;->findCurrentChapterIndex(Ljava/util/List;I)I
+Lcom/watchreader/ChapterDetectorKt;
+
+# File Helper & Stream Encoding Detection
+HSPLcom/watchreader/FileHelperKt;->readTextFromUri(Landroid/content/Context;Landroid/net/Uri;)Ljava/lang/String;
+HSPLcom/watchreader/FileHelperKt;->detectEncoding([BI)Ljava/lang/String;
+HSPLcom/watchreader/FileHelperKt;->getFileSize(Landroid/content/Context;Landroid/net/Uri;)J
+Lcom/watchreader/FileHelperKt;
+
+# AutoScroll Engine & Choreographer Frame Callback
+HSPLcom/watchreader/AutoScrollEngine;->start()V
+HSPLcom/watchreader/AutoScrollEngine;->stop()V
+HSPLcom/watchreader/AutoScrollEngine;->adjustSpeed(F)V
+Lcom/watchreader/AutoScrollEngine;
+
+# Brightness Manager (Dual-tier hardware & AMOLED Alpha overlay)
+HSPLcom/watchreader/BrightnessManager;->calculateDarkOverlayAlpha(F)F
+HSPLcom/watchreader/BrightnessManager;->applyToWindow(Landroid/app/Activity;F)V
+HSPLcom/watchreader/BrightnessManager;->formatBrightnessText(F)Ljava/lang/String;
+Lcom/watchreader/BrightnessManager;
+
+# Rotary Crown & OPPO Linearmotor Haptics
+HSPLcom/watchreader/RotaryHapticManager;->initOplusLinearmotor(Landroid/content/Context;)V
+HSPLcom/watchreader/RotaryHapticManager;->performScrollTick(Landroid/content/Context;Landroid/view/View;)V
+HSPLcom/watchreader/RotaryHapticManager;->performBoundaryFeedback(Landroid/content/Context;Landroid/view/View;)V
+HSPLcom/watchreader/CrownScrollHelper;->isCrownScrollEvent(Landroid/view/MotionEvent;)Z
+HSPLcom/watchreader/CrownScrollHelper;->extractCrownDelta(Landroid/view/MotionEvent;)F
+Lcom/watchreader/RotaryHapticManager;
+Lcom/watchreader/CrownScrollHelper;
+
+# Curved Header & Theme
+HSPLcom/watchreader/CurvedHeaderKt;->CurvedChapterHeader(Ljava/lang/String;Landroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;II)V
+Lcom/watchreader/CurvedHeaderKt;
+Lcom/watchreader/ThemeKt;
