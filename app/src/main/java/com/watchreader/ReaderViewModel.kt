@@ -61,7 +61,8 @@ data class ReaderUiState(
     val wifiUploadedCount: Int = 0,
     val isTransferring: Boolean = false,
     val transferProgress: Float = 0f,
-    val transferFileName: String = ""
+    val transferFileName: String = "",
+    val rsvpSpeed: Float = 350f
 )
 
 /**
@@ -756,6 +757,31 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun getCurrentReadingOffset(): Int = currentReadingOffset
+
+    /**
+     * 响应硬件物理表冠旋转（直接接管 RSVP 调速等全局逻辑）
+     */
+    fun handleRotaryScroll(delta: Float): Boolean {
+        when (_uiState.value.screen) {
+            is Screen.Rsvp -> {
+                val step = if (delta > 0) 25f else -25f
+                val current = _uiState.value.rsvpSpeed
+                val newSpeed = (current + step).coerceIn(100f, 900f)
+                if (newSpeed != current) {
+                    _uiState.update { it.copy(rsvpSpeed = newSpeed) }
+                    RotaryHapticManager.performScrollTick(appCtx, null)
+                }
+                return true
+            }
+            else -> return false
+        }
+    }
+
+    fun updateRsvpSpeed(speed: Float) {
+        val safeSpeed = speed.coerceIn(100f, 900f)
+        _uiState.update { it.copy(rsvpSpeed = safeSpeed) }
+        RotaryHapticManager.performScrollTick(appCtx, null)
+    }
 }
 
 /**

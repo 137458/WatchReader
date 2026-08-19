@@ -19,7 +19,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -27,7 +26,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import kotlin.math.abs
 
 /**
  * RSVP 单个词元单元
@@ -39,14 +37,16 @@ data class RsvpToken(
 )
 
 /**
- * RSVP 动态闪读 / 单行速读屏幕（极简纯粹 + 触屏/表冠双模调速）
+ * RSVP 动态闪读 / 单行速读屏幕（极简纯粹防裁切 + 物理表冠调速）
  */
 @Composable
 fun RsvpScreen(
     chapterContent: ChapterContent?,
     initialCharOffset: Int,
+    wordsPerMinute: Float = 350f,
     onCharOffsetChange: (Int) -> Unit,
     onNextChapter: () -> Unit,
+    onSpeedChange: (Float) -> Unit = {},
     onBack: () -> Unit
 ) {
     BackHandler(onBack = onBack)
@@ -55,7 +55,7 @@ fun RsvpScreen(
     val window = (context as? Activity)?.window
     val focusRequester = remember { FocusRequester() }
 
-    // 闪读模式常亮
+    // 闪读模式屏幕常亮
     DisposableEffect(Unit) {
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
@@ -88,7 +88,6 @@ fun RsvpScreen(
     }
 
     var isPlaying by remember { mutableStateOf(true) }
-    var wordsPerMinute by remember { mutableStateOf(350f) } // 默认 350 字/分钟
 
     val currentToken = if (tokens.isNotEmpty() && currentIndex in tokens.indices) tokens[currentIndex] else null
 
@@ -121,17 +120,7 @@ fun RsvpScreen(
             .background(colorScheme.background)
             .focusRequester(focusRequester)
             .focusable()
-            // 1. 表冠旋转实时调速
-            .onRotaryScrollEvent { event ->
-                val delta = event.verticalScrollPixels
-                if (abs(delta) > 1f) {
-                    val step = if (delta > 0) 25f else -25f
-                    wordsPerMinute = (wordsPerMinute + step).coerceIn(100f, 900f)
-                    RotaryHapticManager.performScrollTick(context, null)
-                    true
-                } else false
-            }
-            // 2. 右滑手势极速退出返回阅读
+            // 右滑手势极速退出返回阅读
             .pointerInput(Unit) {
                 detectHorizontalDragGestures { _, dragAmount ->
                     if (dragAmount > 25f) {
@@ -185,7 +174,7 @@ fun RsvpScreen(
                 Text(
                     text = currentToken.text,
                     style = TextStyle(
-                        fontSize = 32.sp,
+                        fontSize = 36.sp,
                         fontWeight = FontWeight.Bold,
                         color = colorScheme.primary,
                         letterSpacing = 1.sp,
@@ -209,93 +198,53 @@ fun RsvpScreen(
 
             Text(
                 text = "${currentIndex + 1}/${tokens.size} · $progressPercent%",
-                style = TextStyle(fontSize = 10.sp, color = colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                style = TextStyle(fontSize = 10.5.sp, color = colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
             )
         }
 
-        // 底部多功能胶囊操作栏（退出 / 减速 / 播放暂停 / 加速）
+        // 底部极简胶囊操作栏（高度抬升至 safe area，杜绝任何边缘裁切）
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 12.dp),
+                .padding(bottom = 26.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 退出按钮
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(colorScheme.surfaceVariant.copy(alpha = 0.9f))
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(colorScheme.surfaceVariant.copy(alpha = 0.92f))
                     .clickable {
                         RotaryHapticManager.performScrollTick(context, null)
                         onBack()
                     }
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = "‹ 退出",
-                    style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = colorScheme.onSurfaceVariant)
+                    style = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = colorScheme.onSurfaceVariant)
                 )
             }
 
-            Spacer(modifier = Modifier.width(5.dp))
+            Spacer(modifier = Modifier.width(8.dp))
 
-            // 减速按钮
+            // 速度/播放状态胶囊（提示旋转表冠调速）
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(colorScheme.surfaceVariant.copy(alpha = 0.9f))
-                    .clickable {
-                        wordsPerMinute = (wordsPerMinute - 50f).coerceIn(100f, 900f)
-                        RotaryHapticManager.performScrollTick(context, null)
-                    }
-                    .padding(horizontal = 7.dp, vertical = 5.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "－",
-                    style = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = colorScheme.onSurfaceVariant)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(3.dp))
-
-            // 速度/播放暂停状态胶囊
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(colorScheme.surfaceVariant.copy(alpha = 0.9f))
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(colorScheme.surfaceVariant.copy(alpha = 0.92f))
                     .clickable {
                         isPlaying = !isPlaying
                         RotaryHapticManager.performScrollTick(context, null)
                     }
-                    .padding(horizontal = 7.dp, vertical = 5.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = if (isPlaying) "${wordsPerMinute.toInt()}字/分" else "已暂停",
-                    style = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold, color = colorScheme.primary)
-                )
-            }
-
-            Spacer(modifier = Modifier.width(3.dp))
-
-            // 加速按钮
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(colorScheme.surfaceVariant.copy(alpha = 0.9f))
-                    .clickable {
-                        wordsPerMinute = (wordsPerMinute + 50f).coerceIn(100f, 900f)
-                        RotaryHapticManager.performScrollTick(context, null)
-                    }
-                    .padding(horizontal = 7.dp, vertical = 5.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "＋",
-                    style = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = colorScheme.onSurfaceVariant)
+                    text = if (isPlaying) "⏸ ${wordsPerMinute.toInt()}字/分" else "▶ 继续",
+                    style = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = colorScheme.primary)
                 )
             }
         }
@@ -323,7 +272,6 @@ fun tokenizeRsvpText(text: String, startOffset: Int): List<RsvpToken> {
         val isChinese = c.code in 0x4E00..0x9FA5 || c.code in 0x3400..0x4DBF
 
         if (isChinese) {
-            // 中文字符：一般 1~3 个字为一组（视后跟标点而定）
             var count = 1
             while (tokenStart + count < len && count < 2) {
                 val nextC = text[tokenStart + count]
@@ -332,7 +280,6 @@ fun tokenizeRsvpText(text: String, startOffset: Int): List<RsvpToken> {
                 } else break
             }
 
-            // 吞并紧随其后的标点
             var pause = 1.0f
             var endIdx = tokenStart + count
             while (endIdx < len && isPunctuation(text[endIdx])) {
@@ -349,7 +296,6 @@ fun tokenizeRsvpText(text: String, startOffset: Int): List<RsvpToken> {
             tokens.add(RsvpToken(tokenStr, startOffset + tokenStart, pause))
             i = endIdx
         } else {
-            // 英文/西文字符：按空格或标点切单词
             var endIdx = tokenStart
             var pause = 1.0f
             while (endIdx < len && !text[endIdx].isWhitespace()) {

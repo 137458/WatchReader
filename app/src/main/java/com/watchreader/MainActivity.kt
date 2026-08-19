@@ -262,10 +262,12 @@ class MainActivity : ComponentActivity() {
             is Screen.Rsvp -> RsvpScreen(
                 chapterContent = uiState.currentChapterContent,
                 initialCharOffset = viewModel.getCurrentReadingOffset(),
+                wordsPerMinute = uiState.rsvpSpeed,
                 onCharOffsetChange = { offset ->
                     viewModel.updateCharOffset(offset)
                 },
                 onNextChapter = { viewModel.goToNextChapter() },
+                onSpeedChange = { viewModel.updateRsvpSpeed(it) },
                 onBack = { viewModel.handleBack() }
             )
 
@@ -283,6 +285,24 @@ class MainActivity : ComponentActivity() {
                 onBack = { viewModel.closeWifiTransfer() }
             )
         }
+    }
+
+    /**
+     * 响应硬件物理表冠滚动事件
+     */
+    override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
+        if (event != null && event.action == MotionEvent.ACTION_SCROLL) {
+            val axis = event.getAxisValue(MotionEvent.AXIS_SCROLL).let {
+                if (it == 0f) event.getAxisValue(MotionEvent.AXIS_VSCROLL) else it
+            }
+            if (axis != 0f) {
+                val delta = -axis
+                if (viewModel.handleRotaryScroll(delta)) {
+                    return true
+                }
+            }
+        }
+        return super.onGenericMotionEvent(event)
     }
 }
 
