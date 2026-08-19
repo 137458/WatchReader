@@ -30,7 +30,6 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import kotlin.math.abs
 
 /**
  * 菜单视图节点持有器（永久节点复用池，零 View 分配与销毁）
@@ -116,11 +115,7 @@ fun MenuScreen(
                 val padTop = (44 * density).toInt()   // 避让顶部弧形标题
                 val padBottom = (52 * density).toInt()// 避让底部弧边
 
-                val scrollView = object : ScrollView(ctx) {
-                    override fun fling(velocityY: Int) {
-                        super.fling(velocityY.coerceIn(-2500, 2500))
-                    }
-                }.apply {
+                val scrollView = ScrollView(ctx).apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
@@ -151,16 +146,10 @@ fun MenuScreen(
                 scrollView.addView(container)
                 scrollView.tag = holder
 
-                // 物理表冠旋转与滚轮支持：精准 60px 步进与原厂触觉齿轮微振
+                // 原生物理表冠旋转监听（附带触觉齿轮微振，直接由原生 ScrollView 满帧驱动）
                 scrollView.setOnGenericMotionListener { v, event ->
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
-                        val delta = CrownScrollHelper.extractCrownDelta(event)
-                        if (abs(delta) > 0.001f) {
-                            val stepPixels = (delta * 60f).toInt()
-                            scrollView.scrollBy(0, stepPixels)
-                            RotaryHapticManager.performScrollTick(ctx, v)
-                            return@setOnGenericMotionListener true
-                        }
+                        RotaryHapticManager.performScrollTick(ctx, v)
                     }
                     false
                 }
