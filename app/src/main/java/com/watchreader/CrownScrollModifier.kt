@@ -5,6 +5,7 @@ import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
+import android.widget.ListView
 import androidx.compose.foundation.gestures.ScrollableState
 import kotlin.math.abs
 import kotlin.math.sign
@@ -29,35 +30,24 @@ object CrownScrollHelper {
     private var accumulatedDistance = 0f
 
     /**
-     * 判断 MotionEvent 是否为合法的表冠/滚轮滚动事件（严格对齐 OPPO 官方）
+     * 判断 MotionEvent 是否为表冠滚动事件
      */
     fun isCrownScrollEvent(event: MotionEvent): Boolean {
         if (event.action != MotionEvent.ACTION_SCROLL) return false
         val source = event.source
-        return (source and InputDevice.SOURCE_CLASS_POINTER) != 0 ||
-                (source and InputDevice.SOURCE_ROTARY_ENCODER) != 0 ||
-                (source and InputDevice.SOURCE_MOUSE) != 0
+        return (source and InputDevice.SOURCE_ROTARY_ENCODER) == InputDevice.SOURCE_ROTARY_ENCODER ||
+                (source and InputDevice.SOURCE_CLASS_POINTER) != 0 ||
+                (source and InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE
     }
 
     /**
-     * 从 MotionEvent 中提取归一化的表冠滚动增量
-     * 返回值语义：> 0 表示顺时针向下滚动，< 0 表示逆时针向上回滚
+     * 极性归一化提取表冠旋转增量（向下滚动为正数 +，向上滚动为负数 -）
      */
     fun extractCrownDelta(event: MotionEvent): Float {
-        if (event.action != MotionEvent.ACTION_SCROLL) return 0f
-        val source = event.source
-
-        return if ((source and InputDevice.SOURCE_CLASS_POINTER) != 0 ||
-            (source and InputDevice.SOURCE_MOUSE) != 0) {
-            // OPPO oplus_crown 鼠标滚轮模式：AXIS_VSCROLL 向下为 -1.0，取反后变为 +1.0
-            -event.getAxisValue(MotionEvent.AXIS_VSCROLL)
-        } else if ((source and InputDevice.SOURCE_ROTARY_ENCODER) != 0) {
-            // 标准 Wear OS 旋转编码器模式：AXIS_SCROLL 向下本身为 +1.0
-            val axisScroll = event.getAxisValue(MotionEvent.AXIS_SCROLL)
-            if (abs(axisScroll) > 0.001f) axisScroll else -event.getAxisValue(MotionEvent.AXIS_VSCROLL)
-        } else {
-            0f
-        }
+        val axisScroll = event.getAxisValue(MotionEvent.AXIS_VSCROLL)
+        val axisGeneric = event.getAxisValue(MotionEvent.AXIS_SCROLL)
+        val rawDelta = if (abs(axisScroll) > 0.0001f) axisScroll else axisGeneric
+        return -rawDelta
     }
 
     /**
@@ -99,12 +89,29 @@ object CrownScrollHelper {
             rawOrPixelDelta
         }
 
-        android.util.Log.d("CrownDebug", "dispatchScroll: raw=$rawOrPixelDelta, scrollPixels=$scrollPixels")
-
         // 顺时针旋转向下滚动：使用正向 dispatchRawDelta(scrollPixels)
         scrollState.dispatchRawDelta(scrollPixels)
 
         // 每次有效旋转直接触发 1 次微振（单格对齐 1 振）
+        RotaryHapticManager.performScrollTick(context, view)
+    }
+
+    /**
+     * 原生 Android ListView 表冠滚动分发
+     */
+    fun dispatchScroll(
+        rawOrPixelDelta: Float,
+        listView: ListView,
+        context: Context?,
+        view: View? = null
+    ) {
+        if (abs(rawOrPixelDelta) < 0.001f) return
+        val scrollPixels = if (abs(rawOrPixelDelta) <= 2.5f) {
+            (rawOrPixelDelta * DEFAULT_STEP_PIXELS).toInt()
+        } else {
+            rawOrPixelDelta.toInt()
+        }
+        listView.scrollListBy(scrollPixels)
         RotaryHapticManager.performScrollTick(context, view)
     }
 

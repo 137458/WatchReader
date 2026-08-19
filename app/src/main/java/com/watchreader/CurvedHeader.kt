@@ -58,6 +58,12 @@ fun CurvedChapterHeader(
     // 缓存上一次构建 Path 的尺寸参数
     val lastRadius = remember { FloatArray(1) { -1f } }
 
+    // 预先缓存文本测量宽度，避免在每帧 drawIntoCanvas 中重复调用 measureText
+    val cachedTextWidth = remember(displayTitle, textSizePx) {
+        paint.textSize = textSizePx
+        paint.measureText(displayTitle)
+    }
+
     Canvas(
         modifier = modifier.fillMaxSize()
     ) {
@@ -90,9 +96,8 @@ fun CurvedChapterHeader(
         drawIntoCanvas { canvas ->
             val nativeCanvas = canvas.nativeCanvas
             val pathLength = pathMeasure.length
-            val textWidth = paint.measureText(displayTitle)
             // Align.LEFT 下：(弧长 - 文本宽度) / 2 确保文本中点精确落在 270° 处
-            val hOffset = maxOf(0f, (pathLength - textWidth) / 2f)
+            val hOffset = maxOf(0f, (pathLength - cachedTextWidth) / 2f)
 
             nativeCanvas.drawTextOnPath(displayTitle, path, hOffset, vOffsetPx, paint)
         }

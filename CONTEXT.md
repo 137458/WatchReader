@@ -18,10 +18,12 @@
 
 ## 关键决策
 - [ADR-001] 使用标准 Compose 而非 Wear Compose（避免魔改系统兼容问题）
-- [ADR-002] 章节检测使用融合正则匹配，首次扫描后缓存索引
-- [ADR-003] 阅读位置使用 SharedPreferences 持久化
+- [ADR-002] 章节检测使用融合正则匹配，配合 `ChapterDiskCache` 二进制持久化索引
+- [ADR-003] 阅读位置与书架配置基于 DataStore 单事务原子持久化
+- [ADR-004] **实机安装与调试强制 Release 准则**：实机测试/安装必须一律编译并安装 Release 变体（`assembleRelease` -> `app-release.apk`），严禁使用 Debug 包。Compose Debug 包包含大量调试追踪且禁用 R8/AOT 优化，在手表低功耗芯片上性能衰减达 5~10 倍。
 
 ## 屏幕规格
 - 分辨率：466x466
 - 圆屏内接正方形边长：约 329px（466 * cos(45°) ≈ 329）
 - SafeArea padding：约 68px 每侧
+

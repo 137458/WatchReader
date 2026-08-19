@@ -34,10 +34,13 @@ HSPLcom/watchreader/DataStoreManager;->parseBookShelf(Ljava/lang/String;)Ljava/u
 Lcom/watchreader/DataStoreManager;
 Lcom/watchreader/AppInitialConfig;
 
-# Chapter Detector & Text Processing Pipeline
+# Chapter Detector, Cache & Text Processing Pipeline
 HSPLcom/watchreader/ChapterDetectorKt;->detectChapters(Ljava/lang/String;)Ljava/util/List;
 HSPLcom/watchreader/ChapterDetectorKt;->findCurrentChapterIndex(Ljava/util/List;I)I
+HSPLcom/watchreader/ChapterDiskCache;->load(Landroid/content/Context;Ljava/lang/String;)Ljava/util/List;
+HSPLcom/watchreader/ChapterDiskCache;->save(Landroid/content/Context;Ljava/lang/String;Ljava/util/List;)V
 Lcom/watchreader/ChapterDetectorKt;
+Lcom/watchreader/ChapterDiskCache;
 
 # File Helper & Stream Encoding Detection
 HSPLcom/watchreader/FileHelperKt;->readTextFromUri(Landroid/content/Context;Landroid/net/Uri;)Ljava/lang/String;

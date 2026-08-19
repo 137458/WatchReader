@@ -85,12 +85,55 @@ fun ReaderScreen(
     BackHandler(onBack = onBack)
 
     val context = LocalContext.current
+    val window = (context as? Activity)?.window
+    val keepScreenOnHandler = remember { Handler(Looper.getMainLooper()) }
+    val resetInactivityKeepScreenOn = remember(window, isAutoScrolling) {
+        val timeoutMs = 5 * 60 * 1000L // 5 分钟无交互超时
+        val timeoutRunnable = Runnable {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        val trigger: () -> Unit = {
+            val flags = window?.attributes?.flags ?: 0
+            if ((flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) == 0) {
+                window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            keepScreenOnHandler.removeCallbacks(timeoutRunnable)
+            if (!isAutoScrolling) {
+                keepScreenOnHandler.postDelayed(timeoutRunnable, timeoutMs)
+            }
+        }
+        trigger
+    }
 
-    // 阅读状态下自动开启屏幕常亮，退出阅读页面时自动恢复系统省电息屏
-    DisposableEffect(Unit) {
-        val window = (context as? Activity)?.window
-        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    var activeAutoEngine by remember { mutableStateOf<AutoScrollEngine?>(null) }
+
+    // 智能后台/息屏能效冻结：切到后台或息屏时立即挂起 Choreographer 循环，返回前台自动恢复
+    DisposableEffect(lifecycleOwner, isAutoScrolling) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_PAUSE, androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                    activeAutoEngine?.stop()
+                }
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> {
+                    if (isAutoScrolling) {
+                        activeAutoEngine?.start()
+                    }
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
+    // 阅读状态下智能常亮：自动滚屏中永久常亮；静态阅读 5 分钟无操作自动释放休眠省电；退出时自动恢复
+    DisposableEffect(isAutoScrolling) {
+        resetInactivityKeepScreenOn()
+        onDispose {
+            keepScreenOnHandler.removeCallbacksAndMessages(null)
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
     }
@@ -234,6 +277,7 @@ fun ReaderScreen(
                     onNextChapterRequest = { onNextChapter() }
                 )
                 autoEngine.speedPxPerSec = autoScrollSpeed
+                activeAutoEngine = autoEngine
 
                 val holder = ReaderViewHolder(
                     scrollView = scrollView,
@@ -271,6 +315,7 @@ fun ReaderScreen(
 
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
+                            resetInactivityKeepScreenOn()
                             autoEngine.pauseTemporarily(1800L)
                             // 检测是否在左侧 18% 区域开始滑动（用于直接调光）
                             if (event.x < (70 * density)) {
@@ -290,6 +335,7 @@ fun ReaderScreen(
                             }
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            resetInactivityKeepScreenOn()
                             isLeftEdgeDrag = false
                         }
                     }
@@ -299,6 +345,7 @@ fun ReaderScreen(
                 // 表冠物理旋转监听：自动滚屏中可动态调速，未开启时正常翻页
                 scrollView.setOnGenericMotionListener { v, event ->
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
+                        resetInactivityKeepScreenOn()
                         val delta = CrownScrollHelper.extractCrownDelta(event)
                         if (autoEngine.isRunning) {
                             if (abs(delta) > 0.05f) {
@@ -527,9 +574,15 @@ fun WatchSideStatusBar(
         }
     }
 
+    val batteryText = remember(batteryLevel, isCharging) {
+        formatVerticalText("$batteryLevel%", if (isCharging) "⚡" else "")
+    }
+    val timeText = remember(currentTime) {
+        formatVerticalText(currentTime)
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         // 9 点钟方向（左侧垂直居中）：电量从上到下排
-        val batteryText = (if (isCharging) "⚡\n" else "") + "$batteryLevel%".map { it.toString() }.joinToString("\n")
         Text(
             text = batteryText,
             modifier = Modifier
@@ -545,7 +598,6 @@ fun WatchSideStatusBar(
         )
 
         // 15 点钟方向（3 点钟右侧垂直居中）：时间竖直排列
-        val timeText = currentTime.map { it.toString() }.joinToString("\n")
         Text(
             text = timeText,
             modifier = Modifier
@@ -560,6 +612,22 @@ fun WatchSideStatusBar(
             color = textColor
         )
     }
+}
+
+/**
+ * 零垃圾分配垂直单字符换行构建工具
+ */
+private fun formatVerticalText(text: CharSequence, prefix: String = ""): String {
+    if (text.isEmpty()) return prefix
+    val sb = java.lang.StringBuilder(prefix.length + text.length * 2)
+    if (prefix.isNotEmpty()) {
+        sb.append(prefix)
+    }
+    for (i in 0 until text.length) {
+        if (sb.isNotEmpty()) sb.append('\n')
+        sb.append(text[i])
+    }
+    return sb.toString()
 }
 
 private fun getBatteryCapacity(context: Context): Int {

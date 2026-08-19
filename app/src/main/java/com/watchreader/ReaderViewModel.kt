@@ -65,9 +65,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private val appCtx: Context get() = getApplication<Application>()
 
-    // 内存中持有的当前书籍文本（单份引用）
     @Volatile
-    private var cachedFullText: String = ""
+    private var currentEncoding: String = "UTF-8"
 
     // 全局章节索引内存缓存（URI+大小为 Key，二次打开 0.00ms 秒开）
     private val chapterIndexCache = ConcurrentHashMap<String, List<Chapter>>()
@@ -173,7 +172,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * 异步加载书籍文件（流式加载 + 极速提取首章）
+     * 异步加载书籍文件（按需流式加载 + 内存即时释放）
      */
     fun loadFile(uri: Uri, initialOffset: Int = 0) {
         viewModelScope.launch {
@@ -188,33 +187,52 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
             try {
                 val fileName = getFileName(appCtx, uri)
-                val (text, chapters) = withContext(Dispatchers.IO) {
-                    val fullText = readTextFromUri(appCtx, uri)
-                    if (fullText.isEmpty()) {
-                        throw IllegalStateException("文件为空或无法读取")
+                val (chapters, fullLen) = withContext(Dispatchers.IO) {
+                    currentEncoding = detectFileEncoding(appCtx, uri)
+                    val fileSize = getFileSize(appCtx, uri)
+                    val cacheKey = "${uri}_${fileSize}"
+                    var detected = chapterIndexCache[cacheKey]
+                    if (detected == null) {
+                        detected = ChapterDiskCache.load(appCtx, cacheKey)
                     }
-                    val cacheKey = "${uri}_${fullText.length}"
-                    val detected = chapterIndexCache.getOrPut(cacheKey) {
-                        detectChapters(fullText)
+
+                    var totalChars = 0
+                    if (detected == null) {
+                        // 首次分析：读取全文提取目录后立即释放 fullText 内存
+                        val fullText = readTextFromUri(appCtx, uri)
+                        if (fullText.isEmpty()) {
+                            throw IllegalStateException("文件为空或无法读取")
+                        }
+                        totalChars = fullText.length
+                        val scanned = detectChapters(fullText)
+                        ChapterDiskCache.save(appCtx, cacheKey, scanned)
+                        chapterIndexCache[cacheKey] = scanned
+                        detected = scanned
+                    } else {
+                        chapterIndexCache[cacheKey] = detected
+                        val lastChap = detected.lastOrNull()
+                        val estimated = (fileSize / (if (currentEncoding.startsWith("UTF-16")) 2 else 1)).toInt()
+                        totalChars = if (lastChap != null) {
+                            maxOf(estimated, lastChap.charOffset + 3000)
+                        } else estimated
                     }
-                    fullText to detected
+                    detected to totalChars
                 }
 
-                cachedFullText = text
                 chapterContentCache.clear()
-                val fullLen = text.length
                 val safeOffset = initialOffset.coerceIn(0, fullLen)
                 val chapterIndex = if (chapters.isNotEmpty()) {
                     findCurrentChapterIndex(chapters, safeOffset).coerceIn(0, chapters.lastIndex)
                 } else 0
 
-                val chapterContent = buildChapterContent(text, chapters, chapterIndex)
-                chapterContentCache[chapterIndex] = chapterContent
+                val chapterContent = withContext(Dispatchers.IO) {
+                    getOrLoadChapterContent(uri, chapters, chapterIndex, fullLen)
+                }
                 val chapterTitle = chapterContent.title.ifEmpty { fileName }
                 currentReadingOffset = safeOffset
 
                 // 异步预热相邻章节
-                prefetchAdjacentChapters(text, chapters, chapterIndex)
+                prefetchAdjacentChapters(uri, chapters, chapterIndex, fullLen)
 
                 val updatedShelf = withContext(Dispatchers.IO) {
                     DataStoreManager.updateBookInShelf(appCtx, uri, safeOffset, fullLen, chapterTitle)
@@ -253,61 +271,89 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * 极速跳转至指定章节（优先读取预排版缓存，0.00ms 绝对秒开）
+     * 极速跳转至指定章节（优先读取预排版缓存，未命中则流式按需分块加载）
      */
     fun goToChapter(chapterIndex: Int, targetCharOffset: Int = -1) {
         val state = _uiState.value
         val chapters = state.chapters
+        val uri = state.currentUri ?: return
         if (chapterIndex !in chapters.indices) return
 
-        val text = cachedFullText
-        val chapterContent = chapterContentCache.getOrPut(chapterIndex) {
-            buildChapterContent(text, chapters, chapterIndex)
-        }
-        val offset = if (targetCharOffset >= 0) targetCharOffset else chapterContent.startCharOffset
-        currentReadingOffset = offset
+        viewModelScope.launch {
+            val totalLen = state.fullTextLength
+            val chapterContent = chapterContentCache[chapterIndex] ?: withContext(Dispatchers.IO) {
+                getOrLoadChapterContent(uri, chapters, chapterIndex, totalLen)
+            }
+            val offset = if (targetCharOffset >= 0) targetCharOffset else chapterContent.startCharOffset
+            currentReadingOffset = offset
 
-        _uiState.update {
-            it.copy(
-                currentChapterIndex = chapterIndex,
-                currentChapterContent = chapterContent,
-                screen = Screen.Reader(offset, chapterIndex)
-            )
+            _uiState.update {
+                it.copy(
+                    currentChapterIndex = chapterIndex,
+                    currentChapterContent = chapterContent,
+                    screen = Screen.Reader(offset, chapterIndex)
+                )
+            }
+
+            // 后台异步预热周围章节
+            prefetchAdjacentChapters(uri, chapters, chapterIndex, totalLen)
+
+            val uriVal = state.currentUri
+            if (uriVal != null) {
+                savePositionJob?.cancel()
+                savePositionJob = viewModelScope.launch(Dispatchers.IO) {
+                    DataStoreManager.saveReadingPosition(appCtx, uriVal, offset, totalLen, chapterContent.title)
+                }
+            }
+        }
+    }
+
+    /**
+     * 按需获取或流式加载单章排版内容
+     */
+    private fun getOrLoadChapterContent(
+        uri: Uri,
+        chapters: List<Chapter>,
+        chapterIndex: Int,
+        totalChars: Int
+    ): ChapterContent {
+        chapterContentCache[chapterIndex]?.let { return it }
+
+        if (chapters.isEmpty() || chapterIndex !in chapters.indices) {
+            return ChapterContent(0, "", "", 0, 0, false, "", false, "")
         }
 
-        // 后台异步预热周围章节
-        prefetchAdjacentChapters(text, chapters, chapterIndex)
+        val currentChap = chapters[chapterIndex]
+        val startOffset = currentChap.charOffset.coerceIn(0, totalChars)
+        val endOffset = (if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else totalChars).coerceIn(startOffset, totalChars)
 
-        val uri = state.currentUri ?: return
-        val totalLen = state.fullTextLength
-        savePositionJob?.cancel()
-        savePositionJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(300)
-            DataStoreManager.saveReadingPosition(appCtx, uri, offset, totalLen, chapterContent.title)
-        }
+        val rawChunk = readChapterChunkFromUri(appCtx, uri, currentEncoding, startOffset, endOffset)
+        val formatted = formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset)
+        chapterContentCache[chapterIndex] = formatted
+        return formatted
     }
 
     /**
      * 异步后台预热前后相邻章节（N+1, N-1, N+2, N-2），消除翻章排版计算
      */
     private fun prefetchAdjacentChapters(
-        text: String,
+        uri: Uri,
         chapters: List<Chapter>,
-        centerIdx: Int
+        centerIdx: Int,
+        totalChars: Int
     ) {
-        if (text.isEmpty() || chapters.isEmpty()) return
+        if (chapters.isEmpty()) return
         prefetchJob?.cancel()
-        prefetchJob = viewModelScope.launch(Dispatchers.Default) {
+        prefetchJob = viewModelScope.launch(Dispatchers.IO) {
             val targets = intArrayOf(centerIdx + 1, centerIdx - 1, centerIdx + 2, centerIdx - 2)
             for (idx in targets) {
                 if (idx in chapters.indices && !chapterContentCache.containsKey(idx)) {
-                    val built = buildChapterContent(text, chapters, idx)
-                    chapterContentCache[idx] = built
+                    getOrLoadChapterContent(uri, chapters, idx, totalChars)
                 }
             }
-            // 维持轻量缓存窗口，及时释放较远章节以节省内存
-            if (chapterContentCache.size > 10) {
-                val keysToRemove = chapterContentCache.keys.filter { Math.abs(it - centerIdx) > 4 }
+            // 维持轻量缓存窗口（最多 8 章），及时释放较远章节以节省内存
+            if (chapterContentCache.size > 8) {
+                val keysToRemove = chapterContentCache.keys.filter { Math.abs(it - centerIdx) > 3 }
                 for (k in keysToRemove) {
                     chapterContentCache.remove(k)
                 }
@@ -376,7 +422,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
         savePositionJob?.cancel()
         savePositionJob = viewModelScope.launch(Dispatchers.IO) {
-            delay(500)
             val currentChapTitle = state.currentChapterContent?.title ?: ""
             DataStoreManager.saveReadingPosition(
                 appCtx,
@@ -454,7 +499,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             is Screen.Reader -> {
                 flushReadingPosition()
                 prefetchJob?.cancel()
-                cachedFullText = ""
                 chapterContentCache.clear()
                 viewModelScope.launch(Dispatchers.IO) {
                     DataStoreManager.saveLastScreen(appCtx, "home")
@@ -504,7 +548,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun closeBook() {
         flushReadingPosition()
         prefetchJob?.cancel()
-        cachedFullText = ""
         chapterContentCache.clear()
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.saveLastScreen(appCtx, "home")
@@ -529,18 +572,20 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 /**
  * 组装单个章节的正文排版与上下文信息（零中间切片、零 split 数组分配，极速单 pass 扫描）
  */
-fun buildChapterContent(
-    fullText: String,
+fun formatChapterRawText(
+    rawText: String,
     chapters: List<Chapter>,
-    chapterIndex: Int
+    chapterIndex: Int,
+    startOffset: Int,
+    endOffset: Int
 ): ChapterContent {
-    if (chapters.isEmpty() || fullText.isEmpty() || chapterIndex !in chapters.indices) {
+    if (chapters.isEmpty() || chapterIndex !in chapters.indices) {
         return ChapterContent(
             chapterIndex = 0,
             title = "",
-            formattedBody = fullText,
+            formattedBody = rawText,
             startCharOffset = 0,
-            endCharOffset = fullText.length,
+            endCharOffset = rawText.length,
             hasPrevChapter = false,
             prevChapterTitle = "",
             hasNextChapter = false,
@@ -549,33 +594,28 @@ fun buildChapterContent(
     }
 
     val currentChap = chapters[chapterIndex]
-    val startOffset = currentChap.charOffset.coerceIn(0, fullText.length)
-    val endOffset = (if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else fullText.length).coerceIn(startOffset, fullText.length)
-
-    val sliceLen = endOffset - startOffset
-    val sb = StringBuilder(sliceLen + 128)
     val chapTitle = currentChap.title.trim()
+    val sb = StringBuilder(rawText.length + 64)
 
-    var lineStart = startOffset
-    while (lineStart < endOffset) {
-        var lineEnd = fullText.indexOf('\n', lineStart)
-        if (lineEnd == -1 || lineEnd > endOffset) {
-            lineEnd = endOffset
+    var lineStart = 0
+    val textLen = rawText.length
+    while (lineStart < textLen) {
+        var lineEnd = rawText.indexOf('\n', lineStart)
+        if (lineEnd == -1) {
+            lineEnd = textLen
         }
 
-        // 跳过行首空白
         var s = lineStart
-        while (s < lineEnd && fullText[s].isWhitespace()) {
+        while (s < lineEnd && rawText[s].isWhitespace()) {
             s++
         }
-        // 跳过行尾空白
         var e = lineEnd
-        while (e > s && fullText[e - 1].isWhitespace()) {
+        while (e > s && rawText[e - 1].isWhitespace()) {
             e--
         }
 
         if (s < e) {
-            val lineText = fullText.substring(s, e)
+            val lineText = rawText.substring(s, e)
             if (sb.isEmpty() && lineText == chapTitle) {
                 // 跳过正文首行与章节标题重复的冗余行
             } else {
@@ -605,4 +645,31 @@ fun buildChapterContent(
         hasNextChapter = hasNext,
         nextChapterTitle = nextTitle
     )
+}
+
+fun buildChapterContent(
+    fullText: String,
+    chapters: List<Chapter>,
+    chapterIndex: Int
+): ChapterContent {
+    if (chapters.isEmpty() || fullText.isEmpty() || chapterIndex !in chapters.indices) {
+        return ChapterContent(
+            chapterIndex = 0,
+            title = "",
+            formattedBody = fullText,
+            startCharOffset = 0,
+            endCharOffset = fullText.length,
+            hasPrevChapter = false,
+            prevChapterTitle = "",
+            hasNextChapter = false,
+            nextChapterTitle = ""
+        )
+    }
+
+    val currentChap = chapters[chapterIndex]
+    val startOffset = currentChap.charOffset.coerceIn(0, fullText.length)
+    val endOffset = (if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else fullText.length).coerceIn(startOffset, fullText.length)
+    val rawSlice = if (startOffset < endOffset) fullText.substring(startOffset, endOffset) else ""
+
+    return formatChapterRawText(rawSlice, chapters, chapterIndex, startOffset, endOffset)
 }

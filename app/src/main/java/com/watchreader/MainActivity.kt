@@ -291,8 +291,23 @@ fun BookshelfScreen(
                 )
             }
 
-            populateBookshelf(context, container, bookshelf, fontSize, isDarkMode, errorMessage, colorScheme, onOpenFile, onOpenBook, onDeleteBook, onFontSizeChange, onToggleDarkMode)
+            val holder = createBookshelfViewHolder(context, container)
+            scrollView.tag = holder
             scrollView.addView(container)
+
+            updateBookshelfView(
+                holder = holder,
+                bookshelf = bookshelf,
+                fontSize = fontSize,
+                isDarkMode = isDarkMode,
+                errorMessage = errorMessage,
+                colors = colorScheme,
+                onOpenFile = onOpenFile,
+                onOpenBook = onOpenBook,
+                onDeleteBook = onDeleteBook,
+                onFontSizeChange = onFontSizeChange,
+                onToggleDarkMode = onToggleDarkMode
+            )
 
             scrollView.post {
                 scrollView.requestFocus()
@@ -302,43 +317,57 @@ fun BookshelfScreen(
         },
         update = { scrollView ->
             scrollView.setBackgroundColor(colorScheme.background.toArgb())
-            val container = scrollView.getChildAt(0) as? LinearLayout ?: return@AndroidView
-            populateBookshelf(scrollView.context, container, bookshelf, fontSize, isDarkMode, errorMessage, colorScheme, onOpenFile, onOpenBook, onDeleteBook, onFontSizeChange, onToggleDarkMode)
+            val holder = scrollView.tag as? BookshelfViewHolder ?: return@AndroidView
+            updateBookshelfView(
+                holder = holder,
+                bookshelf = bookshelf,
+                fontSize = fontSize,
+                isDarkMode = isDarkMode,
+                errorMessage = errorMessage,
+                colors = colorScheme,
+                onOpenFile = onOpenFile,
+                onOpenBook = onOpenBook,
+                onDeleteBook = onDeleteBook,
+                onFontSizeChange = onFontSizeChange,
+                onToggleDarkMode = onToggleDarkMode
+            )
         }
     )
 }
 
+private class BookshelfViewHolder(
+    val container: LinearLayout,
+    val headerLayout: LinearLayout,
+    val titleTv: TextView,
+    val themeBtn: TextView,
+    val importBtn: TextView,
+    val errTv: TextView,
+    val cardsContainer: LinearLayout,
+    val emptyLayout: LinearLayout,
+    val emptyTv: TextView,
+    val pickBtn: TextView,
+    val fontLayout: LinearLayout,
+    val fontLabel: TextView,
+    val fontMinus: TextView,
+    val fontSizeVal: TextView,
+    val fontPlus: TextView,
+    val cardHolders: MutableList<BookCardHolder> = mutableListOf()
+)
+
+private class BookCardHolder(
+    val card: FrameLayout,
+    val bookTitle: TextView,
+    val bookSub: TextView,
+    val delBtn: TextView
+)
+
 /**
- * 构建书架视图内容
+ * 首次初始化构建骨架 View
  */
-private fun populateBookshelf(
-    context: Context,
-    container: LinearLayout,
-    bookshelf: List<BookItem>,
-    fontSize: Int,
-    isDarkMode: Boolean,
-    errorMessage: String?,
-    colors: ColorScheme,
-    onOpenFile: () -> Unit,
-    onOpenBook: (BookItem) -> Unit,
-    onDeleteBook: (BookItem) -> Unit,
-    onFontSizeChange: (Int) -> Unit,
-    onToggleDarkMode: () -> Unit
-) {
+private fun createBookshelfViewHolder(context: Context, container: LinearLayout): BookshelfViewHolder {
     val density = context.resources.displayMetrics.density
-    container.removeAllViews()
 
-    val primaryColor = colors.primary.toArgb()
-    val onBgColor = colors.onBackground.toArgb()
-    val secondaryColor = colors.secondary.toArgb()
-    val surfaceColor = colors.surface.toArgb()
-    val surfaceVariantColor = colors.surfaceVariant.toArgb()
-    val onSurfaceVariantColor = colors.onSurfaceVariant.toArgb()
-    val onSurfaceColor = colors.onSurface.toArgb()
-    val outlineColor = colors.outline.toArgb()
-    val errorColor = colors.error.toArgb()
-
-    // 1. 顶部标题与功能按钮栏
+    // 1. 顶部栏
     val headerLayout = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         layoutParams = LinearLayout.LayoutParams(
@@ -353,22 +382,14 @@ private fun populateBookshelf(
     val titleTv = TextView(context).apply {
         text = "我的书架"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        setTextColor(primaryColor)
         typeface = Typeface.DEFAULT_BOLD
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
     }
     headerLayout.addView(titleTv)
 
-    // 深色模式切换按钮
     val themeBtn = TextView(context).apply {
-        text = if (isDarkMode) "🌙 深色" else "☀️ 浅色"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        setTextColor(onSurfaceVariantColor)
         typeface = Typeface.DEFAULT_BOLD
-        background = GradientDrawable().apply {
-            setColor(surfaceVariantColor)
-            cornerRadius = 13 * density
-        }
         setPadding((8 * density).toInt(), (5 * density).toInt(), (8 * density).toInt(), (5 * density).toInt())
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -376,146 +397,68 @@ private fun populateBookshelf(
         ).apply {
             setMargins(0, 0, (6 * density).toInt(), 0)
         }
-        setOnClickListener { onToggleDarkMode() }
     }
     headerLayout.addView(themeBtn)
 
-    // 导入按钮
     val importBtn = TextView(context).apply {
         text = "+ 导入"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
-        setTextColor(secondaryColor)
         typeface = Typeface.DEFAULT_BOLD
-        background = GradientDrawable().apply {
-            setColor(surfaceVariantColor)
-            cornerRadius = 13 * density
-        }
         setPadding((10 * density).toInt(), (5 * density).toInt(), (10 * density).toInt(), (5 * density).toInt())
-        setOnClickListener { onOpenFile() }
     }
     headerLayout.addView(importBtn)
     container.addView(headerLayout)
 
-    // 2. 错误信息展示
-    if (errorMessage != null) {
-        val errTv = TextView(context).apply {
-            text = errorMessage
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            setTextColor(errorColor)
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, (6 * density).toInt())
+    // 2. 错误提示
+    val errTv = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+        gravity = Gravity.CENTER
+        setPadding(0, 0, 0, (6 * density).toInt())
+        visibility = View.GONE
+    }
+    container.addView(errTv)
+
+    // 3. 卡片容器
+    val cardsContainer = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    }
+    container.addView(cardsContainer)
+
+    // 4. 空书架布局
+    val emptyLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, (16 * density).toInt(), 0, (16 * density).toInt())
         }
-        container.addView(errTv)
+        gravity = Gravity.CENTER_HORIZONTAL
+        visibility = View.GONE
     }
 
-    // 3. 书籍列表
-    if (bookshelf.isNotEmpty()) {
-        for (book in bookshelf) {
-            val card = FrameLayout(context).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    setMargins(0, 0, 0, (8 * density).toInt())
-                }
-                background = GradientDrawable().apply {
-                    setColor(surfaceColor)
-                    cornerRadius = 14 * density
-                }
-                setPadding((12 * density).toInt(), (10 * density).toInt(), (8 * density).toInt(), (10 * density).toInt())
-                isClickable = true
-                setOnClickListener { onOpenBook(book) }
-            }
-
-            val cardContent = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-                gravity = Gravity.CENTER_VERTICAL
-            }
-
-            val infoLayout = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            }
-
-            val bookTitle = TextView(context).apply {
-                text = book.title
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-                setTextColor(onBgColor)
-                typeface = Typeface.DEFAULT_BOLD
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-            }
-            infoLayout.addView(bookTitle)
-
-            val progressText = if (book.progressPercent > 0) "已读 ${book.progressPercent}%" else "未读"
-            val chapterSub = if (book.lastChapterTitle.isNotEmpty()) " · ${book.lastChapterTitle}" else ""
-            val bookSub = TextView(context).apply {
-                text = "$progressText$chapterSub"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-                setTextColor(onSurfaceVariantColor)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, (2 * density).toInt(), 0, 0)
-            }
-            infoLayout.addView(bookSub)
-            cardContent.addView(infoLayout)
-
-            // 删除按钮
-            val delBtn = TextView(context).apply {
-                text = "✕"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setTextColor(outlineColor)
-                setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
-                setOnClickListener { onDeleteBook(book) }
-            }
-            cardContent.addView(delBtn)
-
-            card.addView(cardContent)
-            container.addView(card)
-        }
-    } else {
-        // 空书架提示
-        val emptyLayout = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, (16 * density).toInt(), 0, (16 * density).toInt())
-            }
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
-
-        val emptyTv = TextView(context).apply {
-            text = "书架空空如也"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(onSurfaceVariantColor)
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, (10 * density).toInt())
-        }
-        emptyLayout.addView(emptyTv)
-
-        val pickBtn = TextView(context).apply {
-            text = "选择本地 TXT 小说"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            setTextColor(primaryColor)
-            typeface = Typeface.DEFAULT_BOLD
-            background = GradientDrawable().apply {
-                setColor(surfaceVariantColor)
-                cornerRadius = 16 * density
-            }
-            setPadding((16 * density).toInt(), (8 * density).toInt(), (16 * density).toInt(), (8 * density).toInt())
-            setOnClickListener { onOpenFile() }
-        }
-        emptyLayout.addView(pickBtn)
-        container.addView(emptyLayout)
+    val emptyTv = TextView(context).apply {
+        text = "书架空空如也"
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        gravity = Gravity.CENTER
+        setPadding(0, 0, 0, (10 * density).toInt())
     }
+    emptyLayout.addView(emptyTv)
 
-    // 4. 字号调节底栏
+    val pickBtn = TextView(context).apply {
+        text = "选择本地 TXT 小说"
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        typeface = Typeface.DEFAULT_BOLD
+        setPadding((16 * density).toInt(), (8 * density).toInt(), (16 * density).toInt(), (8 * density).toInt())
+    }
+    emptyLayout.addView(pickBtn)
+    container.addView(emptyLayout)
+
+    // 5. 字号调节底栏
     val fontLayout = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         layoutParams = LinearLayout.LayoutParams(
@@ -530,23 +473,18 @@ private fun populateBookshelf(
     val fontLabel = TextView(context).apply {
         text = "字号:"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        setTextColor(onSurfaceVariantColor)
     }
     fontLayout.addView(fontLabel)
 
     val fontMinus = TextView(context).apply {
         text = "  A-  "
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        setTextColor(onSurfaceVariantColor)
         setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
-        setOnClickListener { onFontSizeChange(fontSize - 1) }
     }
     fontLayout.addView(fontMinus)
 
     val fontSizeVal = TextView(context).apply {
-        text = "$fontSize"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        setTextColor(onSurfaceColor)
         setPadding((4 * density).toInt(), 0, (4 * density).toInt(), 0)
     }
     fontLayout.addView(fontSizeVal)
@@ -554,13 +492,219 @@ private fun populateBookshelf(
     val fontPlus = TextView(context).apply {
         text = "  A+  "
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        setTextColor(secondaryColor)
         setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
-        setOnClickListener { onFontSizeChange(fontSize + 1) }
     }
     fontLayout.addView(fontPlus)
-
     container.addView(fontLayout)
+
+    return BookshelfViewHolder(
+        container = container,
+        headerLayout = headerLayout,
+        titleTv = titleTv,
+        themeBtn = themeBtn,
+        importBtn = importBtn,
+        errTv = errTv,
+        cardsContainer = cardsContainer,
+        emptyLayout = emptyLayout,
+        emptyTv = emptyTv,
+        pickBtn = pickBtn,
+        fontLayout = fontLayout,
+        fontLabel = fontLabel,
+        fontMinus = fontMinus,
+        fontSizeVal = fontSizeVal,
+        fontPlus = fontPlus
+    )
+}
+
+/**
+ * 0 销毁、0 重新分配地就地刷新书架数据与颜色
+ */
+private fun updateBookshelfView(
+    holder: BookshelfViewHolder,
+    bookshelf: List<BookItem>,
+    fontSize: Int,
+    isDarkMode: Boolean,
+    errorMessage: String?,
+    colors: ColorScheme,
+    onOpenFile: () -> Unit,
+    onOpenBook: (BookItem) -> Unit,
+    onDeleteBook: (BookItem) -> Unit,
+    onFontSizeChange: (Int) -> Unit,
+    onToggleDarkMode: () -> Unit
+) {
+    val context = holder.container.context
+    val density = context.resources.displayMetrics.density
+
+    val primaryColor = colors.primary.toArgb()
+    val onBgColor = colors.onBackground.toArgb()
+    val secondaryColor = colors.secondary.toArgb()
+    val surfaceColor = colors.surface.toArgb()
+    val surfaceVariantColor = colors.surfaceVariant.toArgb()
+    val onSurfaceVariantColor = colors.onSurfaceVariant.toArgb()
+    val onSurfaceColor = colors.onSurface.toArgb()
+    val outlineColor = colors.outline.toArgb()
+    val errorColor = colors.error.toArgb()
+
+    // 1. 顶部栏更新
+    holder.titleTv.setTextColor(primaryColor)
+    holder.themeBtn.apply {
+        text = if (isDarkMode) "🌙 深色" else "☀️ 浅色"
+        setTextColor(onSurfaceVariantColor)
+        background = GradientDrawable().apply {
+            setColor(surfaceVariantColor)
+            cornerRadius = 13 * density
+        }
+        setOnClickListener { onToggleDarkMode() }
+    }
+
+    holder.importBtn.apply {
+        setTextColor(secondaryColor)
+        background = GradientDrawable().apply {
+            setColor(surfaceVariantColor)
+            cornerRadius = 13 * density
+        }
+        setOnClickListener { onOpenFile() }
+    }
+
+    // 2. 错误信息展示
+    if (errorMessage != null) {
+        holder.errTv.text = errorMessage
+        holder.errTv.setTextColor(errorColor)
+        holder.errTv.visibility = View.VISIBLE
+    } else {
+        holder.errTv.visibility = View.GONE
+    }
+
+    // 3. 书架卡片复用与绑定
+    if (bookshelf.isNotEmpty()) {
+        holder.emptyLayout.visibility = View.GONE
+        holder.cardsContainer.visibility = View.VISIBLE
+
+        for (i in bookshelf.indices) {
+            val book = bookshelf[i]
+            val cardHolder: BookCardHolder
+            if (i < holder.cardHolders.size) {
+                cardHolder = holder.cardHolders[i]
+                cardHolder.card.visibility = View.VISIBLE
+            } else {
+                cardHolder = createBookCardHolder(context, density)
+                holder.cardHolders.add(cardHolder)
+                holder.cardsContainer.addView(cardHolder.card)
+            }
+
+            // 就地更新卡片数据与外观
+            cardHolder.card.apply {
+                background = GradientDrawable().apply {
+                    setColor(surfaceColor)
+                    cornerRadius = 14 * density
+                }
+                setOnClickListener { onOpenBook(book) }
+            }
+
+            cardHolder.bookTitle.apply {
+                text = book.title
+                setTextColor(onBgColor)
+            }
+
+            val progressText = if (book.progressPercent > 0) "已读 ${book.progressPercent}%" else "未读"
+            val chapterSub = if (book.lastChapterTitle.isNotEmpty()) " · ${book.lastChapterTitle}" else ""
+            cardHolder.bookSub.apply {
+                text = "$progressText$chapterSub"
+                setTextColor(onSurfaceVariantColor)
+            }
+
+            cardHolder.delBtn.apply {
+                setTextColor(outlineColor)
+                setOnClickListener { onDeleteBook(book) }
+            }
+        }
+
+        // 隐藏多余的卡片
+        for (i in bookshelf.size until holder.cardHolders.size) {
+            holder.cardHolders[i].card.visibility = View.GONE
+        }
+    } else {
+        holder.cardsContainer.visibility = View.GONE
+        holder.emptyLayout.visibility = View.VISIBLE
+        holder.emptyTv.setTextColor(onSurfaceVariantColor)
+        holder.pickBtn.apply {
+            setTextColor(primaryColor)
+            background = GradientDrawable().apply {
+                setColor(surfaceVariantColor)
+                cornerRadius = 16 * density
+            }
+            setOnClickListener { onOpenFile() }
+        }
+    }
+
+    // 4. 字号底栏更新
+    holder.fontLabel.setTextColor(onSurfaceVariantColor)
+    holder.fontMinus.apply {
+        setTextColor(onSurfaceVariantColor)
+        setOnClickListener { onFontSizeChange(fontSize - 1) }
+    }
+    holder.fontSizeVal.apply {
+        text = "$fontSize"
+        setTextColor(onSurfaceColor)
+    }
+    holder.fontPlus.apply {
+        setTextColor(secondaryColor)
+        setOnClickListener { onFontSizeChange(fontSize + 1) }
+    }
+}
+
+private fun createBookCardHolder(context: Context, density: Float): BookCardHolder {
+    val card = FrameLayout(context).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, (8 * density).toInt())
+        }
+        setPadding((12 * density).toInt(), (10 * density).toInt(), (8 * density).toInt(), (10 * density).toInt())
+        isClickable = true
+    }
+
+    val cardContent = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutParams = FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        gravity = Gravity.CENTER_VERTICAL
+    }
+
+    val infoLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+    }
+
+    val bookTitle = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        typeface = Typeface.DEFAULT_BOLD
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+    }
+    infoLayout.addView(bookTitle)
+
+    val bookSub = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        setPadding(0, (2 * density).toInt(), 0, 0)
+    }
+    infoLayout.addView(bookSub)
+    cardContent.addView(infoLayout)
+
+    val delBtn = TextView(context).apply {
+        text = "✕"
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
+    }
+    cardContent.addView(delBtn)
+
+    card.addView(cardContent)
+    return BookCardHolder(card, bookTitle, bookSub, delBtn)
 }
 
 /**

@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.os.SystemClock
 import android.util.Log
 import android.view.HapticFeedbackConstants
 import android.view.View
@@ -72,33 +73,33 @@ object RotaryHapticManager {
                 Log.d(TAG, "initOplusLinearmotor: service = $service")
                 if (service != null) {
                     val serviceClass = service.javaClass
-                    val hasMotorMethod = serviceClass.getMethod("hasLinearMotorVibrator")
+                    val hasMotorMethod = serviceClass.getMethod("hasLinearMotorVibrator").apply { isAccessible = true }
                     val hasMotor = hasMotorMethod.invoke(service) as? Boolean ?: false
                     Log.d(TAG, "initOplusLinearmotor: hasLinearMotor = $hasMotor")
 
                     if (hasMotor) {
                         oplusLinearMotorService = service
                         val builderClass = Class.forName("android.os.linearmotorvibrator.WaveformEffect\$Builder")
-                        val buildMethod = builderClass.getMethod("build")
-                        val setStrengthMethod = builderClass.getMethod("setEffectStrength", Int::class.javaPrimitiveType)
-                        val setTypeMethod = builderClass.getMethod("setEffectType", Int::class.javaPrimitiveType)
-                        val setLoopMethod = builderClass.getMethod("setEffectLoop", Boolean::class.javaPrimitiveType)
+                        val buildMethod = builderClass.getMethod("build").apply { isAccessible = true }
+                        val setStrengthMethod = builderClass.getMethod("setEffectStrength", Int::class.javaPrimitiveType).apply { isAccessible = true }
+                        val setTypeMethod = builderClass.getMethod("setEffectType", Int::class.javaPrimitiveType).apply { isAccessible = true }
+                        val setLoopMethod = builderClass.getMethod("setEffectLoop", Boolean::class.javaPrimitiveType).apply { isAccessible = true }
 
                         // 构造 302 官方表冠齿轮微振波形 (EffectType.CROWN_TICK)
-                        val tickBuilder = builderClass.getDeclaredConstructor().newInstance()
+                        val tickBuilder = builderClass.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
                         setStrengthMethod.invoke(tickBuilder, 2)
                         setTypeMethod.invoke(tickBuilder, 302)
                         setLoopMethod.invoke(tickBuilder, false)
                         oplusPrebuiltTickEffect = buildMethod.invoke(tickBuilder)
 
                         // 构造 301 触底边界波形
-                        val boundaryBuilder = builderClass.getDeclaredConstructor().newInstance()
+                        val boundaryBuilder = builderClass.getDeclaredConstructor().apply { isAccessible = true }.newInstance()
                         setStrengthMethod.invoke(boundaryBuilder, 2)
                         setTypeMethod.invoke(boundaryBuilder, 301)
                         setLoopMethod.invoke(boundaryBuilder, false)
                         oplusPrebuiltBoundaryEffect = buildMethod.invoke(boundaryBuilder)
 
-                        oplusVibrateMethod = serviceClass.getMethod("vibrate", oplusPrebuiltTickEffect!!.javaClass)
+                        oplusVibrateMethod = serviceClass.getMethod("vibrate", oplusPrebuiltTickEffect!!.javaClass).apply { isAccessible = true }
                         Log.i(TAG, "OPPO Official Linearmotor initialized successfully (Waveform 302)")
                     }
                 }
@@ -132,7 +133,7 @@ object RotaryHapticManager {
      * 触发表冠旋转一格时的微振反馈（优先原厂 302 齿轮微振，杜绝长蜂鸣与尾随振动）
      */
     fun performScrollTick(context: Context?, view: View? = null) {
-        val now = System.currentTimeMillis()
+        val now = SystemClock.uptimeMillis()
         if (now - lastVibrateTime < MIN_TICK_INTERVAL_MS) {
             return
         }

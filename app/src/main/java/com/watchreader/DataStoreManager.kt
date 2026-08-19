@@ -168,12 +168,35 @@ object DataStoreManager {
         totalChars: Int = 0,
         chapterTitle: String = ""
     ) {
+        val uriStr = uri.toString()
         context.dataStore.edit { prefs ->
-            prefs[KEY_LAST_URI] = uri.toString()
+            prefs[KEY_LAST_URI] = uriStr
             prefs[KEY_LAST_CHAR_OFFSET] = charOffset
             prefs[KEY_LAST_SCREEN] = "reader"
+
+            // 单次原子事务同步更新书架记录，消除二次磁盘 I/O 写入
+            val currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]).toMutableList()
+            val existingIdx = currentList.indexOfFirst { it.uriString == uriStr }
+            val title = if (existingIdx >= 0) currentList[existingIdx].title else getFileName(context, uri)
+            val total = if (totalChars > 0) totalChars else (if (existingIdx >= 0) currentList[existingIdx].totalChars else 0)
+            val chapter = if (chapterTitle.isNotEmpty()) chapterTitle else (if (existingIdx >= 0) currentList[existingIdx].lastChapterTitle else "")
+
+            val updatedItem = BookItem(
+                uriString = uriStr,
+                title = title,
+                charOffset = charOffset,
+                totalChars = total,
+                lastChapterTitle = chapter,
+                lastReadTime = System.currentTimeMillis()
+            )
+
+            if (existingIdx >= 0) {
+                currentList[existingIdx] = updatedItem
+            } else {
+                currentList.add(0, updatedItem)
+            }
+            prefs[KEY_BOOK_SHELF] = serializeBookShelf(currentList)
         }
-        updateBookInShelf(context, uri, charOffset, totalChars, chapterTitle)
     }
 
     suspend fun loadReadingPosition(context: Context): Pair<Uri, Int>? {
@@ -214,41 +237,48 @@ object DataStoreManager {
         chapterTitle: String = ""
     ): List<BookItem> {
         val uriStr = uri.toString()
-        val currentList = loadBookShelf(context).toMutableList()
-        val existingIdx = currentList.indexOfFirst { it.uriString == uriStr }
-        val title = if (existingIdx >= 0) currentList[existingIdx].title else getFileName(context, uri)
-        val total = if (totalChars > 0) totalChars else (if (existingIdx >= 0) currentList[existingIdx].totalChars else 0)
-        val chapter = if (chapterTitle.isNotEmpty()) chapterTitle else (if (existingIdx >= 0) currentList[existingIdx].lastChapterTitle else "")
+        var resultList: List<BookItem> = emptyList()
+        context.dataStore.edit { prefs ->
+            val currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]).toMutableList()
+            val existingIdx = currentList.indexOfFirst { it.uriString == uriStr }
+            val title = if (existingIdx >= 0) currentList[existingIdx].title else getFileName(context, uri)
+            val total = if (totalChars > 0) totalChars else (if (existingIdx >= 0) currentList[existingIdx].totalChars else 0)
+            val chapter = if (chapterTitle.isNotEmpty()) chapterTitle else (if (existingIdx >= 0) currentList[existingIdx].lastChapterTitle else "")
 
-        val updatedItem = BookItem(
-            uriString = uriStr,
-            title = title,
-            charOffset = charOffset,
-            totalChars = total,
-            lastChapterTitle = chapter,
-            lastReadTime = System.currentTimeMillis()
-        )
+            val updatedItem = BookItem(
+                uriString = uriStr,
+                title = title,
+                charOffset = charOffset,
+                totalChars = total,
+                lastChapterTitle = chapter,
+                lastReadTime = System.currentTimeMillis()
+            )
 
-        if (existingIdx >= 0) {
-            currentList[existingIdx] = updatedItem
-        } else {
-            currentList.add(0, updatedItem)
+            if (existingIdx >= 0) {
+                currentList[existingIdx] = updatedItem
+            } else {
+                currentList.add(0, updatedItem)
+            }
+
+            prefs[KEY_BOOK_SHELF] = serializeBookShelf(currentList)
+            resultList = currentList
         }
-
-        saveBookShelfList(context, currentList)
-        return currentList
+        return resultList
     }
 
     suspend fun removeBookFromShelf(context: Context, uriString: String) {
-        val currentList = loadBookShelf(context).filter { it.uriString != uriString }
-        saveBookShelfList(context, currentList)
-        val prefs = getSafePreferencesFlow(context).first()
-        if (prefs[KEY_LAST_URI] == uriString) {
-            clearReadingPosition(context)
+        context.dataStore.edit { prefs ->
+            val currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]).filter { it.uriString != uriString }
+            prefs[KEY_BOOK_SHELF] = serializeBookShelf(currentList)
+            if (prefs[KEY_LAST_URI] == uriString) {
+                prefs.remove(KEY_LAST_URI)
+                prefs.remove(KEY_LAST_CHAR_OFFSET)
+                prefs[KEY_LAST_SCREEN] = "home"
+            }
         }
     }
 
-    private suspend fun saveBookShelfList(context: Context, list: List<BookItem>) {
+    fun serializeBookShelf(list: List<BookItem>): String {
         val array = JSONArray()
         for (item in list) {
             val obj = JSONObject().apply {
@@ -261,9 +291,7 @@ object DataStoreManager {
             }
             array.put(obj)
         }
-        context.dataStore.edit { prefs ->
-            prefs[KEY_BOOK_SHELF] = array.toString()
-        }
+        return array.toString()
     }
 
     fun parseBookShelf(jsonStr: String?): List<BookItem> {
