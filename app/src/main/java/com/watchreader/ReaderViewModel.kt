@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.abs
 
 /**
  * 单章正文内容模型（轻量化渲染单元）
@@ -758,18 +759,37 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun getCurrentReadingOffset(): Int = currentReadingOffset
 
+    private var rsvpRotaryAccumulator = 0f
+    private var lastRotaryTimeMs = 0L
+
     /**
-     * 响应硬件物理表冠旋转（直接接管 RSVP 调速等全局逻辑）
+     * 响应硬件物理表冠旋转（带平滑防抖累加器，避免灵敏度过高骤变）
      */
     fun handleRotaryScroll(delta: Float): Boolean {
         when (_uiState.value.screen) {
             is Screen.Rsvp -> {
-                val step = if (delta > 0) 25f else -25f
-                val current = _uiState.value.rsvpSpeed
-                val newSpeed = (current + step).coerceIn(100f, 900f)
-                if (newSpeed != current) {
-                    _uiState.update { it.copy(rsvpSpeed = newSpeed) }
-                    RotaryHapticManager.performScrollTick(appCtx, null)
+                val now = System.currentTimeMillis()
+                if (now - lastRotaryTimeMs > 350L) {
+                    rsvpRotaryAccumulator = 0f
+                }
+                lastRotaryTimeMs = now
+
+                rsvpRotaryAccumulator += delta
+
+                // 根据 delta 粒度自适应门限（档位值 ±1.0 或 像素值 ±28px）
+                val threshold = if (abs(delta) < 5f) 1.0f else 28f
+                
+                if (abs(rsvpRotaryAccumulator) >= threshold) {
+                    val notches = (rsvpRotaryAccumulator / threshold).toInt()
+                    rsvpRotaryAccumulator -= notches * threshold
+
+                    val step = notches * 15f // 每格刻度平滑微调 15 字/分
+                    val current = _uiState.value.rsvpSpeed
+                    val newSpeed = (current + step).coerceIn(100f, 900f)
+                    if (newSpeed != current) {
+                        _uiState.update { it.copy(rsvpSpeed = newSpeed) }
+                        RotaryHapticManager.performScrollTick(appCtx, null)
+                    }
                 }
                 return true
             }
