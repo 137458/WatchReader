@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -26,6 +27,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 
 /**
  * RSVP 单个词元单元
@@ -37,7 +39,7 @@ data class RsvpToken(
 )
 
 /**
- * RSVP 动态闪读 / 单行速读屏幕（极简纯粹防裁切 + 物理表冠调速）
+ * RSVP 动态闪读 / 单行速读屏幕（极简防裁切 + 物理表冠高精度调速 + 触屏档位切换）
  */
 @Composable
 fun RsvpScreen(
@@ -91,13 +93,13 @@ fun RsvpScreen(
 
     val currentToken = if (tokens.isNotEmpty() && currentIndex in tokens.indices) tokens[currentIndex] else null
 
-    // 闪读主时钟循环
+    // 闪读主时钟循环（响应 wordsPerMinute 毫秒级动态调速）
     LaunchedEffect(isPlaying, currentIndex, wordsPerMinute, tokens) {
         if (!isPlaying || tokens.isEmpty()) return@LaunchedEffect
 
         val token = tokens.getOrNull(currentIndex) ?: return@LaunchedEffect
         val baseDelayMs = (60_000f / wordsPerMinute) * (token.text.length / 2.5f).coerceIn(0.7f, 1.8f)
-        val actualDelay = (baseDelayMs * token.pauseMultiplier).toLong().coerceIn(60L, 1200L)
+        val actualDelay = (baseDelayMs * token.pauseMultiplier).toLong().coerceIn(40L, 1200L)
 
         delay(actualDelay)
 
@@ -120,6 +122,17 @@ fun RsvpScreen(
             .background(colorScheme.background)
             .focusRequester(focusRequester)
             .focusable()
+            // 表冠物理旋转监听（Compose 辅助通道）
+            .onRotaryScrollEvent { event ->
+                val delta = event.verticalScrollPixels
+                if (abs(delta) > 0.5f) {
+                    val step = if (delta > 0) 25f else -25f
+                    val newSpeed = (wordsPerMinute + step).coerceIn(100f, 900f)
+                    onSpeedChange(newSpeed)
+                    RotaryHapticManager.performScrollTick(context, null)
+                    true
+                } else false
+            }
             // 右滑手势极速退出返回阅读
             .pointerInput(Unit) {
                 detectHorizontalDragGestures { _, dragAmount ->
@@ -130,13 +143,13 @@ fun RsvpScreen(
             },
         contentAlignment = Alignment.Center
     ) {
-        // 顶部圆周弧形章节标题
+        // 1. 顶部圆周弧形章节标题
         CurvedChapterHeader(
             title = chapterContent?.title ?: "闪读模式",
             modifier = Modifier.align(Alignment.TopCenter)
         )
 
-        // 顶部透明点击感应区（点击顶部直接返回）
+        // 2. 顶部透明点击感应区（点击顶部直接退出）
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -149,13 +162,13 @@ fun RsvpScreen(
                 )
         )
 
-        // 侧边弧形电量与时间
+        // 3. 侧边弧形电量与时间
         CurvedSideStatusBar(
             modifier = Modifier.fillMaxSize(),
             textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
         )
 
-        // 屏幕正中心 RSVP 闪读文字呈现区（轻触中央切换暂停/播放）
+        // 4. 屏幕正中心 RSVP 闪读文字呈现区（轻触中央切换 暂停/继续）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -202,15 +215,15 @@ fun RsvpScreen(
             )
         }
 
-        // 底部极简胶囊操作栏（高度抬升至 safe area，杜绝任何边缘裁切）
+        // 5. 底部极简操作胶囊（边距 30dp，彻底规避 466x466 圆屏底弧裁切）
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 26.dp),
+                .padding(bottom = 30.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 退出按钮
+            // ‹ 退出
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
@@ -219,32 +232,48 @@ fun RsvpScreen(
                         RotaryHapticManager.performScrollTick(context, null)
                         onBack()
                     }
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = "‹ 退出",
-                    style = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold, color = colorScheme.onSurfaceVariant)
+                    style = TextStyle(
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colorScheme.onSurfaceVariant
+                    )
                 )
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
-            // 速度/播放状态胶囊（提示旋转表冠调速）
+            // 速度/播放状态胶囊（点击可循环切换预设档位，旋转表冠可任意线性微调）
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(14.dp))
                     .background(colorScheme.surfaceVariant.copy(alpha = 0.92f))
                     .clickable {
-                        isPlaying = !isPlaying
+                        // 点击循环档位：250 -> 350 -> 450 -> 600 -> 800 -> 250
+                        val nextSpeed = when {
+                            wordsPerMinute < 300f -> 350f
+                            wordsPerMinute < 400f -> 450f
+                            wordsPerMinute < 550f -> 600f
+                            wordsPerMinute < 750f -> 800f
+                            else -> 250f
+                        }
+                        onSpeedChange(nextSpeed)
                         RotaryHapticManager.performScrollTick(context, null)
                     }
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = if (isPlaying) "⏸ ${wordsPerMinute.toInt()}字/分" else "▶ 继续",
-                    style = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = colorScheme.primary)
+                    text = if (isPlaying) "⚡ ${wordsPerMinute.toInt()}字/分" else "▶ 点击继续",
+                    style = TextStyle(
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colorScheme.primary
+                    )
                 )
             }
         }

@@ -28,6 +28,7 @@ import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -291,12 +292,9 @@ class MainActivity : ComponentActivity() {
      * 响应硬件物理表冠滚动事件
      */
     override fun onGenericMotionEvent(event: MotionEvent?): Boolean {
-        if (event != null && event.action == MotionEvent.ACTION_SCROLL) {
-            val axis = event.getAxisValue(MotionEvent.AXIS_SCROLL).let {
-                if (it == 0f) event.getAxisValue(MotionEvent.AXIS_VSCROLL) else it
-            }
-            if (axis != 0f) {
-                val delta = -axis
+        if (event != null && CrownScrollHelper.isCrownScrollEvent(event)) {
+            val delta = CrownScrollHelper.extractCrownDelta(event)
+            if (abs(delta) > 0.001f) {
                 if (viewModel.handleRotaryScroll(delta)) {
                     return true
                 }
