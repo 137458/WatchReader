@@ -220,6 +220,36 @@ object RotaryHapticManager {
             }
         } catch (_: Throwable) {}
     }
+
+    /**
+     * 成功完成（如 Wi-Fi 传书接收成功 / 书签保存成功）的双重确认振感
+     */
+    fun performSuccessFeedback(context: Context?) {
+        if (context == null) return
+        try {
+            if (!oplusLinearMotorInitialized) {
+                initOplusLinearmotor(context)
+            }
+            if (oplusLinearMotorService != null && oplusVibrateMethod != null && oplusPrebuiltBoundaryEffect != null) {
+                oplusVibrateMethod!!.invoke(oplusLinearMotorService, oplusPrebuiltBoundaryEffect)
+                return
+            }
+        } catch (_: Throwable) {}
+
+        try {
+            val vibrator = getVibratorFast(context)
+            if (vibrator != null && vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val timings = longArrayOf(0, 30, 60, 45)
+                    val amplitudes = intArrayOf(0, 200, 0, 255)
+                    vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1), touchAudioAttributes)
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(longArrayOf(0, 30, 60, 45), -1)
+                }
+            }
+        } catch (_: Throwable) {}
+    }
 }
 
 

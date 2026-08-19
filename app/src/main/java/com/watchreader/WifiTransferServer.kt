@@ -362,6 +362,7 @@ class WifiTransferServer(
             DataStoreManager.updateBookInShelf(context, uri, 0, file.length().toInt(), "新导入")
         }
         _uploadedCount.value += 1
+        RotaryHapticManager.performSuccessFeedback(context)
         onBookUploaded?.invoke(bookItem)
 
         val responseJson = """{"status":"ok","fileName":"$fileName"}"""
