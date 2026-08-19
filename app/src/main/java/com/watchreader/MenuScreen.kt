@@ -146,11 +146,8 @@ fun MenuScreen(
                 scrollView.addView(container)
                 scrollView.tag = holder
 
-                // 原生物理表冠旋转监听（附带触觉齿轮微振，直接由原生 ScrollView 满帧驱动）
-                scrollView.setOnGenericMotionListener { v, event ->
-                    if (CrownScrollHelper.isCrownScrollEvent(event)) {
-                        RotaryHapticManager.performScrollTick(ctx, v)
-                    }
+                // 原生物理表冠旋转监听（完全对齐 ReaderScreen：由原生 ScrollView 满帧驱动并由系统分发微振）
+                scrollView.setOnGenericMotionListener { _, _ ->
                     false
                 }
 

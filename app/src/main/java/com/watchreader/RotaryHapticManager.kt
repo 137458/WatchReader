@@ -129,7 +129,7 @@ object RotaryHapticManager {
     }
 
     /**
-     * 触发表冠旋转一格时的微振反馈（双通道保障：Linearmotor 302 + 硬件 Vibrator 25ms 强力微脉冲）
+     * 触发表冠旋转一格时的微振反馈（优先原厂 302 齿轮微振，杜绝长蜂鸣与尾随振动）
      */
     fun performScrollTick(context: Context?, view: View? = null) {
         val now = System.currentTimeMillis()
@@ -143,34 +143,39 @@ object RotaryHapticManager {
             try {
                 val flags = HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING or
                         HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-                v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK, flags)
+                if (v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK, flags)) {
+                    return
+                }
             } catch (_: Throwable) {}
         }
 
         if (context == null) return
 
-        // 2. OPPO 私有 Linearmotor 尝试
+        // 2. OPPO 私有 Linearmotor 原厂 302 瞬态齿轮波形
         try {
             if (!oplusLinearMotorInitialized) {
                 initOplusLinearmotor(context)
             }
             if (oplusLinearMotorService != null && oplusVibrateMethod != null && oplusPrebuiltTickEffect != null) {
                 oplusVibrateMethod!!.invoke(oplusLinearMotorService, oplusPrebuiltTickEffect)
+                return
             }
         } catch (_: Throwable) {}
 
-        // 3. 标准 Android 硬件马达强力微脉冲（25ms，全功率输出，确保表冠旋转清晰有力的机械齿轮感）
+        // 3. 通用 Android 马达极短瞬态脉冲保底（仅在私有服务不可用时生效，8ms 瞬态杜绝拖尾）
         try {
             val vibrator = getVibratorFast(context)
             if (vibrator != null && vibrator.hasVibrator()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     vibrator.vibrate(
-                        VibrationEffect.createOneShot(28, 255),
+                        VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK),
                         touchAudioAttributes
                     )
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(28)
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vibrator.vibrate(
+                        VibrationEffect.createOneShot(8, 120),
+                        touchAudioAttributes
+                    )
                 }
             }
         } catch (_: Throwable) {}
