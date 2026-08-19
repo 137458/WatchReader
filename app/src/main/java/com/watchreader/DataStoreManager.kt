@@ -32,12 +32,27 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
 )
 
 /**
+ * 冷启动初始快照模型
+ */
+data class AppInitialConfig(
+    val fontSize: Int,
+    val isDarkMode: Boolean,
+    val autoScrollSpeed: Float,
+    val appBrightness: Float,
+    val bookshelf: List<BookItem>,
+    val lastScreen: String,
+    val lastUri: Uri?,
+    val lastCharOffset: Int
+)
+
+/**
  * DataStore 持久化管理器（协程与 Flow 响应式驱动）
  */
 object DataStoreManager {
 
     val KEY_LAST_URI = stringPreferencesKey("last_uri")
     val KEY_LAST_CHAR_OFFSET = intPreferencesKey("last_char_offset")
+    val KEY_LAST_SCREEN = stringPreferencesKey("last_screen") // "home" 或 "reader"
     val KEY_FONT_SIZE = intPreferencesKey("font_size")
     val KEY_BOOK_SHELF = stringPreferencesKey("book_shelf_json")
     val KEY_DARK_MODE = booleanPreferencesKey("is_dark_mode")
@@ -56,6 +71,46 @@ object DataStoreManager {
                 throw exception
             }
         }
+
+    /**
+     * 单次 I/O 批量读取冷启动所需的所有配置（消除多 Flow 串行阻塞，将冷启动耗时降至极致）
+     */
+    suspend fun loadInitialConfig(context: Context): AppInitialConfig {
+        val prefs = getSafePreferencesFlow(context).first()
+        val fontSize = prefs[KEY_FONT_SIZE] ?: DEFAULT_FONT_SIZE
+        val isDarkMode = prefs[KEY_DARK_MODE] ?: false
+        val autoScrollSpeed = prefs[KEY_AUTO_SCROLL_SPEED] ?: DEFAULT_AUTO_SCROLL_SPEED
+        val appBrightness = prefs[KEY_APP_BRIGHTNESS] ?: DEFAULT_BRIGHTNESS
+        val bookshelf = parseBookShelf(prefs[KEY_BOOK_SHELF])
+        val lastScreen = prefs[KEY_LAST_SCREEN] ?: if (prefs[KEY_LAST_URI] != null) "reader" else "home"
+        val uriStr = prefs[KEY_LAST_URI]
+        val lastUri = if (!uriStr.isNullOrEmpty()) {
+            try {
+                Uri.parse(uriStr)
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+        val lastCharOffset = prefs[KEY_LAST_CHAR_OFFSET] ?: 0
+
+        return AppInitialConfig(
+            fontSize = fontSize,
+            isDarkMode = isDarkMode,
+            autoScrollSpeed = autoScrollSpeed,
+            appBrightness = appBrightness,
+            bookshelf = bookshelf,
+            lastScreen = lastScreen,
+            lastUri = lastUri,
+            lastCharOffset = lastCharOffset
+        )
+    }
+
+    /** 保存最后活跃页面 */
+    suspend fun saveLastScreen(context: Context, screenName: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_LAST_SCREEN] = screenName
+        }
+    }
 
     // ── 字号设置 ──
     fun getFontSizeFlow(context: Context): Flow<Int> =
@@ -116,6 +171,7 @@ object DataStoreManager {
         context.dataStore.edit { prefs ->
             prefs[KEY_LAST_URI] = uri.toString()
             prefs[KEY_LAST_CHAR_OFFSET] = charOffset
+            prefs[KEY_LAST_SCREEN] = "reader"
         }
         updateBookInShelf(context, uri, charOffset, totalChars, chapterTitle)
     }
@@ -135,6 +191,7 @@ object DataStoreManager {
         context.dataStore.edit { prefs ->
             prefs.remove(KEY_LAST_URI)
             prefs.remove(KEY_LAST_CHAR_OFFSET)
+            prefs[KEY_LAST_SCREEN] = "home"
         }
     }
 

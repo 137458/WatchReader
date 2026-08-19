@@ -82,41 +82,40 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var currentReadingOffset: Int = 0
 
     /**
-     * 初始化：读取 DataStore 配置（避免冷启动白屏与重组跳变），异步流式加载正文
+     * 初始化：单次 I/O 批量读取 DataStore 配置，按最后活跃页面智能秒开
      */
     fun init() {
         viewModelScope.launch {
-            val savedFontSize = DataStoreManager.getFontSizeFlow(appCtx).first()
-            val savedDarkMode = DataStoreManager.getDarkModeFlow(appCtx).first()
-            val savedSpeed = DataStoreManager.getAutoScrollSpeedFlow(appCtx).first()
-            val savedBrightness = DataStoreManager.getAppBrightnessFlow(appCtx).first()
-            val shelf = DataStoreManager.loadBookShelf(appCtx)
-            val saved = DataStoreManager.loadReadingPosition(appCtx)
+            val config = withContext(Dispatchers.IO) {
+                DataStoreManager.loadInitialConfig(appCtx)
+            }
 
-            if (saved != null) {
+            if (config.lastScreen == "reader" && config.lastUri != null) {
                 _uiState.update {
                     it.copy(
-                        fontSize = savedFontSize,
-                        isDarkMode = savedDarkMode,
-                        autoScrollSpeed = savedSpeed,
-                        appBrightness = savedBrightness,
-                        bookshelf = shelf,
+                        fontSize = config.fontSize,
+                        isDarkMode = config.isDarkMode,
+                        autoScrollSpeed = config.autoScrollSpeed,
+                        appBrightness = config.appBrightness,
+                        bookshelf = config.bookshelf,
                         screen = Screen.Loading,
                         isLoading = true,
-                        currentUri = saved.first
+                        currentUri = config.lastUri
                     )
                 }
-                loadFile(saved.first, saved.second)
+                loadFile(config.lastUri, config.lastCharOffset)
             } else {
+                // 上次退出时在书架/非阅读页：0ms 极速进入书架，不读取大文件
                 _uiState.update {
                     it.copy(
-                        fontSize = savedFontSize,
-                        isDarkMode = savedDarkMode,
-                        autoScrollSpeed = savedSpeed,
-                        appBrightness = savedBrightness,
-                        bookshelf = shelf,
+                        fontSize = config.fontSize,
+                        isDarkMode = config.isDarkMode,
+                        autoScrollSpeed = config.autoScrollSpeed,
+                        appBrightness = config.appBrightness,
+                        bookshelf = config.bookshelf,
                         screen = Screen.Home,
-                        isLoading = false
+                        isLoading = false,
+                        currentUri = null
                     )
                 }
             }
@@ -356,7 +355,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.removeBookFromShelf(appCtx, book.uriString)
             val shelf = DataStoreManager.loadBookShelf(appCtx)
-            _uiState.update { it.copy(bookshelf = shelf) }
+            _uiState.update {
+                val isCurrent = it.currentUri?.toString() == book.uriString
+                it.copy(
+                    bookshelf = shelf,
+                    currentUri = if (isCurrent) null else it.currentUri,
+                    currentChapterContent = if (isCurrent) null else it.currentChapterContent,
+                    chapters = if (isCurrent) emptyList() else it.chapters
+                )
+            }
         }
     }
 
@@ -387,7 +394,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun flushReadingPosition() {
         val state = _uiState.value
-        val uri = state.currentUri ?: return
+        val uri = state.currentUri
+        val currentScreen = state.screen
+
+        if (currentScreen is Screen.Home) {
+            viewModelScope.launch(Dispatchers.IO) {
+                DataStoreManager.saveLastScreen(appCtx, "home")
+            }
+            return
+        }
+
+        if (uri == null) return
         val offset = currentReadingOffset
         savePositionJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
@@ -424,7 +441,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 处理系统返回手势
      */
     fun handleBack(): Boolean {
-        flushReadingPosition()
         return when (_uiState.value.screen) {
             is Screen.Menu -> {
                 val state = _uiState.value
@@ -437,16 +453,47 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 true
             }
             is Screen.Reader -> {
-                refreshBookshelf()
-                navigateTo(Screen.Home)
+                flushReadingPosition()
+                prefetchJob?.cancel()
+                cachedFullText = ""
+                chapterContentCache.clear()
+                viewModelScope.launch(Dispatchers.IO) {
+                    DataStoreManager.saveLastScreen(appCtx, "home")
+                    val shelf = DataStoreManager.loadBookShelf(appCtx)
+                    _uiState.update {
+                        it.copy(
+                            currentUri = null,
+                            fileName = "",
+                            chapters = emptyList(),
+                            currentChapterIndex = 0,
+                            currentChapterContent = null,
+                            bookshelf = shelf,
+                            screen = Screen.Home
+                        )
+                    }
+                }
                 true
             }
             is Screen.Loading -> {
-                refreshBookshelf()
-                navigateTo(Screen.Home)
+                prefetchJob?.cancel()
+                viewModelScope.launch(Dispatchers.IO) {
+                    DataStoreManager.saveLastScreen(appCtx, "home")
+                    val shelf = DataStoreManager.loadBookShelf(appCtx)
+                    _uiState.update {
+                        it.copy(
+                            currentUri = null,
+                            isLoading = false,
+                            bookshelf = shelf,
+                            screen = Screen.Home
+                        )
+                    }
+                }
                 true
             }
             is Screen.Home -> {
+                viewModelScope.launch(Dispatchers.IO) {
+                    DataStoreManager.saveLastScreen(appCtx, "home")
+                }
                 false
             }
         }
@@ -461,7 +508,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         cachedFullText = ""
         chapterContentCache.clear()
         viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.clearReadingPosition(appCtx)
+            DataStoreManager.saveLastScreen(appCtx, "home")
             val shelf = DataStoreManager.loadBookShelf(appCtx)
             _uiState.update {
                 it.copy(
