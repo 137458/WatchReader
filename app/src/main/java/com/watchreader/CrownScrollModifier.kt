@@ -116,6 +116,25 @@ object CrownScrollHelper {
     }
 
     /**
+     * 原生 Android ScrollView 表冠滚动分发
+     */
+    fun dispatchScroll(
+        rawOrPixelDelta: Float,
+        scrollView: android.widget.ScrollView,
+        context: Context?,
+        view: View? = null
+    ) {
+        if (abs(rawOrPixelDelta) < 0.001f) return
+        val scrollPixels = if (abs(rawOrPixelDelta) <= 2.5f) {
+            (rawOrPixelDelta * DEFAULT_STEP_PIXELS).toInt()
+        } else {
+            rawOrPixelDelta.toInt()
+        }
+        scrollView.smoothScrollBy(0, scrollPixels)
+        RotaryHapticManager.performScrollTick(context, view)
+    }
+
+    /**
      * 兼容快捷方法：处理 Compose onRotaryScrollEvent 或原始事件
      * （Compose onRotaryScrollEvent 传入的 verticalScrollPixels 已经按系统滚动系数放大且顺时针为正）
      */

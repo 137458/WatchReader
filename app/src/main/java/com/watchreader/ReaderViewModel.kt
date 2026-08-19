@@ -44,6 +44,7 @@ data class ReaderUiState(
     val chapters: List<Chapter> = emptyList(),
     val currentChapterIndex: Int = 0,
     val currentChapterContent: ChapterContent? = null,
+    val bookmarks: List<Bookmark> = emptyList(),
     val fullTextLength: Int = 0,
     val fontSize: Int = 14,
     val isDarkMode: Boolean = false,
@@ -52,7 +53,11 @@ data class ReaderUiState(
     val appBrightness: Float = -1.0f,
     val isLoading: Boolean = false,
     val errorMessage: String? = null,
-    val bookshelf: List<BookItem> = emptyList()
+    val bookshelf: List<BookItem> = emptyList(),
+    val searchQuery: String = "",
+    val isWifiServerRunning: Boolean = false,
+    val wifiIpAddress: String? = null,
+    val wifiUploadedCount: Int = 0
 )
 
 /**
@@ -267,12 +272,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     DataStoreManager.updateBookInShelf(appCtx, uri, safeOffset, fullLen, chapterTitle)
                 }
 
+                val loadedBookmarks = withContext(Dispatchers.IO) {
+                    DataStoreManager.loadBookmarks(appCtx, uri.toString())
+                }
+
                 _uiState.update {
                     it.copy(
                         fileName = fileName,
                         chapters = chapters,
                         currentChapterIndex = chapterIndex,
                         currentChapterContent = chapterContent,
+                        bookmarks = loadedBookmarks,
                         fullTextLength = fullLen,
                         isLoading = false,
                         bookshelf = updatedShelf,
@@ -506,6 +516,120 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private var wifiServer: WifiTransferServer? = null
+
+    /**
+     * 开启局域网 Wi-Fi 传书服务
+     */
+    fun openWifiTransfer() {
+        if (wifiServer == null) {
+            wifiServer = WifiTransferServer(
+                context = appCtx,
+                port = 8888,
+                onBookUploaded = { _ ->
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val shelf = DataStoreManager.loadBookShelf(appCtx)
+                        _uiState.update { it.copy(bookshelf = shelf) }
+                    }
+                }
+            )
+        }
+        val ip = wifiServer?.getLocalIpAddress()
+        val started = wifiServer?.start() ?: false
+        _uiState.update {
+            it.copy(
+                screen = Screen.WifiTransfer,
+                isWifiServerRunning = started,
+                wifiIpAddress = ip,
+                wifiUploadedCount = 0
+            )
+        }
+        viewModelScope.launch {
+            wifiServer?.uploadedCount?.collect { count ->
+                _uiState.update { it.copy(wifiUploadedCount = count) }
+            }
+        }
+    }
+
+    /**
+     * 关闭局域网 Wi-Fi 传书服务
+     */
+    fun closeWifiTransfer() {
+        wifiServer?.stop()
+        _uiState.update {
+            it.copy(
+                screen = Screen.Home,
+                isWifiServerRunning = false
+            )
+        }
+    }
+
+    /**
+     * 切换书籍置顶状态
+     */
+    fun toggleBookPin(uriString: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val shelf = DataStoreManager.toggleBookPin(appCtx, uriString)
+            _uiState.update { it.copy(bookshelf = shelf) }
+        }
+    }
+
+    /**
+     * 搜索书架书籍
+     */
+    fun setSearchQuery(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
+    }
+
+    /**
+     * 保存当前阅读位置为书签
+     */
+    fun addBookmark() {
+        val state = _uiState.value
+        val uri = state.currentUri ?: return
+        val chap = state.currentChapterContent ?: return
+        val currentOffset = currentReadingOffset
+        val body = chap.formattedBody
+        val relOffset = (currentOffset - chap.startCharOffset).coerceIn(0, body.length)
+        val snippet = body.substring(relOffset, minOf(relOffset + 40, body.length)).trim().replace("\n", " ")
+        val bm = Bookmark(
+            chapterIndex = chap.chapterIndex,
+            chapterTitle = chap.title,
+            charOffset = currentOffset,
+            snippet = if (snippet.isNotEmpty()) snippet else chap.title,
+            time = System.currentTimeMillis()
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            val updated = DataStoreManager.saveBookmark(appCtx, uri.toString(), bm)
+            _uiState.update { it.copy(bookmarks = updated) }
+        }
+    }
+
+    /**
+     * 删除书签
+     */
+    fun removeBookmark(bookmarkId: String) {
+        val uri = _uiState.value.currentUri ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val updated = DataStoreManager.removeBookmark(appCtx, uri.toString(), bookmarkId)
+            _uiState.update { it.copy(bookmarks = updated) }
+        }
+    }
+
+    /**
+     * 跳转至书签精确位置
+     */
+    fun jumpToBookmark(bm: Bookmark) {
+        goToChapter(bm.chapterIndex, bm.charOffset)
+    }
+
+    /**
+     * 打开 RSVP 闪读模式
+     */
+    fun openRsvp() {
+        _uiState.update { it.copy(screen = Screen.Rsvp) }
+    }
+
     /**
      * 页面路由跳转
      */
@@ -526,6 +650,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             is Screen.ChapterList -> {
                 val state = _uiState.value
                 navigateTo(Screen.Reader(currentReadingOffset, state.currentChapterIndex))
+                true
+            }
+            is Screen.Rsvp -> {
+                val state = _uiState.value
+                navigateTo(Screen.Reader(currentReadingOffset, state.currentChapterIndex))
+                true
+            }
+            is Screen.WifiTransfer -> {
+                closeWifiTransfer()
                 true
             }
             is Screen.Reader -> {

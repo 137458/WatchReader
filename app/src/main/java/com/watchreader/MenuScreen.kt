@@ -63,6 +63,10 @@ private class MenuViewHolder(
     val fontPlusBtn: TextView,
     val darkModeCard: FrameLayout,
     val darkModeTv: TextView,
+    val bookmarkCard: FrameLayout,
+    val bookmarkTv: TextView,
+    val rsvpCard: FrameLayout,
+    val rsvpTv: TextView,
     val chapterListCard: FrameLayout,
     val chapterListTv: TextView,
     val bookshelfCard: FrameLayout,
@@ -91,6 +95,8 @@ fun MenuScreen(
     onToggleAutoScroll: () -> Unit,
     onAutoScrollSpeedChange: (Float) -> Unit,
     onBrightnessChange: (Float) -> Unit,
+    onAddBookmark: () -> Unit,
+    onOpenRsvp: () -> Unit,
     onChapterListClick: () -> Unit,
     onBack: () -> Unit,
     onHome: () -> Unit
@@ -120,13 +126,22 @@ fun MenuScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    isFocusable = true
-                    isFocusableInTouchMode = true
                     isVerticalScrollBarEnabled = false
                     overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                    setBackgroundColor(bgColor)
                     setPadding(padH, padTop, padH, padBottom)
                     clipToPadding = false
+                    setBackgroundColor(bgColor)
+                }
+
+                // 表冠物理旋转无缝滚动 + 线性马达触觉反馈
+                scrollView.setOnGenericMotionListener { v, event ->
+                    if (CrownScrollHelper.isCrownScrollEvent(event)) {
+                        val delta = CrownScrollHelper.extractCrownDelta(event)
+                        CrownScrollHelper.dispatchScroll(delta, scrollView, ctx, v)
+                        true
+                    } else {
+                        false
+                    }
                 }
 
                 val container = LinearLayout(ctx).apply {
@@ -137,21 +152,10 @@ fun MenuScreen(
                     )
                 }
 
-                val holder = createMenuViews(
-                    context = ctx,
-                    container = container,
-                    scrollView = scrollView,
-                    density = density
-                )
+                val holder = createMenuViews(ctx, container, scrollView, density)
                 scrollView.addView(container)
                 scrollView.tag = holder
 
-                // 原生物理表冠旋转监听（完全对齐 ReaderScreen：由原生 ScrollView 满帧驱动并由系统分发微振）
-                scrollView.setOnGenericMotionListener { _, _ ->
-                    false
-                }
-
-                // 首次绑定数据与监听
                 bindMenuData(
                     holder = holder,
                     density = density,
@@ -170,23 +174,20 @@ fun MenuScreen(
                     onToggleAutoScroll = onToggleAutoScroll,
                     onAutoScrollSpeedChange = onAutoScrollSpeedChange,
                     onBrightnessChange = onBrightnessChange,
+                    onAddBookmark = onAddBookmark,
+                    onOpenRsvp = onOpenRsvp,
                     onChapterListClick = onChapterListClick,
                     onBack = onBack,
                     onHome = onHome
                 )
 
-                scrollView.post {
-                    scrollView.requestFocus()
-                }
-
                 scrollView
             },
             update = { scrollView ->
                 val holder = scrollView.tag as? MenuViewHolder ?: return@AndroidView
-                scrollView.setBackgroundColor(bgColor)
                 val density = scrollView.context.resources.displayMetrics.density
+                scrollView.setBackgroundColor(bgColor)
 
-                // 属性就地刷新：0 View 分配、0 重构、滚动条绝对平稳
                 bindMenuData(
                     holder = holder,
                     density = density,
@@ -205,6 +206,8 @@ fun MenuScreen(
                     onToggleAutoScroll = onToggleAutoScroll,
                     onAutoScrollSpeedChange = onAutoScrollSpeedChange,
                     onBrightnessChange = onBrightnessChange,
+                    onAddBookmark = onAddBookmark,
+                    onOpenRsvp = onOpenRsvp,
                     onChapterListClick = onChapterListClick,
                     onBack = onBack,
                     onHome = onHome
@@ -297,7 +300,7 @@ private fun createMenuViews(
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             setMargins(0, 0, (4 * density).toInt(), 0)
         }
-        setPadding((6 * density).toInt(), (9 * density).toInt(), (6 * density).toInt(), (9 * density).toInt())
+        setPadding((8 * density).toInt(), (9 * density).toInt(), (8 * density).toInt(), (9 * density).toInt())
         isClickable = true
         addView(prevTv)
     }
@@ -313,14 +316,14 @@ private fun createMenuViews(
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             setMargins((4 * density).toInt(), 0, 0, 0)
         }
-        setPadding((6 * density).toInt(), (9 * density).toInt(), (6 * density).toInt(), (9 * density).toInt())
+        setPadding((8 * density).toInt(), (9 * density).toInt(), (8 * density).toInt(), (9 * density).toInt())
         isClickable = true
         addView(nextTv)
     }
     chapterRow.addView(nextBtn)
     container.addView(chapterRow)
 
-    // 2. 自动滚屏控制大卡片（结构清晰化：启停大按钮 + 调速小排）
+    // 2. 自动滚屏大卡片
     val autoScrollCard = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         layoutParams = LinearLayout.LayoutParams(
@@ -341,10 +344,8 @@ private fun createMenuViews(
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, 0, 0, (6 * density).toInt())
-        }
-        setPadding((8 * density).toInt(), (7 * density).toInt(), (8 * density).toInt(), (7 * density).toInt())
+        )
+        setPadding(0, (7 * density).toInt(), 0, (7 * density).toInt())
         isClickable = true
         addView(autoScrollToggleTv)
     }
@@ -355,16 +356,16 @@ private fun createMenuViews(
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
-        )
+        ).apply {
+            setMargins(0, (6 * density).toInt(), 0, 0)
+        }
         gravity = Gravity.CENTER_VERTICAL
     }
 
     val speedMinusBtn = TextView(context).apply {
-        text = " ‹ 减速 "
+        text = " 减速- "
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        gravity = Gravity.CENTER
-        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        setPadding((4 * density).toInt(), (4 * density).toInt(), (4 * density).toInt(), (4 * density).toInt())
+        setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
         isClickable = true
     }
     speedRow.addView(speedMinusBtn)
@@ -378,18 +379,16 @@ private fun createMenuViews(
     speedRow.addView(speedValTv)
 
     val speedPlusBtn = TextView(context).apply {
-        text = " 加速 › "
+        text = " 加速+ "
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        gravity = Gravity.CENTER
-        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        setPadding((4 * density).toInt(), (4 * density).toInt(), (4 * density).toInt(), (4 * density).toInt())
+        setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
         isClickable = true
     }
     speedRow.addView(speedPlusBtn)
     autoScrollCard.addView(speedRow)
     container.addView(autoScrollCard)
 
-    // 3. 独立极暗调光大卡片（标题与微调 + 5档预设快捷栏）
+    // 3. 亮度调节大卡片
     val brightnessCard = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         layoutParams = LinearLayout.LayoutParams(
@@ -472,7 +471,7 @@ private fun createMenuViews(
     brightnessCard.addView(brightnessPresetsRow)
     container.addView(brightnessCard)
 
-    // 4. 字号调节独立卡片（宽松大触控区）
+    // 4. 字号调节独立卡片
     val fontCard = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         layoutParams = LinearLayout.LayoutParams(
@@ -535,7 +534,52 @@ private fun createMenuViews(
     }
     container.addView(darkModeCard)
 
-    // 6. 导航双卡片（章节目录 / 返回书架）
+    // 6. 书签与闪读快捷卡片（双药丸胶囊）
+    val toolRow = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, (8 * density).toInt())
+        }
+        gravity = Gravity.CENTER
+    }
+
+    val bookmarkTv = TextView(context).apply {
+        text = "🔖 存为书签"
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+    }
+    val bookmarkCard = FrameLayout(context).apply {
+        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            setMargins(0, 0, (4 * density).toInt(), 0)
+        }
+        setPadding((6 * density).toInt(), (9 * density).toInt(), (6 * density).toInt(), (9 * density).toInt())
+        isClickable = true
+        addView(bookmarkTv)
+    }
+    toolRow.addView(bookmarkCard)
+
+    val rsvpTv = TextView(context).apply {
+        text = "⚡ 闪读速读"
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+    }
+    val rsvpCard = FrameLayout(context).apply {
+        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            setMargins((4 * density).toInt(), 0, 0, 0)
+        }
+        setPadding((6 * density).toInt(), (9 * density).toInt(), (6 * density).toInt(), (9 * density).toInt())
+        isClickable = true
+        addView(rsvpTv)
+    }
+    toolRow.addView(rsvpCard)
+    container.addView(toolRow)
+
+    // 7. 导航双卡片（章节目录 / 返回书架）
     val navRow = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         layoutParams = LinearLayout.LayoutParams(
@@ -580,7 +624,7 @@ private fun createMenuViews(
     navRow.addView(bookshelfCard)
     container.addView(navRow)
 
-    // 7. 返回阅读高亮大卡片
+    // 8. 返回阅读高亮大卡片
     val backReaderTv = TextView(context).apply {
         text = "‹ 返回继续阅读"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
@@ -629,6 +673,10 @@ private fun createMenuViews(
         fontPlusBtn = fontPlusBtn,
         darkModeCard = darkModeCard,
         darkModeTv = darkModeTv,
+        bookmarkCard = bookmarkCard,
+        bookmarkTv = bookmarkTv,
+        rsvpCard = rsvpCard,
+        rsvpTv = rsvpTv,
         chapterListCard = chapterListCard,
         chapterListTv = chapterListTv,
         bookshelfCard = bookshelfCard,
@@ -659,6 +707,8 @@ private fun bindMenuData(
     onToggleAutoScroll: () -> Unit,
     onAutoScrollSpeedChange: (Float) -> Unit,
     onBrightnessChange: (Float) -> Unit,
+    onAddBookmark: () -> Unit,
+    onOpenRsvp: () -> Unit,
     onChapterListClick: () -> Unit,
     onBack: () -> Unit,
     onHome: () -> Unit
@@ -797,7 +847,22 @@ private fun bindMenuData(
     holder.darkModeTv.setTextColor(secondaryColor)
     holder.darkModeCard.setOnClickListener { onToggleDarkMode() }
 
-    // 6. 导航双卡片
+    // 6. 工具双卡片（存为书签 / 闪读速读）
+    holder.bookmarkCard.background = GradientDrawable().apply {
+        setColor(surfaceColor)
+        cornerRadius = 16 * density
+    }
+    holder.bookmarkTv.setTextColor(primaryColor)
+    holder.bookmarkCard.setOnClickListener { onAddBookmark() }
+
+    holder.rsvpCard.background = GradientDrawable().apply {
+        setColor(surfaceColor)
+        cornerRadius = 16 * density
+    }
+    holder.rsvpTv.setTextColor(secondaryColor)
+    holder.rsvpCard.setOnClickListener { onOpenRsvp() }
+
+    // 7. 导航双卡片
     holder.chapterListCard.background = GradientDrawable().apply {
         setColor(surfaceColor)
         cornerRadius = 16 * density
@@ -812,7 +877,7 @@ private fun bindMenuData(
     holder.bookshelfTv.setTextColor(outlineColor)
     holder.bookshelfCard.setOnClickListener { onHome() }
 
-    // 7. 返回阅读高亮大卡片
+    // 8. 返回阅读高亮大卡片
     holder.backReaderCard.background = GradientDrawable().apply {
         setColor(surfaceVariantColor)
         cornerRadius = 16 * density

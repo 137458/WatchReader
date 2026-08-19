@@ -181,13 +181,16 @@ object DataStoreManager {
             val total = if (totalChars > 0) totalChars else (if (existingIdx >= 0) currentList[existingIdx].totalChars else 0)
             val chapter = if (chapterTitle.isNotEmpty()) chapterTitle else (if (existingIdx >= 0) currentList[existingIdx].lastChapterTitle else "")
 
+            val isPinned = if (existingIdx >= 0) currentList[existingIdx].isPinned else false
+
             val updatedItem = BookItem(
                 uriString = uriStr,
                 title = title,
                 charOffset = charOffset,
                 totalChars = total,
                 lastChapterTitle = chapter,
-                lastReadTime = System.currentTimeMillis()
+                lastReadTime = System.currentTimeMillis(),
+                isPinned = isPinned
             )
 
             if (existingIdx >= 0) {
@@ -244,6 +247,7 @@ object DataStoreManager {
             val title = if (existingIdx >= 0) currentList[existingIdx].title else getFileName(context, uri)
             val total = if (totalChars > 0) totalChars else (if (existingIdx >= 0) currentList[existingIdx].totalChars else 0)
             val chapter = if (chapterTitle.isNotEmpty()) chapterTitle else (if (existingIdx >= 0) currentList[existingIdx].lastChapterTitle else "")
+            val isPinned = if (existingIdx >= 0) currentList[existingIdx].isPinned else false
 
             val updatedItem = BookItem(
                 uriString = uriStr,
@@ -251,7 +255,8 @@ object DataStoreManager {
                 charOffset = charOffset,
                 totalChars = total,
                 lastChapterTitle = chapter,
-                lastReadTime = System.currentTimeMillis()
+                lastReadTime = System.currentTimeMillis(),
+                isPinned = isPinned
             )
 
             if (existingIdx >= 0) {
@@ -261,7 +266,22 @@ object DataStoreManager {
             }
 
             prefs[KEY_BOOK_SHELF] = serializeBookShelf(currentList)
-            resultList = currentList
+            resultList = currentList.sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
+        }
+        return resultList
+    }
+
+    suspend fun toggleBookPin(context: Context, uriString: String): List<BookItem> {
+        var resultList: List<BookItem> = emptyList()
+        context.dataStore.edit { prefs ->
+            val currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]).toMutableList()
+            val idx = currentList.indexOfFirst { it.uriString == uriString }
+            if (idx >= 0) {
+                val item = currentList[idx]
+                currentList[idx] = item.copy(isPinned = !item.isPinned)
+                prefs[KEY_BOOK_SHELF] = serializeBookShelf(currentList)
+            }
+            resultList = currentList.sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
         }
         return resultList
     }
@@ -288,6 +308,7 @@ object DataStoreManager {
                 put("total", item.totalChars)
                 put("chapter", item.lastChapterTitle)
                 put("time", item.lastReadTime)
+                put("pinned", item.isPinned)
             }
             array.put(obj)
         }
@@ -308,11 +329,118 @@ object DataStoreManager {
                         charOffset = obj.optInt("offset", 0),
                         totalChars = obj.optInt("total", 0),
                         lastChapterTitle = obj.optString("chapter", ""),
-                        lastReadTime = obj.optLong("time", 0L)
+                        lastReadTime = obj.optLong("time", 0L),
+                        isPinned = obj.optBoolean("pinned", false)
                     )
                 )
             }
         } catch (_: Exception) {}
-        return list.sortedByDescending { it.lastReadTime }
+        return list.sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
+    }
+
+    // ── 书签管理 ──
+    private fun getBookmarkKey(uriString: String): Preferences.Key<String> {
+        return stringPreferencesKey("bookmarks_${uriString.hashCode()}")
+    }
+
+    suspend fun loadBookmarks(context: Context, uriString: String): List<Bookmark> {
+        if (uriString.isEmpty()) return emptyList()
+        val prefs = getSafePreferencesFlow(context).first()
+        val jsonStr = prefs[getBookmarkKey(uriString)] ?: return emptyList()
+        val list = mutableListOf<Bookmark>()
+        try {
+            val array = JSONArray(jsonStr)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    Bookmark(
+                        id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                        chapterIndex = obj.optInt("chapterIndex", 0),
+                        chapterTitle = obj.optString("chapterTitle", ""),
+                        charOffset = obj.optInt("charOffset", 0),
+                        snippet = obj.optString("snippet", ""),
+                        time = obj.optLong("time", System.currentTimeMillis())
+                    )
+                )
+            }
+        } catch (_: Exception) {}
+        return list.sortedByDescending { it.time }
+    }
+
+    suspend fun saveBookmark(context: Context, uriString: String, bookmark: Bookmark): List<Bookmark> {
+        if (uriString.isEmpty()) return emptyList()
+        var resultList: List<Bookmark> = emptyList()
+        context.dataStore.edit { prefs ->
+            val key = getBookmarkKey(uriString)
+            val currentList = parseBookmarks(prefs[key]).toMutableList()
+            currentList.removeAll { it.chapterIndex == bookmark.chapterIndex && Math.abs(it.charOffset - bookmark.charOffset) < 10 }
+            currentList.add(0, bookmark)
+            prefs[key] = serializeBookmarks(currentList)
+            resultList = currentList
+        }
+        return resultList
+    }
+
+    suspend fun removeBookmark(context: Context, uriString: String, bookmarkId: String): List<Bookmark> {
+        if (uriString.isEmpty()) return emptyList()
+        var resultList: List<Bookmark> = emptyList()
+        context.dataStore.edit { prefs ->
+            val key = getBookmarkKey(uriString)
+            val currentList = parseBookmarks(prefs[key]).filter { it.id != bookmarkId }
+            prefs[key] = serializeBookmarks(currentList)
+            resultList = currentList
+        }
+        return resultList
+    }
+
+    private fun serializeBookmarks(list: List<Bookmark>): String {
+        val array = JSONArray()
+        for (item in list) {
+            val obj = JSONObject().apply {
+                put("id", item.id)
+                put("chapterIndex", item.chapterIndex)
+                put("chapterTitle", item.chapterTitle)
+                put("charOffset", item.charOffset)
+                put("snippet", item.snippet)
+                put("time", item.time)
+            }
+            array.put(obj)
+        }
+        return array.toString()
+    }
+
+    private fun parseBookmarks(jsonStr: String?): List<Bookmark> {
+        if (jsonStr.isNullOrEmpty()) return emptyList()
+        val list = mutableListOf<Bookmark>()
+        try {
+            val array = JSONArray(jsonStr)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                list.add(
+                    Bookmark(
+                        id = obj.optString("id", java.util.UUID.randomUUID().toString()),
+                        chapterIndex = obj.optInt("chapterIndex", 0),
+                        chapterTitle = obj.optString("chapterTitle", ""),
+                        charOffset = obj.optInt("charOffset", 0),
+                        snippet = obj.optString("snippet", ""),
+                        time = obj.optLong("time", 0L)
+                    )
+                )
+            }
+        } catch (_: Exception) {}
+        return list.sortedByDescending { it.time }
     }
 }
+
+/**
+ * 书签数据模型
+ */
+@androidx.compose.runtime.Immutable
+data class Bookmark(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val chapterIndex: Int = 0,
+    val chapterTitle: String = "",
+    val charOffset: Int = 0,
+    val snippet: String = "",
+    val time: Long = System.currentTimeMillis()
+)

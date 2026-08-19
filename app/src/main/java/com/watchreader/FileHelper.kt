@@ -22,7 +22,8 @@ data class BookItem(
     val charOffset: Int,
     val totalChars: Int,
     val lastChapterTitle: String,
-    val lastReadTime: Long
+    val lastReadTime: Long,
+    val isPinned: Boolean = false
 ) {
     val progressPercent: Int
         get() = if (totalChars > 0) ((charOffset.toFloat() / totalChars) * 100).toInt().coerceIn(0, 100) else 0
@@ -94,7 +95,7 @@ fun loadDarkMode(context: Context): Boolean =
 //  书架管理功能
 // ═══════════════════════════════════════
 
-/** 读取书架列表（按最近阅读时间倒序） */
+/** 读取书架列表（置顶优先，其次按最近阅读时间倒序） */
 fun loadBookShelf(context: Context): List<BookItem> {
     val jsonStr = getPrefs(context).getString(KEY_BOOK_SHELF, null) ?: return emptyList()
     val list = mutableListOf<BookItem>()
@@ -109,12 +110,13 @@ fun loadBookShelf(context: Context): List<BookItem> {
                     charOffset = obj.optInt("offset", 0),
                     totalChars = obj.optInt("total", 0),
                     lastChapterTitle = obj.optString("chapter", ""),
-                    lastReadTime = obj.optLong("time", 0L)
+                    lastReadTime = obj.optLong("time", 0L),
+                    isPinned = obj.optBoolean("pinned", false)
                 )
             )
         }
     } catch (_: Exception) {}
-    return list.sortedByDescending { it.lastReadTime }
+    return list.sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
 }
 
 /** 更新或添加书籍到书架 */
@@ -131,6 +133,7 @@ fun updateBookInShelf(
     val title = if (existingIdx >= 0) currentList[existingIdx].title else getFileName(context, uri)
     val total = if (totalChars > 0) totalChars else (if (existingIdx >= 0) currentList[existingIdx].totalChars else 0)
     val chapter = if (chapterTitle.isNotEmpty()) chapterTitle else (if (existingIdx >= 0) currentList[existingIdx].lastChapterTitle else "")
+    val isPinned = if (existingIdx >= 0) currentList[existingIdx].isPinned else false
 
     val updatedItem = BookItem(
         uriString = uriStr,
@@ -138,7 +141,8 @@ fun updateBookInShelf(
         charOffset = charOffset,
         totalChars = total,
         lastChapterTitle = chapter,
-        lastReadTime = System.currentTimeMillis()
+        lastReadTime = System.currentTimeMillis(),
+        isPinned = isPinned
     )
 
     if (existingIdx >= 0) {
@@ -148,6 +152,18 @@ fun updateBookInShelf(
     }
 
     saveBookShelfList(context, currentList)
+}
+
+/** 切换书籍置顶状态 */
+fun toggleBookPinInShelf(context: Context, uriString: String): List<BookItem> {
+    val currentList = loadBookShelf(context).toMutableList()
+    val idx = currentList.indexOfFirst { it.uriString == uriString }
+    if (idx >= 0) {
+        val item = currentList[idx]
+        currentList[idx] = item.copy(isPinned = !item.isPinned)
+        saveBookShelfList(context, currentList)
+    }
+    return loadBookShelf(context)
 }
 
 /** 从书架中删除一本书 */
@@ -170,6 +186,7 @@ private fun saveBookShelfList(context: Context, list: List<BookItem>) {
             put("total", item.totalChars)
             put("chapter", item.lastChapterTitle)
             put("time", item.lastReadTime)
+            put("pinned", item.isPinned)
         }
         array.put(obj)
     }

@@ -8,6 +8,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
@@ -16,8 +18,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -29,10 +29,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import java.text.SimpleDateFormat
+import java.util.*
 
 /**
  * 章节范围分卷模型
@@ -64,15 +65,19 @@ fun generateChapterRanges(totalCount: Int): List<ChapterRange> {
 }
 
 /**
- * 章节目录列表 — 原生 ListView 极速架构 + 千章范围快速分卷直达
+ * 章节目录与书签列表 — 原生 ListView 极速架构 + 双 Tab 切换 + 千章范围快速分卷直达
  */
 @Composable
 fun ChapterListScreen(
     chapters: List<Chapter>,
     currentChapterIndex: Int,
+    bookmarks: List<Bookmark> = emptyList(),
     onChapterClick: (Int) -> Unit,
+    onBookmarkClick: (Bookmark) -> Unit = {},
+    onDeleteBookmark: (Bookmark) -> Unit = {},
     onBack: () -> Unit
 ) {
+    var selectedTab by remember { mutableStateOf(0) } // 0: 目录, 1: 书签
     var showRangePicker by remember { mutableStateOf(false) }
 
     BackHandler(onBack = {
@@ -87,6 +92,9 @@ fun ChapterListScreen(
     val bgColor = colorScheme.background.toArgb()
     val activeColor = colorScheme.primary.toArgb()
     val normalColor = colorScheme.onSurfaceVariant.toArgb()
+    val onSurfaceColor = colorScheme.onSurface.toArgb()
+    val surfaceVariantColor = colorScheme.surfaceVariant.toArgb()
+    val errorColor = colorScheme.error.toArgb()
 
     val noIndication = remember { MutableInteractionSource() }
     var currentListView by remember { mutableStateOf<ListView?>(null) }
@@ -98,83 +106,231 @@ fun ChapterListScreen(
             .background(colorScheme.background),
         contentAlignment = Alignment.TopCenter
     ) {
-        // 1. 原生 ListView 核心
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { context ->
-                val density = context.resources.displayMetrics.density
-                val padH = (20 * density).toInt()
-                val padTop = (46 * density).toInt()
-                val padBottom = (56 * density).toInt()
+        if (selectedTab == 0) {
+            // ── 目录模式：原生 ListView 核心 ──
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { context ->
+                    val density = context.resources.displayMetrics.density
+                    val padH = (20 * density).toInt()
+                    val padTop = (50 * density).toInt()
+                    val padBottom = (56 * density).toInt()
 
-                val listView = ListView(context).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                    isFocusable = true
-                    isFocusableInTouchMode = true
-                    isVerticalScrollBarEnabled = false
-                    divider = null
-                    dividerHeight = 0
-                    setBackgroundColor(bgColor)
-                    setPadding(padH, padTop, padH, padBottom)
-                    clipToPadding = false
-                    overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                    val listView = ListView(context).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        isFocusable = true
+                        isFocusableInTouchMode = true
+                        isVerticalScrollBarEnabled = false
+                        divider = null
+                        dividerHeight = 0
+                        setBackgroundColor(bgColor)
+                        setPadding(padH, padTop, padH, padBottom)
+                        clipToPadding = false
+                        overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                    }
+                    currentListView = listView
+
+                    // 表冠物理旋转无缝滚动
+                    listView.setOnGenericMotionListener { v, event ->
+                        if (CrownScrollHelper.isCrownScrollEvent(event)) {
+                            val delta = CrownScrollHelper.extractCrownDelta(event)
+                            CrownScrollHelper.dispatchScroll(delta, listView, context, v)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+
+                    listView.adapter = object : BaseAdapter() {
+                        override fun getCount(): Int = chapters.size
+                        override fun getItem(position: Int): Any = chapters[position]
+                        override fun getItemId(position: Int): Long = position.toLong()
+
+                        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                            val textView = (convertView as? TextView) ?: TextView(context).apply {
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    (36 * density).toInt()
+                                )
+                                gravity = Gravity.CENTER_VERTICAL
+                                maxLines = 1
+                                ellipsize = TextUtils.TruncateAt.END
+                                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                            }
+
+                            val isCurrent = position == currentChapterIndex
+                            textView.text = chapters[position].title
+                            if (isCurrent) {
+                                textView.setTextColor(activeColor)
+                                textView.typeface = Typeface.DEFAULT_BOLD
+                            } else {
+                                textView.setTextColor(normalColor)
+                                textView.typeface = Typeface.DEFAULT
+                            }
+                            return textView
+                        }
+                    }
+
+                    listView.setOnItemClickListener { _, _, position, _ ->
+                        if (position in chapters.indices) {
+                            onChapterClick(position)
+                        }
+                    }
+
+                    listView.post {
+                        listView.requestFocus()
+                        if (currentChapterIndex in chapters.indices) {
+                            listView.setSelection((currentChapterIndex - 1).coerceAtLeast(0))
+                        }
+                    }
+
+                    listView
+                },
+                update = { listView ->
+                    currentListView = listView
+                    listView.setBackgroundColor(bgColor)
+                    (listView.adapter as? BaseAdapter)?.notifyDataSetChanged()
                 }
-                currentListView = listView
+            )
+        } else {
+            // ── 书签模式：原生卡片 ListView ──
+            if (bookmarks.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "暂无书签\n可在阅读菜单中点击“存为书签”",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 18.sp),
+                        color = colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            } else {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { context ->
+                        val density = context.resources.displayMetrics.density
+                        val padH = (18 * density).toInt()
+                        val padTop = (50 * density).toInt()
+                        val padBottom = (56 * density).toInt()
 
-                listView.adapter = object : BaseAdapter() {
-                    override fun getCount(): Int = chapters.size
-                    override fun getItem(position: Int): Any = chapters[position]
-                    override fun getItemId(position: Int): Long = position.toLong()
-
-                    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                        val textView = (convertView as? TextView) ?: TextView(context).apply {
+                        val bookmarkListView = ListView(context).apply {
                             layoutParams = ViewGroup.LayoutParams(
                                 ViewGroup.LayoutParams.MATCH_PARENT,
-                                (36 * density).toInt()
+                                ViewGroup.LayoutParams.MATCH_PARENT
                             )
-                            gravity = Gravity.CENTER_VERTICAL
-                            maxLines = 1
-                            ellipsize = TextUtils.TruncateAt.END
-                            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                            isFocusable = true
+                            isFocusableInTouchMode = true
+                            isVerticalScrollBarEnabled = false
+                            divider = null
+                            dividerHeight = (6 * density).toInt()
+                            setBackgroundColor(bgColor)
+                            setPadding(padH, padTop, padH, padBottom)
+                            clipToPadding = false
+                            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
                         }
 
-                        val isCurrent = position == currentChapterIndex
-                        textView.text = chapters[position].title
-                        if (isCurrent) {
-                            textView.setTextColor(activeColor)
-                            textView.typeface = Typeface.DEFAULT_BOLD
-                        } else {
-                            textView.setTextColor(normalColor)
-                            textView.typeface = Typeface.DEFAULT
+                        bookmarkListView.setOnGenericMotionListener { v, event ->
+                            if (CrownScrollHelper.isCrownScrollEvent(event)) {
+                                val delta = CrownScrollHelper.extractCrownDelta(event)
+                                CrownScrollHelper.dispatchScroll(delta, bookmarkListView, context, v)
+                                true
+                            } else {
+                                false
+                            }
                         }
-                        return textView
-                    }
-                }
 
-                listView.setOnItemClickListener { _, _, position, _ ->
-                    if (position in chapters.indices) {
-                        onChapterClick(position)
-                    }
-                }
+                        val timeFormat = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
 
-                listView.post {
-                    listView.requestFocus()
-                    if (currentChapterIndex in chapters.indices) {
-                        listView.setSelection((currentChapterIndex - 1).coerceAtLeast(0))
-                    }
-                }
+                        bookmarkListView.adapter = object : BaseAdapter() {
+                            override fun getCount(): Int = bookmarks.size
+                            override fun getItem(position: Int): Any = bookmarks[position]
+                            override fun getItemId(position: Int): Long = position.toLong()
 
-                listView
-            },
-            update = { listView ->
-                currentListView = listView
-                listView.setBackgroundColor(bgColor)
-                (listView.adapter as? BaseAdapter)?.notifyDataSetChanged()
+                            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                                val bm = bookmarks[position]
+                                val container = LinearLayout(context).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.WRAP_CONTENT
+                                    )
+                                    gravity = Gravity.CENTER_VERTICAL
+                                    background = android.graphics.drawable.GradientDrawable().apply {
+                                        setColor(surfaceVariantColor)
+                                        cornerRadius = 12 * density
+                                    }
+                                    setPadding((10 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+                                }
+
+                                val textLayout = LinearLayout(context).apply {
+                                    orientation = LinearLayout.VERTICAL
+                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                                }
+
+                                val titleTv = TextView(context).apply {
+                                    text = bm.chapterTitle.ifEmpty { "第 ${bm.chapterIndex + 1} 章" }
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                                    typeface = Typeface.DEFAULT_BOLD
+                                    setTextColor(activeColor)
+                                    maxLines = 1
+                                    ellipsize = TextUtils.TruncateAt.END
+                                }
+                                textLayout.addView(titleTv)
+
+                                if (bm.snippet.isNotEmpty()) {
+                                    val snippetTv = TextView(context).apply {
+                                        text = "“${bm.snippet.take(30)}…”"
+                                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                                        setTextColor(onSurfaceColor)
+                                        maxLines = 1
+                                        ellipsize = TextUtils.TruncateAt.END
+                                        setPadding(0, (2 * density).toInt(), 0, 0)
+                                    }
+                                    textLayout.addView(snippetTv)
+                                }
+
+                                val dateTv = TextView(context).apply {
+                                    text = timeFormat.format(Date(bm.time))
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+                                    setTextColor(normalColor)
+                                    setPadding(0, (2 * density).toInt(), 0, 0)
+                                }
+                                textLayout.addView(dateTv)
+                                container.addView(textLayout)
+
+                                val delBtn = TextView(context).apply {
+                                    text = "✕"
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                                    setTextColor(errorColor)
+                                    setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
+                                    setOnClickListener {
+                                        onDeleteBookmark(bm)
+                                    }
+                                }
+                                container.addView(delBtn)
+
+                                container.setOnClickListener {
+                                    onBookmarkClick(bm)
+                                }
+
+                                return container
+                            }
+                        }
+
+                        bookmarkListView
+                    },
+                    update = { bookmarkListView ->
+                        bookmarkListView.setBackgroundColor(bgColor)
+                        (bookmarkListView.adapter as? BaseAdapter)?.notifyDataSetChanged()
+                    }
+                )
             }
-        )
+        }
 
         // 顶部平滑渐变羽化遮罩
         Box(
@@ -206,22 +362,48 @@ fun ChapterListScreen(
                 .align(Alignment.BottomCenter)
         )
 
-        // 顶部沿表盘外边缘弧形排布的目录标题
-        CurvedChapterHeader(
-            title = "目录 (${chapters.size}章)",
-            modifier = Modifier.align(Alignment.TopCenter)
-        )
-
-        // 顶部透明点击感应区（点击顶部弧形直接返回阅读）
-        Box(
+        // 顶部 Tab 切换胶囊
+        Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .clickable(interactionSource = noIndication, indication = null, onClick = onBack)
                 .align(Alignment.TopCenter)
-        )
+                .padding(top = 10.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(colorScheme.surfaceVariant.copy(alpha = 0.92f))
+                .padding(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (selectedTab == 0) colorScheme.primary else Color.Transparent)
+                    .clickable { selectedTab = 0 }
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "目录 (${chapters.size})",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Bold),
+                    color = if (selectedTab == 0) colorScheme.onPrimary else colorScheme.onSurfaceVariant
+                )
+            }
 
-        // 底部常驻操作栏（长篇小说支持范围分卷与返回）
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (selectedTab == 1) colorScheme.primary else Color.Transparent)
+                    .clickable { selectedTab = 1 }
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "书签 (${bookmarks.size})",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Bold),
+                    color = if (selectedTab == 1) colorScheme.onPrimary else colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        // 底部常驻操作栏
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -246,7 +428,7 @@ fun ChapterListScreen(
                 )
             }
 
-            if (ranges.isNotEmpty()) {
+            if (selectedTab == 0 && ranges.isNotEmpty()) {
                 Spacer(modifier = Modifier.width(8.dp))
 
                 Box(
@@ -271,7 +453,7 @@ fun ChapterListScreen(
             }
         }
 
-        // 2. 范围分卷极速直达浮层 (Native ListView + 表冠旋转支持 + 圆屏专属弧形美化)
+        // 2. 范围分卷极速直达浮层
         if (showRangePicker && ranges.isNotEmpty()) {
             val activeRangeIndex = ranges.indexOfFirst { currentChapterIndex in it.startIndex..it.endIndex }.coerceAtLeast(0)
 
@@ -284,7 +466,6 @@ fun ChapterListScreen(
                     },
                 contentAlignment = Alignment.TopCenter
             ) {
-                // 原生极速 ListView（支持物理表冠与 120fps 零 GC 流畅滑动）
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { context ->
@@ -309,7 +490,6 @@ fun ChapterListScreen(
                             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
                         }
 
-                        // 表冠物理旋转与触觉微振
                         rangeListView.setOnGenericMotionListener { v, event ->
                             if (CrownScrollHelper.isCrownScrollEvent(event)) {
                                 val delta = CrownScrollHelper.extractCrownDelta(event)
@@ -378,7 +558,7 @@ fun ChapterListScreen(
                     }
                 )
 
-                // 顶部渐变羽化
+                // 顶部羽化
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -393,7 +573,7 @@ fun ChapterListScreen(
                         .align(Alignment.TopCenter)
                 )
 
-                // 底部渐变羽化
+                // 底部羽化
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -414,18 +594,7 @@ fun ChapterListScreen(
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
 
-                // 顶部透明点击感应区（点击顶部弧形直接关闭）
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .clickable(interactionSource = noIndication, indication = null) {
-                            showRangePicker = false
-                        }
-                        .align(Alignment.TopCenter)
-                )
-
-                // 底部悬浮关闭胶囊
+                // 底部关闭胶囊
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)

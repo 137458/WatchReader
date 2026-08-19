@@ -21,6 +21,7 @@
 - [ADR-002] 章节检测使用融合正则匹配，配合 `ChapterDiskCache` 二进制持久化索引
 - [ADR-003] 阅读位置与书架配置基于 DataStore 单事务原子持久化
 - [ADR-004] **实机安装与调试强制 Release 准则**：实机测试/安装必须一律编译并安装 Release 变体（`assembleRelease` -> `app-release.apk`），严禁使用 Debug 包。Compose Debug 包包含大量调试追踪且禁用 R8/AOT 优化，在手表低功耗芯片上性能衰减达 5~10 倍。
+- [ADR-005] **永久放弃内置 TTS 语音朗读特性**：明确不引入 TTS（Text-To-Speech）语音朗读功能。手表端语音合成引擎常驻占用大量内存、耗电严重且发音音质受限，WatchReader 专注于极简、极致省电与纯粹的视觉阅读体验，未来亦不做支持。
 
 ## 屏幕规格
 - 分辨率：466x466
