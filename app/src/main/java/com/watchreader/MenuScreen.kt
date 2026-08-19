@@ -118,8 +118,7 @@ fun MenuScreen(
 
                 val scrollView = object : ScrollView(ctx) {
                     override fun fling(velocityY: Int) {
-                        // 提升惯性滑动灵敏度（1.35x 速度放大，让滑动更轻快灵敏）
-                        super.fling((velocityY * 1.35f).toInt())
+                        super.fling(velocityY.coerceIn(-2500, 2500))
                     }
                 }.apply {
                     layoutParams = ViewGroup.LayoutParams(
@@ -152,12 +151,12 @@ fun MenuScreen(
                 scrollView.addView(container)
                 scrollView.tag = holder
 
-                // 物理表冠旋转与滚轮支持：精准 60px 步进与原厂触觉齿轮振感
+                // 物理表冠旋转与滚轮支持：精准 30px 步进（2 格精确定位 1 个菜单项）与原厂触觉齿轮微振
                 scrollView.setOnGenericMotionListener { v, event ->
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
                         val delta = CrownScrollHelper.extractCrownDelta(event)
                         if (abs(delta) > 0.001f) {
-                            val stepPixels = (delta * 60f).toInt()
+                            val stepPixels = (delta * 30f).toInt()
                             scrollView.scrollBy(0, stepPixels)
                             RotaryHapticManager.performScrollTick(ctx, v)
                             return@setOnGenericMotionListener true

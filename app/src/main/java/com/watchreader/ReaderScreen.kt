@@ -296,7 +296,7 @@ fun ReaderScreen(
                     false
                 }
 
-                // 表冠物理旋转监听：自动滚屏中可动态调速，未开启时正常翻页
+                // 表冠物理旋转监听：自动滚屏中可动态调速，未开启时正常翻页（36px/格）
                 scrollView.setOnGenericMotionListener { v, event ->
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
                         val delta = CrownScrollHelper.extractCrownDelta(event)
@@ -308,6 +308,13 @@ fun ReaderScreen(
                                 RotaryHapticManager.performScrollTick(ctx, v)
                             }
                             return@setOnGenericMotionListener true
+                        } else {
+                            if (abs(delta) > 0.001f) {
+                                val stepPixels = (delta * 36f).toInt()
+                                scrollView.scrollBy(0, stepPixels)
+                                RotaryHapticManager.performScrollTick(ctx, v)
+                                return@setOnGenericMotionListener true
+                            }
                         }
                     }
                     false

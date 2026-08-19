@@ -67,7 +67,7 @@ fun ChapterListScreen(
 
                 val listView = object : ListView(context) {
                     override fun fling(velocityY: Int) {
-                        super.fling((velocityY * 1.35f).toInt())
+                        super.fling(velocityY.coerceIn(-2500, 2500))
                     }
                 }.apply {
                     layoutParams = ViewGroup.LayoutParams(
@@ -89,7 +89,7 @@ fun ChapterListScreen(
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
                         val delta = CrownScrollHelper.extractCrownDelta(event)
                         if (kotlin.math.abs(delta) > 0.001f) {
-                            val stepPixels = (delta * 60f).toInt()
+                            val stepPixels = (delta * 32f).toInt()
                             listView.scrollListBy(stepPixels)
                             RotaryHapticManager.performScrollTick(context, v)
                             return@setOnGenericMotionListener true

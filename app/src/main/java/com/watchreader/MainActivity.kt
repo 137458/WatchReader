@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
@@ -155,6 +156,28 @@ class MainActivity : ComponentActivity() {
         if (focus != null && focus.dispatchGenericMotionEvent(event)) {
             return true
         }
+        // 当 Compose 容器占用焦点时，主动遍历子 View 树直接将表冠滚动事件精准分发给可视的 ScrollView / ListView
+        val decor = window.decorView as? ViewGroup
+        if (decor != null && dispatchToScrollableView(decor, event)) {
+            return true
+        }
+        return false
+    }
+
+    private fun dispatchToScrollableView(view: View, event: MotionEvent): Boolean {
+        if (!view.isShown) return false
+        if (view is ScrollView || view is ListView) {
+            if (view.dispatchGenericMotionEvent(event)) {
+                return true
+            }
+        }
+        if (view is ViewGroup) {
+            for (i in 0 until view.childCount) {
+                if (dispatchToScrollableView(view.getChildAt(i), event)) {
+                    return true
+                }
+            }
+        }
         return false
     }
 
@@ -271,7 +294,7 @@ fun BookshelfScreen(
 
             val scrollView = object : ScrollView(context) {
                 override fun fling(velocityY: Int) {
-                    super.fling((velocityY * 1.35f).toInt())
+                    super.fling(velocityY.coerceIn(-2500, 2500))
                 }
             }.apply {
                 layoutParams = ViewGroup.LayoutParams(
@@ -287,12 +310,12 @@ fun BookshelfScreen(
                 overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             }
 
-            // 支持表冠在书架界面的灵敏滚动与振感
+            // 支持表冠在书架界面的舒适滚动（32px/格）与齿轮微振
             scrollView.setOnGenericMotionListener { v, event ->
                 if (CrownScrollHelper.isCrownScrollEvent(event)) {
                     val delta = CrownScrollHelper.extractCrownDelta(event)
                     if (kotlin.math.abs(delta) > 0.001f) {
-                        val stepPixels = (delta * 60f).toInt()
+                        val stepPixels = (delta * 32f).toInt()
                         scrollView.scrollBy(0, stepPixels)
                         RotaryHapticManager.performScrollTick(context, v)
                         return@setOnGenericMotionListener true
