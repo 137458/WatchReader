@@ -159,8 +159,8 @@ fun ReaderScreen(
             factory = { ctx ->
                 val density = ctx.resources.displayMetrics.density
                 val padH = (24 * density).toInt() // 466x466 圆屏安全区域边距
-                val padTop = (44 * density).toInt()
-                val padBottom = (52 * density).toInt()
+                val padTop = (52 * density).toInt()
+                val padBottom = (56 * density).toInt()
 
                 val scrollView = ScrollView(ctx).apply {
                     layoutParams = ViewGroup.LayoutParams(
@@ -541,7 +541,10 @@ private fun bindChapterData(
         holder.prevBtn.visibility = View.GONE
     }
 
-    // 2. 章节标题
+    // 2. 章节标题（无上一章按钮时增加顶部安全避让间距）
+    val density = holder.scrollView.context.resources.displayMetrics.density
+    val topPad = if (content.hasPrevChapter) (8 * density).toInt() else (20 * density).toInt()
+    holder.titleTv.setPadding(0, topPad, 0, (10 * density).toInt())
     holder.titleTv.text = content.title
     holder.titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSize + 2).toFloat())
     holder.titleTv.setTextColor(titleColor)
