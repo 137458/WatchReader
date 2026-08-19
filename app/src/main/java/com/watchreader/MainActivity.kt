@@ -165,7 +165,9 @@ class MainActivity : ComponentActivity() {
                 bookshelf = uiState.bookshelf,
                 fontSize = uiState.fontSize,
                 isDarkMode = uiState.isDarkMode,
-                onOpenFile = { openFileLauncher.launch(arrayOf("text/plain")) },
+                onOpenFile = {
+                    openFileLauncher.launch(arrayOf("text/plain", "application/epub+zip", "application/octet-stream", "*/*"))
+                },
                 onOpenBook = { book -> viewModel.openFromShelf(book) },
                 onDeleteBook = { book -> viewModel.deleteFromShelf(book) },
                 onFontSizeChange = { viewModel.updateFontSize(it) },
@@ -357,6 +359,7 @@ private class BookshelfViewHolder(
 private class BookCardHolder(
     val card: FrameLayout,
     val bookTitle: TextView,
+    val formatBadge: TextView,
     val bookSub: TextView,
     val delBtn: TextView
 )
@@ -450,7 +453,7 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
     emptyLayout.addView(emptyTv)
 
     val pickBtn = TextView(context).apply {
-        text = "选择本地 TXT 小说"
+        text = "选择本地小说 (TXT / EPUB)"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         typeface = Typeface.DEFAULT_BOLD
         setPadding((16 * density).toInt(), (8 * density).toInt(), (16 * density).toInt(), (8 * density).toInt())
@@ -601,9 +604,21 @@ private fun updateBookshelfView(
                 setOnClickListener { onOpenBook(book) }
             }
 
+            val isEpub = book.uriString.endsWith(".epub", ignoreCase = true) || book.title.endsWith(".epub", ignoreCase = true)
+            val displayTitle = EpubParser.cleanBookTitle(book.title)
+
             cardHolder.bookTitle.apply {
-                text = book.title
+                text = displayTitle
                 setTextColor(onBgColor)
+            }
+
+            cardHolder.formatBadge.apply {
+                text = if (isEpub) "EPUB" else "TXT"
+                setTextColor(if (isEpub) primaryColor else secondaryColor)
+                background = GradientDrawable().apply {
+                    setColor(surfaceVariantColor)
+                    cornerRadius = 4 * density
+                }
             }
 
             val progressText = if (book.progressPercent > 0) "已读 ${book.progressPercent}%" else "未读"
@@ -679,13 +694,37 @@ private fun createBookCardHolder(context: Context, density: Float): BookCardHold
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
     }
 
+    val titleRow = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        gravity = Gravity.CENTER_VERTICAL
+    }
+
     val bookTitle = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         typeface = Typeface.DEFAULT_BOLD
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
+        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
     }
-    infoLayout.addView(bookTitle)
+    titleRow.addView(bookTitle)
+
+    val formatBadge = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.5f)
+        typeface = Typeface.DEFAULT_BOLD
+        setPadding((4 * density).toInt(), (1.5f * density).toInt(), (4 * density).toInt(), (1.5f * density).toInt())
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins((6 * density).toInt(), 0, (6 * density).toInt(), 0)
+        }
+    }
+    titleRow.addView(formatBadge)
+    infoLayout.addView(titleRow)
 
     val bookSub = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
@@ -704,7 +743,7 @@ private fun createBookCardHolder(context: Context, density: Float): BookCardHold
     cardContent.addView(delBtn)
 
     card.addView(cardContent)
-    return BookCardHolder(card, bookTitle, bookSub, delBtn)
+    return BookCardHolder(card, bookTitle, formatBadge, bookSub, delBtn)
 }
 
 /**

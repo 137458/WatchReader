@@ -186,37 +186,66 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             try {
-                val fileName = getFileName(appCtx, uri)
-                val (chapters, fullLen) = withContext(Dispatchers.IO) {
-                    currentEncoding = detectFileEncoding(appCtx, uri)
-                    val fileSize = getFileSize(appCtx, uri)
-                    val cacheKey = "${uri}_${fileSize}"
-                    var detected = chapterIndexCache[cacheKey]
-                    if (detected == null) {
-                        detected = ChapterDiskCache.load(appCtx, cacheKey)
-                    }
+                val isEpub = withContext(Dispatchers.IO) {
+                    EpubParser.isEpubFile(appCtx, uri)
+                }
 
-                    var totalChars = 0
-                    if (detected == null) {
-                        // 首次分析：读取全文提取目录后立即释放 fullText 内存
-                        val fullText = readTextFromUri(appCtx, uri)
-                        if (fullText.isEmpty()) {
-                            throw IllegalStateException("文件为空或无法读取")
+                val fileName: String
+                val chapters: List<Chapter>
+                val fullLen: Int
+
+                if (isEpub) {
+                    val epubMeta = withContext(Dispatchers.IO) {
+                        val fileSize = getFileSize(appCtx, uri)
+                        val cacheKey = "${uri}_${fileSize}"
+                        val cachedChapters = chapterIndexCache[cacheKey] ?: ChapterDiskCache.load(appCtx, cacheKey)
+                        if (cachedChapters != null) {
+                            chapterIndexCache[cacheKey] = cachedChapters
                         }
-                        totalChars = fullText.length
-                        val scanned = detectChapters(fullText)
-                        ChapterDiskCache.save(appCtx, cacheKey, scanned)
-                        chapterIndexCache[cacheKey] = scanned
-                        detected = scanned
-                    } else {
-                        chapterIndexCache[cacheKey] = detected
-                        val lastChap = detected.lastOrNull()
-                        val estimated = (fileSize / (if (currentEncoding.startsWith("UTF-16")) 2 else 1)).toInt()
-                        totalChars = if (lastChap != null) {
-                            maxOf(estimated, lastChap.charOffset + 3000)
-                        } else estimated
+                        val meta = EpubParser.parseEpub(appCtx, uri)
+                        if (cachedChapters == null) {
+                            ChapterDiskCache.save(appCtx, cacheKey, meta.chapters)
+                            chapterIndexCache[cacheKey] = meta.chapters
+                        }
+                        meta
                     }
-                    detected to totalChars
+                    fileName = epubMeta.title
+                    chapters = epubMeta.chapters
+                    fullLen = epubMeta.totalChars
+                } else {
+                    fileName = getFileName(appCtx, uri)
+                    val (scannedChapters, scannedLen) = withContext(Dispatchers.IO) {
+                        currentEncoding = detectFileEncoding(appCtx, uri)
+                        val fileSize = getFileSize(appCtx, uri)
+                        val cacheKey = "${uri}_${fileSize}"
+                        var detected = chapterIndexCache[cacheKey]
+                        if (detected == null) {
+                            detected = ChapterDiskCache.load(appCtx, cacheKey)
+                        }
+
+                        val totalChars: Int
+                        if (detected == null) {
+                            // 首次分析：纯流式解析，峰值内存恒定 < 64KB，彻底消除大文件堆内存分配
+                            val (scanned, scannedChars) = detectChaptersStream(appCtx, uri, currentEncoding)
+                            if (scanned.isEmpty() && scannedChars == 0) {
+                                throw IllegalStateException("文件为空或无法读取")
+                            }
+                            totalChars = scannedChars
+                            ChapterDiskCache.save(appCtx, cacheKey, scanned)
+                            chapterIndexCache[cacheKey] = scanned
+                            detected = scanned
+                        } else {
+                            chapterIndexCache[cacheKey] = detected
+                            val lastChap = detected.lastOrNull()
+                            val estimated = (fileSize / (if (currentEncoding.startsWith("UTF-16")) 2 else 1)).toInt()
+                            totalChars = if (lastChap != null) {
+                                maxOf(estimated, lastChap.charOffset + 3000)
+                            } else estimated
+                        }
+                        detected to totalChars
+                    }
+                    chapters = scannedChapters
+                    fullLen = scannedLen
                 }
 
                 chapterContentCache.clear()
@@ -298,12 +327,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             // 后台异步预热周围章节
             prefetchAdjacentChapters(uri, chapters, chapterIndex, totalLen)
 
-            val uriVal = state.currentUri
-            if (uriVal != null) {
-                savePositionJob?.cancel()
-                savePositionJob = viewModelScope.launch(Dispatchers.IO) {
-                    DataStoreManager.saveReadingPosition(appCtx, uriVal, offset, totalLen, chapterContent.title)
-                }
+            savePositionJob?.cancel()
+            savePositionJob = viewModelScope.launch(Dispatchers.IO) {
+                DataStoreManager.saveReadingPosition(appCtx, uri, offset, totalLen, chapterContent.title)
             }
         }
     }
@@ -323,12 +349,18 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             return ChapterContent(0, "", "", 0, 0, false, "", false, "")
         }
 
-        val currentChap = chapters[chapterIndex]
-        val startOffset = currentChap.charOffset.coerceIn(0, totalChars)
-        val endOffset = (if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else totalChars).coerceIn(startOffset, totalChars)
+        val isEpub = EpubParser.isEpubFile(appCtx, uri)
+        val formatted = if (isEpub) {
+            EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters)
+        } else {
+            val currentChap = chapters[chapterIndex]
+            val startOffset = currentChap.charOffset.coerceIn(0, totalChars)
+            val endOffset = (if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else totalChars).coerceIn(startOffset, totalChars)
 
-        val rawChunk = readChapterChunkFromUri(appCtx, uri, currentEncoding, startOffset, endOffset)
-        val formatted = formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset)
+            val rawChunk = readChapterChunkFromUri(appCtx, uri, currentEncoding, startOffset, endOffset)
+            formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset)
+        }
+
         chapterContentCache[chapterIndex] = formatted
         return formatted
     }

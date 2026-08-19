@@ -248,8 +248,8 @@ fun MenuScreen(
             modifier = Modifier.align(Alignment.TopCenter)
         )
 
-        // 9 点与 15 点方向常驻侧边状态栏
-        WatchSideStatusBar(
+        // 9 点与 3 点方向贴边弧形排布的竖排电量与时间
+        CurvedSideStatusBar(
             modifier = Modifier.fillMaxSize(),
             textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
         )

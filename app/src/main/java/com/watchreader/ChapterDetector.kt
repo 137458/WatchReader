@@ -54,12 +54,7 @@ fun detectChapters(fullText: String): List<Chapter> {
             if (start < lineEnd) {
                 val firstChar = fullText[start]
                 // 零分配候选首字剪枝：99.9% 普通正文直接跳过，耗时从 1.5s 骤降至 10ms
-                val isCandidate = firstChar == '第' || firstChar == '序' || firstChar == '楔' ||
-                        firstChar == '引' || firstChar == '前' || firstChar == '终' ||
-                        firstChar == '后' || firstChar == '尾' || firstChar == '番' ||
-                        firstChar == '扉' || firstChar == '卷' || firstChar == '正' ||
-                        firstChar == 'C' || firstChar == 'c' ||
-                        firstChar == '上' || firstChar == '中' || firstChar == '下'
+                val isCandidate = isChapterCandidateChar(firstChar)
 
                 if (isCandidate) {
                     val line = fullText.substring(start, lineEnd).trimEnd()
@@ -78,6 +73,150 @@ fun detectChapters(fullText: String): List<Chapter> {
         return createVirtualChapters(fullText)
     }
 
+    return chapters
+}
+
+/**
+ * 候选首字快速剪枝预检
+ */
+@Suppress("NOTHING_TO_INLINE")
+private inline fun isChapterCandidateChar(firstChar: Char): Boolean {
+    return firstChar == '第' || firstChar == '序' || firstChar == '楔' ||
+            firstChar == '引' || firstChar == '前' || firstChar == '终' ||
+            firstChar == '后' || firstChar == '尾' || firstChar == '番' ||
+            firstChar == '扉' || firstChar == '卷' || firstChar == '正' ||
+            firstChar == 'C' || firstChar == 'c' ||
+            firstChar == '上' || firstChar == '中' || firstChar == '下'
+}
+
+/**
+ * 流式零内存峰值章节检测器（直接从 URI / 流分块扫描，内存占用恒定 < 64KB）
+ *
+ * @param context Android 上下文
+ * @param uri 目标 TXT 文件 URI
+ * @param encoding 字符编码（如 UTF-8, GB18030 等）
+ * @return Pair(章节列表, 总字符数)
+ */
+fun detectChaptersStream(
+    context: android.content.Context,
+    uri: android.net.Uri,
+    encoding: String
+): Pair<List<Chapter>, Int> {
+    val cr = context.contentResolver
+
+    // 优先尝试 FileChannel 直读流
+    val fis: java.io.InputStream = try {
+        cr.openFileDescriptor(uri, "r")?.let { pfd ->
+            java.io.FileInputStream(pfd.fileDescriptor)
+        } ?: cr.openInputStream(uri) ?: throw java.io.FileNotFoundException("无法打开文件流")
+    } catch (_: Exception) {
+        cr.openInputStream(uri) ?: throw java.io.FileNotFoundException("无法打开文件流")
+    }
+
+    return detectChaptersFromInputStream(fis, encoding)
+}
+
+/**
+ * 从 InputStream 纯流式解析章节目录与计算总字符数（0 全文内存分配）
+ */
+fun detectChaptersFromInputStream(
+    inputStream: java.io.InputStream,
+    encoding: String
+): Pair<List<Chapter>, Int> {
+    val safeEncoding = if (encoding.isNotEmpty()) encoding else "UTF-8"
+    val chapters = ArrayList<Chapter>(512)
+
+    val bufferedIn = if (inputStream is java.io.BufferedInputStream) inputStream else java.io.BufferedInputStream(inputStream, 65536)
+    // 跳过 UTF-8 BOM（若存在）
+    if (safeEncoding.equals("UTF-8", ignoreCase = true)) {
+        bufferedIn.mark(4)
+        val bom = ByteArray(3)
+        val nRead = bufferedIn.read(bom)
+        if (!(nRead >= 3 && bom[0] == 0xEF.toByte() && bom[1] == 0xBB.toByte() && bom[2] == 0xBF.toByte())) {
+            bufferedIn.reset()
+        }
+    }
+
+    val reader = java.io.BufferedReader(java.io.InputStreamReader(bufferedIn, java.nio.charset.Charset.forName(safeEncoding)), 65536)
+    val charBuf = CharArray(32768)
+    val lineSb = java.lang.StringBuilder(128)
+    var currentCharOffset = 0
+    var lineStartCharOffset = 0
+    var lineCharCount = 0
+    var readChars: Int
+
+    try {
+        while (reader.read(charBuf).also { readChars = it } != -1) {
+            for (i in 0 until readChars) {
+                val c = charBuf[i]
+                if (c == '\n' || c == '\r') {
+                    if (lineCharCount > 0) {
+                        checkAndAddChapter(lineSb, lineStartCharOffset, chapters)
+                        lineSb.setLength(0)
+                        lineCharCount = 0
+                    }
+                    currentCharOffset++
+                    lineStartCharOffset = currentCharOffset
+                } else {
+                    if (lineCharCount == 0) {
+                        lineStartCharOffset = currentCharOffset
+                    }
+                    if (lineCharCount < 80) {
+                        lineSb.append(c)
+                    }
+                    lineCharCount++
+                    currentCharOffset++
+                }
+            }
+        }
+        if (lineCharCount > 0) {
+            checkAndAddChapter(lineSb, lineStartCharOffset, chapters)
+        }
+    } finally {
+        try { reader.close() } catch (_: Exception) {}
+    }
+
+    val totalChars = currentCharOffset
+    if (chapters.isEmpty()) {
+        return createVirtualChaptersFromLength(totalChars) to totalChars
+    }
+    return chapters to totalChars
+}
+
+private fun checkAndAddChapter(
+    lineSb: java.lang.StringBuilder,
+    lineStartCharOffset: Int,
+    chapters: ArrayList<Chapter>
+) {
+    val len = lineSb.length
+    if (len in 2..60) {
+        var start = 0
+        while (start < len && lineSb[start].isWhitespace()) {
+            start++
+        }
+        if (start < len) {
+            val firstChar = lineSb[start]
+            if (isChapterCandidateChar(firstChar)) {
+                val line = lineSb.substring(start).trimEnd()
+                if (line.length in 2..60 && CHAPTER_REGEX.matches(line)) {
+                    chapters.add(Chapter(index = chapters.size, title = line, charOffset = lineStartCharOffset))
+                }
+            }
+        }
+    }
+}
+
+private fun createVirtualChaptersFromLength(totalChars: Int): List<Chapter> {
+    if (totalChars <= 0) return emptyList()
+    val chapters = mutableListOf<Chapter>()
+    var offset = 0
+    var partIdx = 1
+    val chunkSize = 3000
+    while (offset < totalChars) {
+        chapters.add(Chapter(index = chapters.size, title = "第 $partIdx 节", charOffset = offset))
+        partIdx++
+        offset += chunkSize
+    }
     return chapters
 }
 

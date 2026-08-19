@@ -482,8 +482,8 @@ fun ReaderScreen(
             modifier = Modifier.align(Alignment.TopCenter)
         )
 
-        // 9 点与 15 点方向常驻侧边状态栏
-        WatchSideStatusBar(
+        // 9 点与 3 点方向贴边弧形排布的竖排电量与时间
+        CurvedSideStatusBar(
             modifier = Modifier.fillMaxSize(),
             textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
         )
@@ -506,136 +506,6 @@ fun ReaderScreen(
                 )
             }
         }
-    }
-}
-
-/**
- * 手表常驻侧边状态栏 — 9 点钟方向电量从上到下排布，15 点钟方向时间竖直排列
- */
-@Composable
-fun WatchSideStatusBar(
-    modifier: Modifier = Modifier,
-    textColor: Color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
-) {
-    val context = LocalContext.current
-    var currentTime by remember {
-        mutableStateOf(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()))
-    }
-    var batteryLevel by remember {
-        mutableStateOf(getBatteryCapacity(context))
-    }
-    var isCharging by remember {
-        mutableStateOf(false)
-    }
-
-    DisposableEffect(context) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context?, intent: Intent?) {
-                when (intent?.action) {
-                    Intent.ACTION_TIME_TICK, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> {
-                        currentTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-                    }
-                    Intent.ACTION_BATTERY_CHANGED -> {
-                        val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-                        val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-                        val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-                        isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                                status == BatteryManager.BATTERY_STATUS_FULL
-                        if (level >= 0 && scale > 0) {
-                            batteryLevel = (level * 100) / scale
-                        }
-                    }
-                }
-            }
-        }
-
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_TIME_TICK)
-            addAction(Intent.ACTION_TIME_CHANGED)
-            addAction(Intent.ACTION_TIMEZONE_CHANGED)
-            addAction(Intent.ACTION_BATTERY_CHANGED)
-        }
-        val sticky = context.registerReceiver(receiver, filter)
-        sticky?.let { intent ->
-            val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-            val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-            val status = intent.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-            isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
-                    status == BatteryManager.BATTERY_STATUS_FULL
-            if (level >= 0 && scale > 0) {
-                batteryLevel = (level * 100) / scale
-            }
-        }
-
-        onDispose {
-            try {
-                context.unregisterReceiver(receiver)
-            } catch (_: Exception) {}
-        }
-    }
-
-    val batteryText = remember(batteryLevel, isCharging) {
-        formatVerticalText("$batteryLevel%", if (isCharging) "⚡" else "")
-    }
-    val timeText = remember(currentTime) {
-        formatVerticalText(currentTime)
-    }
-
-    Box(modifier = modifier.fillMaxSize()) {
-        // 9 点钟方向（左侧垂直居中）：电量从上到下排
-        Text(
-            text = batteryText,
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .padding(start = 5.dp),
-            style = TextStyle(
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 11.sp,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            ),
-            color = textColor
-        )
-
-        // 15 点钟方向（3 点钟右侧垂直居中）：时间竖直排列
-        Text(
-            text = timeText,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 5.dp),
-            style = TextStyle(
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 11.sp,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            ),
-            color = textColor
-        )
-    }
-}
-
-/**
- * 零垃圾分配垂直单字符换行构建工具
- */
-private fun formatVerticalText(text: CharSequence, prefix: String = ""): String {
-    if (text.isEmpty()) return prefix
-    val sb = java.lang.StringBuilder(prefix.length + text.length * 2)
-    if (prefix.isNotEmpty()) {
-        sb.append(prefix)
-    }
-    for (i in 0 until text.length) {
-        if (sb.isNotEmpty()) sb.append('\n')
-        sb.append(text[i])
-    }
-    return sb.toString()
-}
-
-private fun getBatteryCapacity(context: Context): Int {
-    return try {
-        val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
-        bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)?.coerceIn(0, 100) ?: 100
-    } catch (_: Exception) {
-        100
     }
 }
 

@@ -86,4 +86,8 @@ dependencies {
 
     // 调试工具
     debugImplementation("androidx.compose.ui:ui-tooling")
+
+    // 单元测试
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("net.sf.kxml:kxml2:2.3.0")
 }
