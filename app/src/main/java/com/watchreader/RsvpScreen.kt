@@ -21,21 +21,25 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 
 /**
- * RSVP 单个词元单元
+ * RSVP 单个词元单元（包含 ORP 最佳注视焦点索引）
  */
 data class RsvpToken(
     val text: String,
     val charOffset: Int,
-    val pauseMultiplier: Float = 1.0f
+    val pauseMultiplier: Float = 1.0f,
+    val orpIndex: Int = 0
 )
 
 /**
@@ -133,13 +137,37 @@ fun RsvpScreen(
                     true
                 } else false
             }
-            // 右滑手势极速退出返回阅读
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures { _, dragAmount ->
-                    if (dragAmount > 25f) {
-                        onBack()
+            // 水平滑动手势：左滑回退 5 词，右滑快进 5 词
+            .pointerInput(tokens, currentIndex) {
+                var dragAccumulator = 0f
+                detectHorizontalDragGestures(
+                    onDragEnd = { dragAccumulator = 0f },
+                    onDragCancel = { dragAccumulator = 0f },
+                    onHorizontalDrag = { _, dragAmount ->
+                        dragAccumulator += dragAmount
+                        if (dragAccumulator > 30f) {
+                            dragAccumulator = 0f
+                            if (tokens.isNotEmpty()) {
+                                val nextIdx = (currentIndex + 5).coerceAtMost(tokens.lastIndex)
+                                if (nextIdx != currentIndex) {
+                                    currentIndex = nextIdx
+                                    onCharOffsetChange(tokens[nextIdx].charOffset)
+                                    RotaryHapticManager.performScrollTick(context, null)
+                                }
+                            }
+                        } else if (dragAccumulator < -30f) {
+                            dragAccumulator = 0f
+                            if (tokens.isNotEmpty()) {
+                                val prevIdx = (currentIndex - 5).coerceAtLeast(0)
+                                if (prevIdx != currentIndex) {
+                                    currentIndex = prevIdx
+                                    onCharOffsetChange(tokens[prevIdx].charOffset)
+                                    RotaryHapticManager.performScrollTick(context, null)
+                                }
+                            }
+                        }
                     }
-                }
+                )
             },
         contentAlignment = Alignment.Center
     ) {
@@ -168,11 +196,11 @@ fun RsvpScreen(
             textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
         )
 
-        // 4. 屏幕正中心 RSVP 闪读文字呈现区（轻触中央切换 暂停/继续）
+        // 4. 屏幕正中心 RSVP 闪读文字呈现区（轻触中央切换 暂停/继续，ORP 焦点高亮）
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 28.dp)
+                .padding(horizontal = 24.dp)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
@@ -183,13 +211,43 @@ fun RsvpScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
+            // ORP 顶部对齐微标指示器
+            Box(
+                modifier = Modifier
+                    .size(width = 3.dp, height = 5.dp)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(colorScheme.primary.copy(alpha = 0.55f))
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
             if (currentToken != null) {
+                val tokenText = currentToken.text
+                val orp = currentToken.orpIndex.coerceIn(0, maxOf(0, tokenText.length - 1))
+                val annotatedString = remember(currentToken, colorScheme) {
+                    buildAnnotatedString {
+                        if (orp > 0) {
+                            withStyle(SpanStyle(color = colorScheme.onBackground.copy(alpha = 0.85f), fontWeight = FontWeight.Normal)) {
+                                append(tokenText.substring(0, orp))
+                            }
+                        }
+                        if (orp < tokenText.length) {
+                            withStyle(SpanStyle(color = colorScheme.primary, fontWeight = FontWeight.ExtraBold)) {
+                                append(tokenText[orp])
+                            }
+                        }
+                        if (orp + 1 < tokenText.length) {
+                            withStyle(SpanStyle(color = colorScheme.onBackground.copy(alpha = 0.85f), fontWeight = FontWeight.Normal)) {
+                                append(tokenText.substring(orp + 1))
+                            }
+                        }
+                    }
+                }
+
                 Text(
-                    text = currentToken.text,
+                    text = annotatedString,
                     style = TextStyle(
                         fontSize = 36.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colorScheme.primary,
                         letterSpacing = 1.sp,
                         textAlign = TextAlign.Center
                     ),
@@ -202,7 +260,17 @@ fun RsvpScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // ORP 底部对齐微标指示器
+            Box(
+                modifier = Modifier
+                    .size(width = 3.dp, height = 5.dp)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(colorScheme.primary.copy(alpha = 0.55f))
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // 进度小字
             val progressPercent = if (tokens.isNotEmpty()) {
@@ -281,7 +349,22 @@ fun RsvpScreen(
 }
 
 /**
- * 将整段正文智能拆解为符合眼球注视节奏的 RSVP 词元
+ * 计算词元的 ORP (Optimal Recognition Point) 最佳注视焦点索引
+ * 0~2 字符: 索引 0 (首字)
+ * 3~5 字符: 索引 1 (次字/中字)
+ * 6~9 字符: 索引 2
+ * 10+ 字符: 约 35% 黄金分割点
+ */
+fun calculateOrpIndex(word: String): Int {
+    val len = word.length
+    if (len <= 2) return 0
+    if (len in 3..5) return 1
+    if (len in 6..9) return 2
+    return (len * 0.35f).toInt().coerceIn(0, len - 1)
+}
+
+/**
+ * 将整段正文智能拆解为符合眼球注视节奏的 RSVP 词元（包含 ORP 焦点）
  */
 fun tokenizeRsvpText(text: String, startOffset: Int): List<RsvpToken> {
     if (text.isEmpty()) return emptyList()
@@ -322,7 +405,8 @@ fun tokenizeRsvpText(text: String, startOffset: Int): List<RsvpToken> {
             }
 
             val tokenStr = text.substring(tokenStart, endIdx)
-            tokens.add(RsvpToken(tokenStr, startOffset + tokenStart, pause))
+            val orp = calculateOrpIndex(tokenStr)
+            tokens.add(RsvpToken(tokenStr, startOffset + tokenStart, pause, orp))
             i = endIdx
         } else {
             var endIdx = tokenStart
@@ -342,7 +426,8 @@ fun tokenizeRsvpText(text: String, startOffset: Int): List<RsvpToken> {
             }
 
             val tokenStr = text.substring(tokenStart, endIdx)
-            tokens.add(RsvpToken(tokenStr, startOffset + tokenStart, pause))
+            val orp = calculateOrpIndex(tokenStr)
+            tokens.add(RsvpToken(tokenStr, startOffset + tokenStart, pause, orp))
             i = endIdx
         }
     }

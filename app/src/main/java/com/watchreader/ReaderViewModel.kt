@@ -852,14 +852,13 @@ fun formatChapterRawText(
         }
 
         if (s < e) {
-            val lineText = rawText.substring(s, e)
-            if (sb.isEmpty() && lineText == chapTitle) {
-                // 跳过正文首行与章节标题重复的冗余行
-            } else {
+            val lineLen = e - s
+            val isTitleMatch = sb.isEmpty() && lineLen == chapTitle.length && rawText.regionMatches(s, chapTitle, 0, lineLen)
+            if (!isTitleMatch) {
                 if (sb.isNotEmpty()) {
                     sb.append("\n\n")
                 }
-                sb.append("\u3000\u3000").append(lineText)
+                sb.append("\u3000\u3000").append(rawText, s, e)
             }
         }
 

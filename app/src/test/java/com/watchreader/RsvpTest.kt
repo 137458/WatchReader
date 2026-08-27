@@ -36,4 +36,34 @@ class RsvpTest {
         val tokens = tokenizeRsvpText("", 0)
         assertTrue(tokens.isEmpty())
     }
+
+    @Test
+    fun testOrpIndexCalculation() {
+        // 单字 / 双字 -> 索引 0
+        assertEquals(0, calculateOrpIndex("天"))
+        assertEquals(0, calculateOrpIndex("江湖"))
+
+        // 3~5 字 -> 索引 1
+        assertEquals(1, calculateOrpIndex("万物生"))
+        assertEquals(1, calculateOrpIndex("风起云涌"))
+        assertEquals(1, calculateOrpIndex("Hello"))
+
+        // 6~9 字 -> 索引 2
+        assertEquals(2, calculateOrpIndex("天地不仁以万物"))
+        assertEquals(2, calculateOrpIndex("Running"))
+
+        // 10+ 字 -> 约 35% 处
+        val longWord = "Supercalifragilisticexpialidocious"
+        val orp = calculateOrpIndex(longWord)
+        assertTrue(orp in 10..15)
+    }
+
+    @Test
+    fun testRsvpTokenContainsOrp() {
+        val tokens = tokenizeRsvpText("初入江湖，风起云涌！", 0)
+        assertTrue(tokens.isNotEmpty())
+        for (token in tokens) {
+            assertTrue(token.orpIndex in 0 until token.text.length)
+        }
+    }
 }

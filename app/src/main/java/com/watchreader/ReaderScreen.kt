@@ -221,13 +221,19 @@ fun ReaderScreen(
                 }
                 container.addView(titleTv)
 
-                // 3. 章节正文（单 TextLayout 硬件加速排版）
+                // 3. 章节正文（单 TextLayout 硬件加速排版 + 中文两端平整对齐）
                 val bodyTv = TextView(ctx).apply {
                     tag = "body"
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat())
                     setTextColor(textColor)
                     setLineSpacing(0f, 1.45f)
                     setPadding(0, 0, 0, (12 * density).toInt())
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        justificationMode = android.graphics.text.LineBreaker.JUSTIFICATION_MODE_INTER_WORD
+                    } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                        @Suppress("DEPRECATION")
+                        justificationMode = android.text.Layout.JUSTIFICATION_MODE_INTER_WORD
+                    }
                 }
                 container.addView(bodyTv)
 

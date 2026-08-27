@@ -6,6 +6,8 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.TextUtils
 import android.text.TextWatcher
@@ -417,7 +419,9 @@ private class BookshelfViewHolder(
     val fontMinus: TextView,
     val fontSizeVal: TextView,
     val fontPlus: TextView,
-    val cardHolders: MutableList<BookCardHolder> = mutableListOf()
+    val cardHolders: MutableList<BookCardHolder> = mutableListOf(),
+    var pendingDeleteUri: String? = null,
+    var resetDeleteRunnable: Runnable? = null
 )
 
 private class BookCardHolder(
@@ -744,6 +748,8 @@ private fun updateBookshelfView(
                 holder.cardsContainer.addView(cardHolder.card)
             }
 
+            val isPendingDelete = holder.pendingDeleteUri == book.uriString
+
             // 就地更新卡片数据与外观
             cardHolder.card.apply {
                 background = GradientDrawable().apply {
@@ -753,7 +759,30 @@ private fun updateBookshelfView(
                         setStroke((1.2f * density).toInt(), primaryColor)
                     }
                 }
-                setOnClickListener { onOpenBook(book) }
+                setOnClickListener {
+                    if (holder.pendingDeleteUri != null) {
+                        holder.pendingDeleteUri = null
+                        updateBookshelfView(
+                            holder = holder,
+                            bookshelf = bookshelf,
+                            searchQuery = searchQuery,
+                            fontSize = fontSize,
+                            isDarkMode = isDarkMode,
+                            errorMessage = errorMessage,
+                            colors = colors,
+                            onOpenFile = onOpenFile,
+                            onOpenBook = onOpenBook,
+                            onDeleteBook = onDeleteBook,
+                            onTogglePin = onTogglePin,
+                            onSearchChange = onSearchChange,
+                            onOpenWifiTransfer = onOpenWifiTransfer,
+                            onFontSizeChange = onFontSizeChange,
+                            onToggleDarkMode = onToggleDarkMode
+                        )
+                    } else {
+                        onOpenBook(book)
+                    }
+                }
             }
 
             cardHolder.pinIndicator.apply {
@@ -792,8 +821,70 @@ private fun updateBookshelfView(
             }
 
             cardHolder.delBtn.apply {
-                setTextColor(outlineColor)
-                setOnClickListener { onDeleteBook(book) }
+                if (isPendingDelete) {
+                    text = "确认删除?"
+                    setTextColor(errorColor)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+                    background = GradientDrawable().apply {
+                        setColor(Color(errorColor).copy(alpha = 0.16f).toArgb())
+                        cornerRadius = 8 * density
+                    }
+                    setOnClickListener {
+                        holder.pendingDeleteUri = null
+                        holder.resetDeleteRunnable?.let { holder.container.removeCallbacks(it) }
+                        onDeleteBook(book)
+                    }
+                } else {
+                    text = "✕"
+                    setTextColor(outlineColor)
+                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                    background = null
+                    setOnClickListener {
+                        holder.pendingDeleteUri = book.uriString
+                        holder.resetDeleteRunnable?.let { holder.container.removeCallbacks(it) }
+                        holder.resetDeleteRunnable = Runnable {
+                            if (holder.pendingDeleteUri == book.uriString) {
+                                holder.pendingDeleteUri = null
+                                updateBookshelfView(
+                                    holder = holder,
+                                    bookshelf = bookshelf,
+                                    searchQuery = searchQuery,
+                                    fontSize = fontSize,
+                                    isDarkMode = isDarkMode,
+                                    errorMessage = errorMessage,
+                                    colors = colors,
+                                    onOpenFile = onOpenFile,
+                                    onOpenBook = onOpenBook,
+                                    onDeleteBook = onDeleteBook,
+                                    onTogglePin = onTogglePin,
+                                    onSearchChange = onSearchChange,
+                                    onOpenWifiTransfer = onOpenWifiTransfer,
+                                    onFontSizeChange = onFontSizeChange,
+                                    onToggleDarkMode = onToggleDarkMode
+                                )
+                            }
+                        }
+                        holder.container.postDelayed(holder.resetDeleteRunnable!!, 3200L)
+
+                        updateBookshelfView(
+                            holder = holder,
+                            bookshelf = bookshelf,
+                            searchQuery = searchQuery,
+                            fontSize = fontSize,
+                            isDarkMode = isDarkMode,
+                            errorMessage = errorMessage,
+                            colors = colors,
+                            onOpenFile = onOpenFile,
+                            onOpenBook = onOpenBook,
+                            onDeleteBook = onDeleteBook,
+                            onTogglePin = onTogglePin,
+                            onSearchChange = onSearchChange,
+                            onOpenWifiTransfer = onOpenWifiTransfer,
+                            onFontSizeChange = onFontSizeChange,
+                            onToggleDarkMode = onToggleDarkMode
+                        )
+                    }
+                }
             }
         }
 
