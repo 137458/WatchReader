@@ -35,7 +35,7 @@ WatchReader 是一款专为智能手表（Android / Wear OS 圆屏设备，如 O
 
 ## 下载与安装
 
-请前往 [Releases](../../releases) 页面下载最新版本的 `app-release.apk`。
+请前往 [Releases](https://github.com/137458/WatchReader/releases) 页面下载最新版本的 `app-release.apk`。
 
 ### 安装方法
 
