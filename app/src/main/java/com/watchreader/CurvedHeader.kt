@@ -223,12 +223,14 @@ fun CurvedSideStatusBar(
 
         val fontMetrics = paint.fontMetrics
         val verticalCenteringOffset = ((fontMetrics.descent - fontMetrics.ascent) / 2f) - fontMetrics.descent
-        val angleStepRad = (charSpacingPx / arcRadius).toDouble()
+        // 适当优化步进角，使得 5 字符在侧边呈现清晰饱满且自然的同心外弧
+        val angleStepRad = ((charSpacingPx * 1.05f) / arcRadius).toDouble()
 
         drawIntoCanvas { canvas ->
             val nativeCanvas = canvas.nativeCanvas
 
-            // 1. 左侧 9 点钟方向电量：字符全正立，从上到下排布，坐标随左表圈弧度向右弯曲收紧
+            // 1. 左侧 9 点钟方向电量：字符最左侧外边缘严格相切于圆弧，消除宽窄字符引起的边缘锯齿
+            paint.textAlign = Paint.Align.LEFT
             val bCount = batteryChars.size
             for (i in 0 until bCount) {
                 val indexOffset = i - ((bCount - 1) / 2.0)
@@ -241,14 +243,18 @@ fun CurvedSideStatusBar(
                 nativeCanvas.drawText(charStr, x, y, paint)
             }
 
-            // 2. 右侧 3 点钟方向时间：字符全正立，从上到下排布，坐标随右表圈弧度向左弯曲收紧
+            // 2. 右侧 3 点钟方向时间：字符最右侧外边缘严格相切于圆弧，彻底消除冒号过窄引起的视觉内凹塌陷
+            paint.textAlign = Paint.Align.RIGHT
             val tCount = timeChars.size
             for (i in 0 until tCount) {
                 val indexOffset = i - ((tCount - 1) / 2.0)
                 // 0° 为 0.0，加上角度使从上（负角度y小）到下（正角度y大）顺排
                 val angle = 0.0 + (indexOffset * angleStepRad)
                 val x = (cx + arcRadius * Math.cos(angle)).toFloat()
-                val y = (cy + arcRadius * Math.sin(angle)).toFloat() + verticalCenteringOffset
+                val isColon = timeChars[i] == ':'
+                // 冒号轻微下移修正（消除 ASCII 冒号偏高造成的视觉悬空）
+                val colonYOffset = if (isColon) with(density) { 0.5.dp.toPx() } else 0f
+                val y = (cy + arcRadius * Math.sin(angle)).toFloat() + verticalCenteringOffset + colonYOffset
 
                 val charStr = timeChars[i].toString()
                 nativeCanvas.drawText(charStr, x, y, paint)
