@@ -44,3 +44,6 @@ decompiled_*/
 *.png
 !app/src/main/res/**/*.png
 
+# Internal process docs, planning & research reports
+docs/
+CONTEXT.md
