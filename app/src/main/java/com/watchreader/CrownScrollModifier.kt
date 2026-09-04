@@ -8,7 +8,6 @@ import android.view.ViewConfiguration
 import android.widget.ListView
 import androidx.compose.foundation.gestures.ScrollableState
 import kotlin.math.abs
-import kotlin.math.sign
 
 /**
  * OPPO Watch (ColorOS Watch / Wear OS) 表冠转动与触觉交互管理器

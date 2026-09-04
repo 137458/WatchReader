@@ -1,13 +1,9 @@
 package com.watchreader
 
 import android.app.Activity
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.BatteryManager
 import android.os.Handler
 import android.os.Looper
 import android.util.TypedValue
@@ -41,9 +37,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlin.math.abs
 
 /**

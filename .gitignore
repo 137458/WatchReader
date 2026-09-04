@@ -41,4 +41,6 @@ Thumbs.db
 
 # Temp test files & reverse engineering references
 decompiled_*/
-current_*.png
+*.png
+!app/src/main/res/**/*.png
+
