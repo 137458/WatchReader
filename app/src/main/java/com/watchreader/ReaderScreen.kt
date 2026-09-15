@@ -83,23 +83,25 @@ fun ReaderScreen(
     val window = (context as? Activity)?.window
     val keepScreenOnHandler = remember { Handler(Looper.getMainLooper()) }
 
-    var isTransientProgressVisible by remember { mutableStateOf(false) }
-    var currentTransientOffset by remember(initialCharOffset) { mutableStateOf(initialCharOffset) }
-    val progressHandler = remember { Handler(Looper.getMainLooper()) }
-    val hideProgressRunnable = remember {
-        Runnable { isTransientProgressVisible = false }
+    var isScrolling by remember { mutableStateOf(false) }
+    var currentReadingOffset by remember(initialCharOffset) { mutableStateOf(initialCharOffset) }
+    val scrollDebounceHandler = remember { Handler(Looper.getMainLooper()) }
+    val resetScrollingRunnable = remember {
+        Runnable { isScrolling = false }
     }
-    val showTransientProgress = remember {
+    val notifyScrollActivity = remember {
         {
-            isTransientProgressVisible = true
-            progressHandler.removeCallbacks(hideProgressRunnable)
-            progressHandler.postDelayed(hideProgressRunnable, 1500L)
+            if (!isScrolling) {
+                isScrolling = true
+            }
+            scrollDebounceHandler.removeCallbacks(resetScrollingRunnable)
+            scrollDebounceHandler.postDelayed(resetScrollingRunnable, 700L)
         }
     }
 
     DisposableEffect(Unit) {
         onDispose {
-            progressHandler.removeCallbacksAndMessages(null)
+            scrollDebounceHandler.removeCallbacksAndMessages(null)
         }
     }
     val resetInactivityKeepScreenOn = remember(window, isAutoScrolling) {
@@ -348,6 +350,7 @@ fun ReaderScreen(
                             }
                         }
                         MotionEvent.ACTION_MOVE -> {
+                            notifyScrollActivity()
                             if (isLeftEdgeDrag) {
                                 val deltaY = startDragY - event.y // 向上滑增加亮度，向下滑减弱
                                 val deltaBrightness = deltaY / (240 * density)
@@ -367,7 +370,7 @@ fun ReaderScreen(
                 scrollView.setOnGenericMotionListener { v, event ->
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
                         resetInactivityKeepScreenOn()
-                        showTransientProgress()
+                        notifyScrollActivity()
                         val delta = CrownScrollHelper.extractCrownDelta(event)
                         if (autoEngine.isRunning) {
                             if (abs(delta) > 0.05f) {
@@ -400,7 +403,7 @@ fun ReaderScreen(
                 var lastReportedOffset = -1
 
                 scrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
-                    showTransientProgress()
+                    notifyScrollActivity()
                     if (chapterContent != null && chapterContent.formattedBody.isNotEmpty()) {
                         val bodyTop = holder.bodyTv.top
                         val bodyHeight = maxOf(1, holder.bodyTv.height)
@@ -408,7 +411,7 @@ fun ReaderScreen(
                         val scrollRatio = relativeY.toFloat() / bodyHeight
                         val chapterLen = chapterContent.endCharOffset - chapterContent.startCharOffset
                         val currentOffset = chapterContent.startCharOffset + (chapterLen * scrollRatio).toInt()
-                        currentTransientOffset = currentOffset
+                        currentReadingOffset = currentOffset
 
                         if (currentOffset != lastReportedOffset) {
                             lastReportedOffset = currentOffset
@@ -512,16 +515,18 @@ fun ReaderScreen(
             textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
         )
 
-        val transientProgressAlpha by androidx.compose.animation.core.animateFloatAsState(
-            targetValue = if (isTransientProgressVisible && !isAutoScrolling) 0.85f else 0.0f,
-            animationSpec = androidx.compose.animation.core.tween(durationMillis = 300),
-            label = "transientProgressAlpha"
+        val bottomProgressAlpha by androidx.compose.animation.core.animateFloatAsState(
+            targetValue = if (!isScrolling && !isAutoScrolling) 0.80f else 0.0f,
+            animationSpec = androidx.compose.animation.core.tween(
+                durationMillis = if (isScrolling) 150 else 350
+            ),
+            label = "bottomProgressAlpha"
         )
 
-        // 滚动瞬态浮现的微光进度指示（平时 100% 隐藏纯净，仅在手指滚动或转动表冠时轻柔浮现 1.5s）
-        if (transientProgressAlpha > 0.01f && chapterContent != null) {
+        // 静态阅读时微光常驻的进度指示（滑动/转表冠时敏捷隐去避让，静止后平滑淡入恢复；自动滚屏时由底部胶囊接管避让）
+        if (bottomProgressAlpha > 0.01f && chapterContent != null) {
             val percent = if (fullTextLength > 0) {
-                ((currentTransientOffset.toFloat() / fullTextLength) * 100).toInt().coerceIn(0, 100)
+                ((currentReadingOffset.toFloat() / fullTextLength) * 100).toInt().coerceIn(0, 100)
             } else 0
             val currentChapterNum = chapterContent.chapterIndex + 1
             val progressText = if (totalChapters > 1) {
@@ -534,7 +539,7 @@ fun ReaderScreen(
                 style = TextStyle(
                     fontSize = 9.5.sp,
                     fontWeight = FontWeight.Medium,
-                    color = colorScheme.onSurfaceVariant.copy(alpha = transientProgressAlpha)
+                    color = colorScheme.onSurfaceVariant.copy(alpha = bottomProgressAlpha)
                 ),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)

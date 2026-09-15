@@ -8,6 +8,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -33,6 +34,12 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import java.text.SimpleDateFormat
 import java.util.*
+
+private class ChapterCardViewHolder(
+    val indicatorTv: TextView,
+    val titleTv: TextView,
+    val tagTv: TextView
+)
 
 /**
  * 章节范围分卷模型
@@ -152,14 +159,58 @@ fun ChapterListScreen(
                             val isCurrent = position == currentChapterIndex
                             val chapter = chapters[position]
 
-                            val container = (convertView as? LinearLayout) ?: LinearLayout(context).apply {
-                                orientation = LinearLayout.HORIZONTAL
-                                layoutParams = ViewGroup.LayoutParams(
-                                    ViewGroup.LayoutParams.MATCH_PARENT,
-                                    ViewGroup.LayoutParams.WRAP_CONTENT
-                                )
-                                gravity = Gravity.CENTER_VERTICAL
-                                setPadding((11 * density).toInt(), (8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt())
+                            val container: FrameLayout
+                            val holder: ChapterCardViewHolder
+
+                            if (convertView == null) {
+                                container = FrameLayout(context).apply {
+                                    layoutParams = ViewGroup.LayoutParams(
+                                        ViewGroup.LayoutParams.MATCH_PARENT,
+                                        ViewGroup.LayoutParams.WRAP_CONTENT
+                                    )
+                                    setPadding((11 * density).toInt(), (8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt())
+                                }
+
+                                val textLayout = LinearLayout(context).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                                        gravity = Gravity.CENTER_VERTICAL
+                                    }
+                                    gravity = Gravity.CENTER_VERTICAL
+                                }
+
+                                val indicatorTv = TextView(context).apply {
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+                                    typeface = Typeface.DEFAULT_BOLD
+                                    setPadding(0, 0, (5 * density).toInt(), 0)
+                                }
+                                textLayout.addView(indicatorTv)
+
+                                val titleTv = TextView(context).apply {
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                                    maxLines = 1
+                                    ellipsize = TextUtils.TruncateAt.END
+                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                                }
+                                textLayout.addView(titleTv)
+
+                                val tagTv = TextView(context).apply {
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+                                    typeface = Typeface.DEFAULT_BOLD
+                                    setPadding((6 * density).toInt(), (1.5f * density).toInt(), (6 * density).toInt(), (1.5f * density).toInt())
+                                    background = android.graphics.drawable.GradientDrawable().apply {
+                                        setColor(colorScheme.primary.copy(alpha = 0.25f).toArgb())
+                                        cornerRadius = 6 * density
+                                    }
+                                }
+                                textLayout.addView(tagTv)
+
+                                container.addView(textLayout)
+                                holder = ChapterCardViewHolder(indicatorTv, titleTv, tagTv)
+                                container.tag = holder
+                            } else {
+                                container = convertView as FrameLayout
+                                holder = container.tag as ChapterCardViewHolder
                             }
 
                             val cardBg = android.graphics.drawable.GradientDrawable().apply {
@@ -173,67 +224,24 @@ fun ChapterListScreen(
                             }
                             container.background = cardBg
 
-                            var textLayout = container.getChildAt(0) as? LinearLayout
-                            if (textLayout == null) {
-                                textLayout = LinearLayout(context).apply {
-                                    orientation = LinearLayout.HORIZONTAL
-                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                                    gravity = Gravity.CENTER_VERTICAL
-                                }
-
-                                val indicatorTv = TextView(context).apply {
-                                    tag = "indicator"
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
-                                    typeface = Typeface.DEFAULT_BOLD
-                                    setPadding(0, 0, (4 * density).toInt(), 0)
-                                }
-                                textLayout.addView(indicatorTv)
-
-                                val titleTv = TextView(context).apply {
-                                    tag = "title"
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-                                    maxLines = 1
-                                    ellipsize = TextUtils.TruncateAt.END
-                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                                }
-                                textLayout.addView(titleTv)
-
-                                val tagTv = TextView(context).apply {
-                                    tag = "tag"
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
-                                    typeface = Typeface.DEFAULT_BOLD
-                                    setPadding((6 * density).toInt(), (1.5f * density).toInt(), (6 * density).toInt(), (1.5f * density).toInt())
-                                    background = android.graphics.drawable.GradientDrawable().apply {
-                                        setColor(colorScheme.primary.copy(alpha = 0.25f).toArgb())
-                                        cornerRadius = 6 * density
-                                    }
-                                }
-                                textLayout.addView(tagTv)
-
-                                container.addView(textLayout)
-                            }
-
-                            val indicatorTv = textLayout.findViewWithTag<TextView>("indicator")
-                            val titleTv = textLayout.findViewWithTag<TextView>("title")
-                            val tagTv = textLayout.findViewWithTag<TextView>("tag")
-
-                            titleTv.text = chapter.title
+                            holder.titleTv.text = chapter.title
 
                             if (isCurrent) {
-                                indicatorTv.visibility = View.VISIBLE
-                                indicatorTv.text = "📍"
-                                titleTv.setTextColor(activeColor)
-                                titleTv.typeface = Typeface.DEFAULT_BOLD
+                                holder.indicatorTv.visibility = View.VISIBLE
+                                holder.indicatorTv.text = "●"
+                                holder.indicatorTv.setTextColor(activeColor)
+                                holder.titleTv.setTextColor(activeColor)
+                                holder.titleTv.typeface = Typeface.DEFAULT_BOLD
 
-                                tagTv.visibility = View.VISIBLE
-                                tagTv.text = "正在读"
-                                tagTv.setTextColor(activeColor)
+                                holder.tagTv.visibility = View.VISIBLE
+                                holder.tagTv.text = "正在读"
+                                holder.tagTv.setTextColor(activeColor)
                             } else {
-                                indicatorTv.visibility = View.GONE
-                                titleTv.setTextColor(onSurfaceColor)
-                                titleTv.typeface = Typeface.DEFAULT
+                                holder.indicatorTv.visibility = View.GONE
+                                holder.titleTv.setTextColor(onSurfaceColor)
+                                holder.titleTv.typeface = Typeface.DEFAULT
 
-                                tagTv.visibility = View.GONE
+                                holder.tagTv.visibility = View.GONE
                             }
 
                             return container
@@ -517,7 +525,7 @@ fun ChapterListScreen(
                         .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
-                        text = "📍 当前",
+                        text = "当前",
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
@@ -540,7 +548,7 @@ fun ChapterListScreen(
                         .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
-                        text = "⚡ 选卷",
+                        text = "选卷",
                         style = MaterialTheme.typography.labelMedium.copy(
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold
