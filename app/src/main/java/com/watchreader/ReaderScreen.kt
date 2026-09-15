@@ -62,6 +62,8 @@ private class ReaderViewHolder(
 fun ReaderScreen(
     chapterContent: ChapterContent?,
     initialCharOffset: Int,
+    totalChapters: Int = 1,
+    fullTextLength: Int = 0,
     onCharOffsetChange: (Int) -> Unit,
     onNextChapter: () -> Unit,
     onPrevChapter: () -> Unit,
@@ -80,6 +82,26 @@ fun ReaderScreen(
     val context = LocalContext.current
     val window = (context as? Activity)?.window
     val keepScreenOnHandler = remember { Handler(Looper.getMainLooper()) }
+
+    var isTransientProgressVisible by remember { mutableStateOf(false) }
+    var currentTransientOffset by remember(initialCharOffset) { mutableStateOf(initialCharOffset) }
+    val progressHandler = remember { Handler(Looper.getMainLooper()) }
+    val hideProgressRunnable = remember {
+        Runnable { isTransientProgressVisible = false }
+    }
+    val showTransientProgress = remember {
+        {
+            isTransientProgressVisible = true
+            progressHandler.removeCallbacks(hideProgressRunnable)
+            progressHandler.postDelayed(hideProgressRunnable, 1500L)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            progressHandler.removeCallbacksAndMessages(null)
+        }
+    }
     val resetInactivityKeepScreenOn = remember(window, isAutoScrolling) {
         val timeoutMs = 5 * 60 * 1000L // 5 分钟无交互超时
         val timeoutRunnable = Runnable {
@@ -345,6 +367,7 @@ fun ReaderScreen(
                 scrollView.setOnGenericMotionListener { v, event ->
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
                         resetInactivityKeepScreenOn()
+                        showTransientProgress()
                         val delta = CrownScrollHelper.extractCrownDelta(event)
                         if (autoEngine.isRunning) {
                             if (abs(delta) > 0.05f) {
@@ -377,6 +400,7 @@ fun ReaderScreen(
                 var lastReportedOffset = -1
 
                 scrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+                    showTransientProgress()
                     if (chapterContent != null && chapterContent.formattedBody.isNotEmpty()) {
                         val bodyTop = holder.bodyTv.top
                         val bodyHeight = maxOf(1, holder.bodyTv.height)
@@ -384,6 +408,7 @@ fun ReaderScreen(
                         val scrollRatio = relativeY.toFloat() / bodyHeight
                         val chapterLen = chapterContent.endCharOffset - chapterContent.startCharOffset
                         val currentOffset = chapterContent.startCharOffset + (chapterLen * scrollRatio).toInt()
+                        currentTransientOffset = currentOffset
 
                         if (currentOffset != lastReportedOffset) {
                             lastReportedOffset = currentOffset
@@ -486,6 +511,36 @@ fun ReaderScreen(
             modifier = Modifier.fillMaxSize(),
             textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
         )
+
+        val transientProgressAlpha by androidx.compose.animation.core.animateFloatAsState(
+            targetValue = if (isTransientProgressVisible && !isAutoScrolling) 0.85f else 0.0f,
+            animationSpec = androidx.compose.animation.core.tween(durationMillis = 300),
+            label = "transientProgressAlpha"
+        )
+
+        // 滚动瞬态浮现的微光进度指示（平时 100% 隐藏纯净，仅在手指滚动或转动表冠时轻柔浮现 1.5s）
+        if (transientProgressAlpha > 0.01f && chapterContent != null) {
+            val percent = if (fullTextLength > 0) {
+                ((currentTransientOffset.toFloat() / fullTextLength) * 100).toInt().coerceIn(0, 100)
+            } else 0
+            val currentChapterNum = chapterContent.chapterIndex + 1
+            val progressText = if (totalChapters > 1) {
+                "第 $currentChapterNum/$totalChapters 章 · $percent%"
+            } else {
+                "$percent%"
+            }
+            Text(
+                text = progressText,
+                style = TextStyle(
+                    fontSize = 9.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colorScheme.onSurfaceVariant.copy(alpha = transientProgressAlpha)
+                ),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 9.dp)
+            )
+        }
 
         // 自动滚屏运行时右下角轻量胶囊状态提示
         if (isAutoScrolling) {

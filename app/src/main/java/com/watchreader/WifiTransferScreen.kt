@@ -8,6 +8,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -28,6 +29,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -191,6 +193,12 @@ fun WifiTransferScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
+                val qrBitmap = remember(ipAddress, port, isServerRunning) {
+                    if (!ipAddress.isNullOrEmpty() && isServerRunning) {
+                        QrCodeGenerator.generateQrCodeBitmap("http://$ipAddress:$port", 260)
+                    } else null
+                }
+
                 // 状态指示
                 if (!ipAddress.isNullOrEmpty() && isServerRunning) {
                     Row(
@@ -205,12 +213,56 @@ fun WifiTransferScreen(
                         )
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
-                            text = "服务已就绪",
+                            text = "服务已就绪 · 手机扫码直连",
                             style = TextStyle(
-                                fontSize = 11.sp,
+                                fontSize = 10.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = colorScheme.onSurfaceVariant
                             )
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // 高对比度黑白二维码卡片（白底黑码，手机相机毫秒级极速识别）
+                    if (qrBitmap != null) {
+                        Box(
+                            modifier = Modifier
+                                .size(118.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.White)
+                                .padding(5.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                bitmap = qrBitmap.asImageBitmap(),
+                                contentDescription = "扫码直传二维码",
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // 备用纯文本网址卡片
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(colorScheme.surfaceVariant.copy(alpha = 0.85f))
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "http://$ipAddress:$port",
+                            style = TextStyle(
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.primary
+                            ),
+                            maxLines = 1,
+                            softWrap = false,
+                            textAlign = TextAlign.Center
                         )
                     }
                 } else {
@@ -234,77 +286,30 @@ fun WifiTransferScreen(
                             )
                         )
                     }
-                }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                // 网址卡片
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(colorScheme.surfaceVariant.copy(alpha = 0.85f))
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (!ipAddress.isNullOrEmpty() && isServerRunning) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "手机/电脑浏览器打开：",
-                                style = TextStyle(
-                                    fontSize = 10.sp,
-                                    color = colorScheme.onSurfaceVariant
-                                ),
-                                textAlign = TextAlign.Center
-                            )
-
-                            Spacer(modifier = Modifier.height(5.dp))
-
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(colorScheme.background)
-                                    .padding(horizontal = 6.dp, vertical = 5.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "http://$ipAddress:$port",
-                                    style = TextStyle(
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = colorScheme.primary
-                                    ),
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "支持 .txt 与 .epub 直传",
-                                style = TextStyle(
-                                    fontSize = 9.sp,
-                                    color = colorScheme.outline
-                                ),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(colorScheme.surfaceVariant.copy(alpha = 0.85f))
+                            .padding(horizontal = 12.dp, vertical = 14.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 text = "请在手表设置中连接 Wi-Fi",
                                 style = TextStyle(
-                                    fontSize = 10.5.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = colorScheme.onSurfaceVariant
                                 ),
                                 textAlign = TextAlign.Center
                             )
-                            Spacer(modifier = Modifier.height(3.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "保持处于同个局域网",
+                                text = "与手机处于同个局域网即可扫码",
                                 style = TextStyle(
                                     fontSize = 9.sp,
                                     color = colorScheme.outline

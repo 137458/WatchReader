@@ -124,7 +124,7 @@ fun ChapterListScreen(
                         isFocusableInTouchMode = true
                         isVerticalScrollBarEnabled = false
                         divider = null
-                        dividerHeight = 0
+                        dividerHeight = (5 * density).toInt()
                         setBackgroundColor(bgColor)
                         setPadding(padH, padTop, padH, padBottom)
                         clipToPadding = false
@@ -149,27 +149,94 @@ fun ChapterListScreen(
                         override fun getItemId(position: Int): Long = position.toLong()
 
                         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                            val textView = (convertView as? TextView) ?: TextView(context).apply {
+                            val isCurrent = position == currentChapterIndex
+                            val chapter = chapters[position]
+
+                            val container = (convertView as? LinearLayout) ?: LinearLayout(context).apply {
+                                orientation = LinearLayout.HORIZONTAL
                                 layoutParams = ViewGroup.LayoutParams(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
-                                    (36 * density).toInt()
+                                    ViewGroup.LayoutParams.WRAP_CONTENT
                                 )
                                 gravity = Gravity.CENTER_VERTICAL
-                                maxLines = 1
-                                ellipsize = TextUtils.TruncateAt.END
-                                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                                setPadding((11 * density).toInt(), (8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt())
                             }
 
-                            val isCurrent = position == currentChapterIndex
-                            textView.text = chapters[position].title
-                            if (isCurrent) {
-                                textView.setTextColor(activeColor)
-                                textView.typeface = Typeface.DEFAULT_BOLD
-                            } else {
-                                textView.setTextColor(normalColor)
-                                textView.typeface = Typeface.DEFAULT
+                            val cardBg = android.graphics.drawable.GradientDrawable().apply {
+                                cornerRadius = 12 * density
+                                if (isCurrent) {
+                                    setColor(colorScheme.primary.copy(alpha = 0.18f).toArgb())
+                                    setStroke((1.5f * density).toInt(), activeColor)
+                                } else {
+                                    setColor(colorScheme.surfaceVariant.copy(alpha = 0.70f).toArgb())
+                                }
                             }
-                            return textView
+                            container.background = cardBg
+
+                            var textLayout = container.getChildAt(0) as? LinearLayout
+                            if (textLayout == null) {
+                                textLayout = LinearLayout(context).apply {
+                                    orientation = LinearLayout.HORIZONTAL
+                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                                    gravity = Gravity.CENTER_VERTICAL
+                                }
+
+                                val indicatorTv = TextView(context).apply {
+                                    tag = "indicator"
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                                    typeface = Typeface.DEFAULT_BOLD
+                                    setPadding(0, 0, (4 * density).toInt(), 0)
+                                }
+                                textLayout.addView(indicatorTv)
+
+                                val titleTv = TextView(context).apply {
+                                    tag = "title"
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                                    maxLines = 1
+                                    ellipsize = TextUtils.TruncateAt.END
+                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                                }
+                                textLayout.addView(titleTv)
+
+                                val tagTv = TextView(context).apply {
+                                    tag = "tag"
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+                                    typeface = Typeface.DEFAULT_BOLD
+                                    setPadding((6 * density).toInt(), (1.5f * density).toInt(), (6 * density).toInt(), (1.5f * density).toInt())
+                                    background = android.graphics.drawable.GradientDrawable().apply {
+                                        setColor(colorScheme.primary.copy(alpha = 0.25f).toArgb())
+                                        cornerRadius = 6 * density
+                                    }
+                                }
+                                textLayout.addView(tagTv)
+
+                                container.addView(textLayout)
+                            }
+
+                            val indicatorTv = textLayout.findViewWithTag<TextView>("indicator")
+                            val titleTv = textLayout.findViewWithTag<TextView>("title")
+                            val tagTv = textLayout.findViewWithTag<TextView>("tag")
+
+                            titleTv.text = chapter.title
+
+                            if (isCurrent) {
+                                indicatorTv.visibility = View.VISIBLE
+                                indicatorTv.text = "📍"
+                                titleTv.setTextColor(activeColor)
+                                titleTv.typeface = Typeface.DEFAULT_BOLD
+
+                                tagTv.visibility = View.VISIBLE
+                                tagTv.text = "正在读"
+                                tagTv.setTextColor(activeColor)
+                            } else {
+                                indicatorTv.visibility = View.GONE
+                                titleTv.setTextColor(onSurfaceColor)
+                                titleTv.typeface = Typeface.DEFAULT
+
+                                tagTv.visibility = View.GONE
+                            }
+
+                            return container
                         }
                     }
 
@@ -403,6 +470,7 @@ fun ChapterListScreen(
         }
 
         // 底部常驻操作栏
+        val screenContext = androidx.compose.ui.platform.LocalContext.current
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -415,38 +483,69 @@ fun ChapterListScreen(
                     .clip(RoundedCornerShape(16.dp))
                     .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
                     .clickable(interactionSource = noIndication, indication = null, onClick = onBack)
-                    .padding(horizontal = 14.dp, vertical = 5.dp)
+                    .padding(horizontal = 11.dp, vertical = 5.dp)
             ) {
                 Text(
                     text = "‹ 返回",
                     style = MaterialTheme.typography.labelMedium.copy(
-                        fontSize = 11.5.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold
                     ),
                     color = colorScheme.primary
                 )
             }
 
-            if (selectedTab == 0 && ranges.isNotEmpty()) {
-                Spacer(modifier = Modifier.width(8.dp))
+            if (selectedTab == 0 && chapters.isNotEmpty()) {
+                Spacer(modifier = Modifier.width(6.dp))
 
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
                         .background(colorScheme.primary.copy(alpha = 0.18f))
-                        .border(1.dp, colorScheme.primary.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                        .border(1.dp, colorScheme.primary.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
                         .clickable(interactionSource = noIndication, indication = null) {
-                            showRangePicker = true
+                            currentListView?.let { lv ->
+                                if (currentChapterIndex in chapters.indices) {
+                                    RotaryHapticManager.performScrollTick(screenContext, null)
+                                    val viewHeight = lv.height
+                                    val itemHeight = (42 * lv.resources.displayMetrics.density).toInt()
+                                    val targetTop = maxOf(0, (viewHeight - itemHeight) / 2)
+                                    lv.smoothScrollToPositionFromTop(currentChapterIndex, targetTop, 300)
+                                }
+                            }
                         }
-                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
-                        text = "⚡ 快速选卷",
+                        text = "📍 当前",
                         style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 11.5.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         ),
                         color = colorScheme.primary
+                    )
+                }
+            }
+
+            if (selectedTab == 0 && ranges.isNotEmpty()) {
+                Spacer(modifier = Modifier.width(6.dp))
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
+                        .clickable(interactionSource = noIndication, indication = null) {
+                            showRangePicker = true
+                        }
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = "⚡ 选卷",
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        color = colorScheme.onSurfaceVariant
                     )
                 }
             }

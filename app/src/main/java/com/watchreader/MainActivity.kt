@@ -188,6 +188,8 @@ class MainActivity : ComponentActivity() {
             is Screen.Reader -> ReaderScreen(
                 chapterContent = uiState.currentChapterContent,
                 initialCharOffset = current.charOffset,
+                totalChapters = uiState.chapters.size,
+                fullTextLength = uiState.fullTextLength,
                 onCharOffsetChange = { offset ->
                     viewModel.updateCharOffset(offset)
                 },

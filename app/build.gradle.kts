@@ -84,6 +84,9 @@ dependencies {
     // ART ProfileInstaller — 预编译 Compose 与启动关键路径，将冷启动提升至极致
     implementation("androidx.profileinstaller:profileinstaller:1.3.1")
 
+    // ZXing Core — 超轻量二维码生成引擎（纯 Java，R8 裁剪后体积极小）
+    implementation("com.google.zxing:core:3.5.3")
+
     // 调试工具
     debugImplementation("androidx.compose.ui:ui-tooling")
 
