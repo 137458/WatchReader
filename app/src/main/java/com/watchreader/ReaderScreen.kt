@@ -58,6 +58,7 @@ private class ReaderViewHolder(
 /**
  * 阅读页 — 极致单 TextLayout + 永久 5 节点零分配 View 复用池 + 0 GC Choreographer 自动平滑滚屏 + 双轨调光
  */
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun ReaderScreen(
     chapterContent: ChapterContent?,
@@ -165,9 +166,7 @@ fun ReaderScreen(
     val currentChapterTitle = chapterContent?.title ?: ""
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(colorScheme.background),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter
     ) {
         // 原生极速 ScrollView 渲染核心（固定 5 View 复用池 + Choreographer 引擎挂载）
@@ -316,11 +315,7 @@ fun ReaderScreen(
                 )
                 scrollView.tag = holder
 
-                // 手势与多模态交互协同：左侧边缘滑动调光 + 单击切换自动滚屏 + 长按呼出菜单
-                var isLeftEdgeDrag = false
-                var startDragY = 0f
-                var initialDragBrightness = appBrightness
-
+                // 手势交互：单击切换自动滚屏 + 长按呼出菜单（全屏触摸手势纯净专职服务于正文滚动）
                 val gestureDetector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
                     override fun onLongPress(e: MotionEvent) {
                         autoEngine.stop()
@@ -328,7 +323,9 @@ fun ReaderScreen(
                     }
 
                     override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                        onAutoScrollToggle()
+                        if (!isScrolling) {
+                            onAutoScrollToggle()
+                        }
                         return true
                     }
                 })
@@ -340,27 +337,16 @@ fun ReaderScreen(
                         MotionEvent.ACTION_DOWN -> {
                             resetInactivityKeepScreenOn()
                             autoEngine.pauseTemporarily(1800L)
-                            // 检测是否在左侧 18% 区域开始滑动（用于直接调光）
-                            if (event.x < (70 * density)) {
-                                isLeftEdgeDrag = true
-                                startDragY = event.y
-                                initialDragBrightness = if (appBrightness < 0f) 0.5f else appBrightness
-                            } else {
-                                isLeftEdgeDrag = false
-                            }
                         }
                         MotionEvent.ACTION_MOVE -> {
                             notifyScrollActivity()
-                            if (isLeftEdgeDrag) {
-                                val deltaY = startDragY - event.y // 向上滑增加亮度，向下滑减弱
-                                val deltaBrightness = deltaY / (240 * density)
-                                val newBrightness = (initialDragBrightness + deltaBrightness).coerceIn(0.01f, 1.0f)
-                                onBrightnessChange(newBrightness)
-                            }
+                            // 手指持续滑动/慢读期间持续续租，杜绝长按拖拽时引擎强行复苏抢夺屏幕
+                            autoEngine.pauseTemporarily(1800L)
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                             resetInactivityKeepScreenOn()
-                            isLeftEdgeDrag = false
+                            // 手指离开屏幕后启动延时恢复
+                            autoEngine.pauseTemporarily(1800L)
                         }
                     }
                     false
@@ -543,7 +529,7 @@ fun ReaderScreen(
                 ),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 9.dp)
+                    .padding(bottom = 24.dp)
             )
         }
 
@@ -552,7 +538,7 @@ fun ReaderScreen(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 12.dp)
+                    .padding(bottom = 22.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(colorScheme.surfaceVariant.copy(alpha = 0.90f))
                     .clickable { onAutoScrollToggle() }

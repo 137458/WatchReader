@@ -77,17 +77,23 @@ fun WifiTransferScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(colorScheme.background)
             .focusRequester(focusRequester)
             .focusable()
-            // 右滑手势退出
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures { _, dragAmount ->
-                    if (dragAmount > 25f && !isTransferring) {
-                        RotaryHapticManager.performScrollTick(context, null)
-                        onBack()
+            // 右滑手势退出（带累加阻尼防手抖误触，贴合 Wear OS 交互习惯）
+            .pointerInput(isTransferring) {
+                var dragAccumulator = 0f
+                detectHorizontalDragGestures(
+                    onDragEnd = { dragAccumulator = 0f },
+                    onDragCancel = { dragAccumulator = 0f },
+                    onHorizontalDrag = { _, dragAmount ->
+                        dragAccumulator += dragAmount
+                        if (dragAccumulator > 60f && !isTransferring) {
+                            dragAccumulator = 0f
+                            RotaryHapticManager.performScrollTick(context, null)
+                            onBack()
+                        }
                     }
-                }
+                )
             },
         contentAlignment = Alignment.Center
     ) {
@@ -346,20 +352,17 @@ fun WifiTransferScreen(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(colorScheme.surfaceVariant)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null
-                                ) {
+                                .clickable {
                                     RotaryHapticManager.performScrollTick(context, null)
                                     onToggleServer()
                                 }
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = "重启服务",
                                 style = TextStyle(
-                                    fontSize = 10.sp,
+                                    fontSize = 10.5.sp,
                                     color = colorScheme.onSurfaceVariant
                                 )
                             )
@@ -371,14 +374,11 @@ fun WifiTransferScreen(
                         modifier = Modifier
                             .clip(RoundedCornerShape(14.dp))
                             .background(colorScheme.primary)
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
+                            .clickable {
                                 RotaryHapticManager.performScrollTick(context, null)
                                 onBack()
                             }
-                            .padding(horizontal = 18.dp, vertical = 6.dp),
+                            .padding(horizontal = 18.dp, vertical = 7.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(

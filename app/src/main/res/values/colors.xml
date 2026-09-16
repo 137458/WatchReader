@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 亮色羊皮纸日间护眼主题色 -->
+    <color name="paper_background">#FFF7F4EB</color>
+    <color name="ink_primary">#FF181B1F</color>
+    <color name="ink_secondary">#FF3E454D</color>
+    <color name="theme_accent">#FF1E6091</color>
+    <color name="theme_green">#FF2D6A4F</color>
+    <color name="card_surface">#FFEDE8DC</color>
+    <color name="card_variant">#FFE2DCCF</color>
+    <color name="divider_outline">#FFB5ACA0</color>
+
+    <!-- 深色 AMOLED 纯黑夜间极致省电主题色 -->
+    <color name="dark_background">#FF000000</color>
+    <color name="dark_ink_primary">#FFE6E6EB</color>
+    <color name="dark_ink_secondary">#FFA2A2AB</color>
+    <color name="dark_theme_accent">#FF38BDF8</color>
+    <color name="dark_theme_green">#FF4EBA87</color>
+    <color name="dark_card_surface">#FF161619</color>
+    <color name="dark_card_variant">#FF222228</color>
+    <color name="dark_divider_outline">#FF3D3D47</color>
+</resources>

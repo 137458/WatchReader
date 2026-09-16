@@ -107,9 +107,7 @@ fun ChapterListScreen(
     val ranges = remember(chapters.size) { generateChapterRanges(chapters.size) }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(colorScheme.background),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter
     ) {
         if (selectedTab == 0) {
@@ -436,13 +434,13 @@ fun ChapterListScreen(
                 .align(Alignment.BottomCenter)
         )
 
-        // 顶部 Tab 切换胶囊
+        // 顶部 Tab 切换胶囊（下移至安全弦长区，彻底防止左右两角切出圆屏）
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 10.dp)
+                .padding(top = 18.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(colorScheme.surfaceVariant.copy(alpha = 0.92f))
+                .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
                 .padding(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -451,12 +449,12 @@ fun ChapterListScreen(
                     .clip(RoundedCornerShape(14.dp))
                     .background(if (selectedTab == 0) colorScheme.primary else Color.Transparent)
                     .clickable { selectedTab = 0 }
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = 14.dp, vertical = 5.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = "目录 (${chapters.size})",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
                     color = if (selectedTab == 0) colorScheme.onPrimary else colorScheme.onSurfaceVariant
                 )
             }
@@ -466,23 +464,23 @@ fun ChapterListScreen(
                     .clip(RoundedCornerShape(14.dp))
                     .background(if (selectedTab == 1) colorScheme.primary else Color.Transparent)
                     .clickable { selectedTab = 1 }
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = 14.dp, vertical = 5.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = "书签 (${bookmarks.size})",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.5.sp, fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
                     color = if (selectedTab == 1) colorScheme.onPrimary else colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        // 底部常驻操作栏
+        // 底部常驻操作栏（提升至 18dp 宽阔弦长区，两端按钮不再被下弧削平，并恢复触控水波纹）
         val screenContext = androidx.compose.ui.platform.LocalContext.current
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 8.dp),
+                .padding(bottom = 18.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -490,13 +488,14 @@ fun ChapterListScreen(
                 modifier = Modifier
                     .clip(RoundedCornerShape(16.dp))
                     .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
-                    .clickable(interactionSource = noIndication, indication = null, onClick = onBack)
-                    .padding(horizontal = 11.dp, vertical = 5.dp)
+                    .clickable(onClick = onBack)
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+                contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = "‹ 返回",
                     style = MaterialTheme.typography.labelMedium.copy(
-                        fontSize = 11.sp,
+                        fontSize = 11.5.sp,
                         fontWeight = FontWeight.SemiBold
                     ),
                     color = colorScheme.primary
@@ -511,7 +510,7 @@ fun ChapterListScreen(
                         .clip(RoundedCornerShape(16.dp))
                         .background(colorScheme.primary.copy(alpha = 0.18f))
                         .border(1.dp, colorScheme.primary.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
-                        .clickable(interactionSource = noIndication, indication = null) {
+                        .clickable {
                             currentListView?.let { lv ->
                                 if (currentChapterIndex in chapters.indices) {
                                     RotaryHapticManager.performScrollTick(screenContext, null)
@@ -522,12 +521,13 @@ fun ChapterListScreen(
                                 }
                             }
                         }
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = "当前",
                         style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 11.sp,
+                            fontSize = 11.5.sp,
                             fontWeight = FontWeight.Bold
                         ),
                         color = colorScheme.primary
@@ -542,15 +542,16 @@ fun ChapterListScreen(
                     modifier = Modifier
                         .clip(RoundedCornerShape(16.dp))
                         .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
-                        .clickable(interactionSource = noIndication, indication = null) {
+                        .clickable {
                             showRangePicker = true
                         }
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = "选卷",
                         style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 11.sp,
+                            fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold
                         ),
                         color = colorScheme.onSurfaceVariant
@@ -700,17 +701,17 @@ fun ChapterListScreen(
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
 
-                // 底部关闭胶囊
+                // 底部关闭胶囊（提高至 18dp 安全区并扩充触控盒，恢复水波纹）
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 8.dp)
+                        .padding(bottom = 18.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
-                        .clickable(interactionSource = noIndication, indication = null) {
+                        .clickable {
                             showRangePicker = false
                         }
-                        .padding(horizontal = 20.dp, vertical = 5.dp)
+                        .padding(horizontal = 22.dp, vertical = 8.dp)
                 ) {
                     Text(
                         text = "✕ 关闭",

@@ -102,9 +102,7 @@ fun MenuScreen(
     val bgColor = colorScheme.background.toArgb()
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(colorScheme.background),
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter
     ) {
         // 原生极速 ScrollView 渲染核心（对齐 ReaderScreen）
@@ -424,13 +422,32 @@ private fun createMenuViews(
     brightnessTopRow.addView(brightnessPlusBtn)
     brightnessCard.addView(brightnessTopRow)
 
-    val brightnessPresetsRow = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
+    val brightnessPresetsCol = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
             setMargins(0, (6 * density).toInt(), 0, 0)
+        }
+    }
+
+    val presetRow1 = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        gravity = Gravity.CENTER
+    }
+
+    val presetRow2 = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, (4 * density).toInt(), 0, 0)
         }
         gravity = Gravity.CENTER
     }
@@ -438,28 +455,32 @@ private fun createMenuViews(
     fun makePresetBtn(txt: String): TextView {
         return TextView(context).apply {
             text = txt
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
             gravity = Gravity.CENTER
+            maxLines = 1
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                setMargins((1.5f * density).toInt(), 0, (1.5f * density).toInt(), 0)
+                setMargins((2 * density).toInt(), 0, (2 * density).toInt(), 0)
             }
-            setPadding((2 * density).toInt(), (5 * density).toInt(), (2 * density).toInt(), (5 * density).toInt())
+            setPadding((4 * density).toInt(), (7 * density).toInt(), (4 * density).toInt(), (7 * density).toInt())
             isClickable = true
         }
     }
 
-    val brightnessSystemBtn = makePresetBtn("系统")
-    val brightnessL1Btn = makePresetBtn("1档")
-    val brightnessL2Btn = makePresetBtn("2档")
-    val brightnessL3Btn = makePresetBtn("3档")
-    val brightnessDarkBtn = makePresetBtn("🌙极暗")
+    val brightnessSystemBtn = makePresetBtn("系统亮度")
+    val brightnessDarkBtn = makePresetBtn("🌙 极暗护眼")
+    val brightnessL1Btn = makePresetBtn("1档 (暗)")
+    val brightnessL2Btn = makePresetBtn("2档 (中)")
+    val brightnessL3Btn = makePresetBtn("3档 (亮)")
 
-    brightnessPresetsRow.addView(brightnessSystemBtn)
-    brightnessPresetsRow.addView(brightnessL1Btn)
-    brightnessPresetsRow.addView(brightnessL2Btn)
-    brightnessPresetsRow.addView(brightnessL3Btn)
-    brightnessPresetsRow.addView(brightnessDarkBtn)
-    brightnessCard.addView(brightnessPresetsRow)
+    presetRow1.addView(brightnessSystemBtn)
+    presetRow1.addView(brightnessDarkBtn)
+    presetRow2.addView(brightnessL1Btn)
+    presetRow2.addView(brightnessL2Btn)
+    presetRow2.addView(brightnessL3Btn)
+
+    brightnessPresetsCol.addView(presetRow1)
+    brightnessPresetsCol.addView(presetRow2)
+    brightnessCard.addView(brightnessPresetsCol)
     container.addView(brightnessCard)
 
     // 4. 字号调节独立卡片

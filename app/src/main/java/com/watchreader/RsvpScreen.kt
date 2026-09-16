@@ -123,7 +123,6 @@ fun RsvpScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(colorScheme.background)
             .focusRequester(focusRequester)
             .focusable()
             // 表冠物理旋转监听（Compose 辅助通道）
@@ -137,7 +136,7 @@ fun RsvpScreen(
                     true
                 } else false
             }
-            // 水平滑动手势：左滑回退 5 词，右滑快进 5 词
+            // 水平滑动手势：增加阻尼门限，避免轻触抖动时误跳词
             .pointerInput(tokens, currentIndex) {
                 var dragAccumulator = 0f
                 detectHorizontalDragGestures(
@@ -145,7 +144,7 @@ fun RsvpScreen(
                     onDragCancel = { dragAccumulator = 0f },
                     onHorizontalDrag = { _, dragAmount ->
                         dragAccumulator += dragAmount
-                        if (dragAccumulator > 30f) {
+                        if (dragAccumulator > 55f) {
                             dragAccumulator = 0f
                             if (tokens.isNotEmpty()) {
                                 val nextIdx = (currentIndex + 5).coerceAtMost(tokens.lastIndex)
@@ -155,7 +154,7 @@ fun RsvpScreen(
                                     RotaryHapticManager.performScrollTick(context, null)
                                 }
                             }
-                        } else if (dragAccumulator < -30f) {
+                        } else if (dragAccumulator < -55f) {
                             dragAccumulator = 0f
                             if (tokens.isNotEmpty()) {
                                 val prevIdx = (currentIndex - 5).coerceAtLeast(0)

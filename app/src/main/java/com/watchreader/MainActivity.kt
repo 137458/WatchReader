@@ -15,6 +15,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -104,9 +106,7 @@ class MainActivity : ComponentActivity() {
             // 动态同步 Window 底层 DecorView 背景色与硬件独立屏幕亮度
             SideEffect {
                 BrightnessManager.applyToWindow(this@MainActivity, uiState.appBrightness)
-                window.decorView.setBackgroundColor(
-                    if (uiState.isDarkMode) AndroidColor.BLACK else AndroidColor.parseColor("#FFF7F4EB")
-                )
+                window.decorView.setBackgroundColor(colorScheme.background.toArgb())
             }
 
             MaterialTheme(
@@ -116,7 +116,7 @@ class MainActivity : ComponentActivity() {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
-                        color = MaterialTheme.colorScheme.background
+                        color = Color.Transparent // 移除重复不透明底色，交由底色层 window.decorView 承载，降低 Overdraw
                     ) {
                         AppContent(uiState)
                     }
@@ -158,6 +158,30 @@ class MainActivity : ComponentActivity() {
         val focus = currentFocus
         if (focus != null && focus.dispatchGenericMotionEvent(event)) {
             return true
+        }
+        // 表冠焦点防死锁兜底路由：当 Compose 悬浮组件夺走焦点导致原生 View 失去焦点时，直接寻址并向内部活跃列表下发
+        if (CrownScrollHelper.isCrownScrollEvent(event)) {
+            val root = window.decorView as? ViewGroup
+            if (root != null && dispatchRotaryToActiveScrollView(root, event)) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun dispatchRotaryToActiveScrollView(viewGroup: ViewGroup, event: MotionEvent): Boolean {
+        for (i in 0 until viewGroup.childCount) {
+            val child = viewGroup.getChildAt(i)
+            if (child.isShown && (child is ScrollView || child is android.widget.ListView)) {
+                if (child.dispatchGenericMotionEvent(event)) {
+                    return true
+                }
+            }
+            if (child is ViewGroup && child.isShown) {
+                if (dispatchRotaryToActiveScrollView(child, event)) {
+                    return true
+                }
+            }
         }
         return false
     }
@@ -411,7 +435,8 @@ private class BookshelfViewHolder(
     val fontPlus: TextView,
     val cardHolders: MutableList<BookCardHolder> = mutableListOf(),
     var pendingDeleteUri: String? = null,
-    var resetDeleteRunnable: Runnable? = null
+    var resetDeleteRunnable: Runnable? = null,
+    var onSearchChangeCallback: ((String) -> Unit)? = null
 )
 
 private class BookCardHolder(
@@ -454,7 +479,7 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
         text = "📶传书"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
         typeface = Typeface.DEFAULT_BOLD
-        setPadding((7 * density).toInt(), (4.5f * density).toInt(), (7 * density).toInt(), (4.5f * density).toInt())
+        setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -467,7 +492,7 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
     val themeBtn = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
         typeface = Typeface.DEFAULT_BOLD
-        setPadding((7 * density).toInt(), (4.5f * density).toInt(), (7 * density).toInt(), (4.5f * density).toInt())
+        setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -481,24 +506,33 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
         text = "+ 导入"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
         typeface = Typeface.DEFAULT_BOLD
-        setPadding((8 * density).toInt(), (4.5f * density).toInt(), (8 * density).toInt(), (4.5f * density).toInt())
+        setPadding((10 * density).toInt(), (6 * density).toInt(), (10 * density).toInt(), (6 * density).toInt())
     }
     headerLayout.addView(importBtn)
     container.addView(headerLayout)
 
-    // 2. 搜索框
+    // 2. 搜索框（配置 IME 搜索动作键与提取模式规避）
     val searchInput = EditText(context).apply {
         hint = "🔍 搜索小说书名…"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
         maxLines = 1
         setSingleLine(true)
+        imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
             setMargins(0, 0, 0, (8 * density).toInt())
         }
-        setPadding((10 * density).toInt(), (6 * density).toInt(), (10 * density).toInt(), (6 * density).toInt())
+        setPadding((12 * density).toInt(), (7 * density).toInt(), (12 * density).toInt(), (7 * density).toInt())
+        setOnEditorActionListener { v, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE) {
+                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.hideSoftInputFromWindow(v.windowToken, 0)
+                v.clearFocus()
+                true
+            } else false
+        }
     }
     container.addView(searchInput)
 
@@ -547,12 +581,12 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
-        setPadding((16 * density).toInt(), (8 * density).toInt(), (16 * density).toInt(), (8 * density).toInt())
+        setPadding((16 * density).toInt(), (9 * density).toInt(), (16 * density).toInt(), (9 * density).toInt())
     }
     emptyLayout.addView(pickBtn)
     container.addView(emptyLayout)
 
-    // 6. 字号调节底栏
+    // 6. 字号调节底栏（扩大加减按钮触控区至 40dp 高度）
     val fontLayout = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         layoutParams = LinearLayout.LayoutParams(
@@ -573,29 +607,32 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
 
     val fontMinus = TextView(context).apply {
         text = "－"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         typeface = Typeface.DEFAULT_BOLD
-        setPadding((10 * density).toInt(), (4 * density).toInt(), (10 * density).toInt(), (4 * density).toInt())
+        gravity = Gravity.CENTER
+        setPadding((14 * density).toInt(), (9 * density).toInt(), (14 * density).toInt(), (9 * density).toInt())
     }
     fontLayout.addView(fontMinus)
 
     val fontSizeVal = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         typeface = Typeface.DEFAULT_BOLD
-        setPadding((6 * density).toInt(), (4 * density).toInt(), (6 * density).toInt(), (4 * density).toInt())
+        gravity = Gravity.CENTER
+        setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
     }
     fontLayout.addView(fontSizeVal)
 
     val fontPlus = TextView(context).apply {
         text = "＋"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         typeface = Typeface.DEFAULT_BOLD
-        setPadding((10 * density).toInt(), (4 * density).toInt(), (10 * density).toInt(), (4 * density).toInt())
+        gravity = Gravity.CENTER
+        setPadding((14 * density).toInt(), (9 * density).toInt(), (14 * density).toInt(), (9 * density).toInt())
     }
     fontLayout.addView(fontPlus)
     container.addView(fontLayout)
 
-    return BookshelfViewHolder(
+    val holder = BookshelfViewHolder(
         container = container,
         headerLayout = headerLayout,
         titleTv = titleTv,
@@ -614,6 +651,17 @@ private fun createBookshelfViewHolder(context: Context, container: LinearLayout)
         fontSizeVal = fontSizeVal,
         fontPlus = fontPlus
     )
+
+    // 单例监听 TextWatcher，杜绝频繁注销重绑引起 IME 震荡闪退
+    searchInput.addTextChangedListener(object : TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+            holder.onSearchChangeCallback?.invoke(s?.toString() ?: "")
+        }
+        override fun afterTextChanged(s: Editable?) {}
+    })
+
+    return holder
 }
 
 /**
@@ -680,7 +728,8 @@ private fun updateBookshelfView(
         setOnClickListener { onOpenFile() }
     }
 
-    // 2. 搜索框样式与监听
+    // 2. 搜索框样式与回调绑定（杜绝 TextWatcher 重复注销绑定引发的输入法震荡断连）
+    holder.onSearchChangeCallback = onSearchChange
     holder.searchInput.apply {
         setTextColor(onSurfaceColor)
         setHintTextColor(onSurfaceVariantColor.let { Color(it).copy(alpha = 0.6f).toArgb() })
@@ -691,18 +740,6 @@ private fun updateBookshelfView(
         if (text.toString() != searchQuery) {
             setText(searchQuery)
         }
-        // 单例 TextWatcher 防抖
-        val oldWatcher = tag as? TextWatcher
-        if (oldWatcher != null) removeTextChangedListener(oldWatcher)
-        val newWatcher = object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                onSearchChange(s?.toString() ?: "")
-            }
-            override fun afterTextChanged(s: Editable?) {}
-        }
-        addTextChangedListener(newWatcher)
-        tag = newWatcher
     }
 
     // 3. 错误信息展示
@@ -991,15 +1028,17 @@ private fun createBookCardHolder(context: Context, density: Float): BookCardHold
     cardContent.addView(infoLayout)
 
     val pinBtn = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
-        setPadding((4 * density).toInt(), (5 * density).toInt(), (4 * density).toInt(), (5 * density).toInt())
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+        gravity = Gravity.CENTER
+        setPadding((8 * density).toInt(), (9 * density).toInt(), (8 * density).toInt(), (9 * density).toInt())
     }
     cardContent.addView(pinBtn)
 
     val delBtn = TextView(context).apply {
         text = "✕"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        setPadding((6 * density).toInt(), (5 * density).toInt(), (6 * density).toInt(), (5 * density).toInt())
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        gravity = Gravity.CENTER
+        setPadding((10 * density).toInt(), (9 * density).toInt(), (10 * density).toInt(), (9 * density).toInt())
     }
     cardContent.addView(delBtn)
 
