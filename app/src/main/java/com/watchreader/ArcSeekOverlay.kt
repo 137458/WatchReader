@@ -109,16 +109,15 @@ fun ArcSeekOverlay(
                     val cy = size.height / 2f
 
                     if (ArcSeekMath.isInSeekZone(down.position.x, down.position.y, cx, cy)) {
-                        down.consume()
-                        isSeeking = true
                         val dx = down.position.x - cx
                         val dy = down.position.y - cy
                         val initAngle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
-                        currentTouchAngle = initAngle.coerceIn(ArcSeekMath.MIN_ANGLE, ArcSeekMath.MAX_ANGLE)
-                        targetChapterIndex = ArcSeekMath.angleToChapterIndex(currentTouchAngle, totalChapters)
+                        val startX = down.position.x
+                        val startY = down.position.y
 
+                        var hasDragged = false
                         var cancelled = false
-                        var lastValidIndex = targetChapterIndex
+                        var lastValidIndex = currentChapterIndex
 
                         while (true) {
                             val event = awaitPointerEvent()
@@ -129,26 +128,40 @@ fun ArcSeekOverlay(
                             }
 
                             if (change.pressed) {
-                                change.consume()
                                 val curDx = change.position.x - cx
                                 val curDy = change.position.y - cy
                                 val r = sqrt(curDx * curDx + curDy * curDy)
                                 val curAngle = Math.toDegrees(atan2(curDy.toDouble(), curDx.toDouble())).toFloat()
+                                val dragDist = hypot(change.position.x - startX, change.position.y - startY)
+                                val angleDelta = abs(curAngle - initAngle)
 
-                                // 划入屏幕过深 (r < 165) 或角度超出范围则取消寻道
-                                if (r < 165f || curAngle < -75f || curAngle > 75f) {
-                                    cancelled = true
-                                } else {
-                                    cancelled = false
-                                    currentTouchAngle = curAngle.coerceIn(ArcSeekMath.MIN_ANGLE, ArcSeekMath.MAX_ANGLE)
-                                    targetChapterIndex = ArcSeekMath.angleToChapterIndex(currentTouchAngle, totalChapters)
-                                    lastValidIndex = targetChapterIndex
+                                if (!hasDragged) {
+                                    if (angleDelta >= 3.0f || dragDist >= 10f) {
+                                        hasDragged = true
+                                        isSeeking = true
+                                        down.consume()
+                                    }
+                                }
+
+                                if (hasDragged) {
+                                    change.consume()
+                                    // 划入屏幕过深 (r < 165) 或角度超出范围则取消寻道
+                                    if (r < 165f || curAngle < -75f || curAngle > 75f) {
+                                        cancelled = true
+                                    } else {
+                                        cancelled = false
+                                        currentTouchAngle = curAngle.coerceIn(ArcSeekMath.MIN_ANGLE, ArcSeekMath.MAX_ANGLE)
+                                        targetChapterIndex = ArcSeekMath.angleToChapterIndex(currentTouchAngle, totalChapters)
+                                        lastValidIndex = targetChapterIndex
+                                    }
                                 }
                             } else {
                                 // 松手确认
-                                change.consume()
-                                if (!cancelled) {
-                                    onSeekConfirm(lastValidIndex)
+                                if (hasDragged) {
+                                    change.consume()
+                                    if (!cancelled) {
+                                        onSeekConfirm(lastValidIndex)
+                                    }
                                 }
                                 break
                             }

@@ -49,9 +49,6 @@ class ChapterDiskCacheTest {
         assertEquals(5000, result.chapters[1].charOffset)
         assertEquals("第三章 破境", result.chapters[2].title)
         assertEquals(12000, result.chapters[2].charOffset)
-
-        assertEquals(3, result.chapters.size)
-        assertEquals("第一章 初始", result.chapters[0].title)
     }
 
     @Test

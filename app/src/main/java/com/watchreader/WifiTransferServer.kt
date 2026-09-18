@@ -18,6 +18,7 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
+import java.net.URLEncoder
 
 /**
  * 传书进度数据模型
@@ -205,6 +206,9 @@ class WifiTransferServer(
                 (method == "POST" || method == "DELETE") && rawPath.startsWith("/api/books/delete") -> {
                     handleDeleteBook(rawPath, output)
                 }
+                method == "GET" && (rawPath.startsWith("/api/download") || rawPath.startsWith("/download")) -> {
+                    handleDownloadBook(rawPath, output)
+                }
                 method == "POST" && rawPath.startsWith("/upload") -> {
                     handleFileUpload(rawPath, lines, input, output)
                 }
@@ -237,24 +241,30 @@ class WifiTransferServer(
         return baos.toString("UTF-8")
     }
 
-    private fun handleFileUpload(rawPath: String, headers: List<String>, input: InputStream, output: OutputStream) {
-        var contentType = ""
-        var contentLength = -1L
-        var queryFileName = ""
-
+    private fun parseQueryParams(rawPath: String): Map<String, String> {
+        val map = mutableMapOf<String, String>()
         val qIdx = rawPath.indexOf('?')
         if (qIdx >= 0 && qIdx + 1 < rawPath.length) {
             val queryStr = rawPath.substring(qIdx + 1)
-            val params = queryStr.split("&")
-            for (p in params) {
+            for (p in queryStr.split("&")) {
                 val kv = p.split("=")
-                if (kv.size == 2 && kv[0].equals("filename", ignoreCase = true)) {
+                if (kv.size == 2 && kv[0].isNotEmpty()) {
                     try {
-                        queryFileName = URLDecoder.decode(kv[1], "UTF-8")
-                    } catch (_: Exception) {}
+                        map[kv[0].lowercase()] = URLDecoder.decode(kv[1], "UTF-8")
+                    } catch (_: Exception) {
+                        map[kv[0].lowercase()] = kv[1]
+                    }
                 }
             }
         }
+        return map
+    }
+
+    private fun handleFileUpload(rawPath: String, headers: List<String>, input: InputStream, output: OutputStream) {
+        var contentType = ""
+        var contentLength = -1L
+        val params = parseQueryParams(rawPath)
+        var queryFileName = params["filename"] ?: params["name"] ?: ""
 
         for (h in headers) {
             val lower = h.lowercase()
@@ -485,21 +495,50 @@ class WifiTransferServer(
         sendResponse(output, 200, "application/json; charset=utf-8", jsonArray)
     }
 
-    private fun handleDeleteBook(rawPath: String, output: OutputStream) {
-        var targetName = ""
-        val qIdx = rawPath.indexOf('?')
-        if (qIdx >= 0 && qIdx + 1 < rawPath.length) {
-            val queryStr = rawPath.substring(qIdx + 1)
-            for (p in queryStr.split("&")) {
-                val kv = p.split("=")
-                if (kv.size == 2 && kv[0].equals("name", ignoreCase = true)) {
-                    try {
-                        targetName = URLDecoder.decode(kv[1], "UTF-8")
-                    } catch (_: Exception) {}
-                }
-            }
+    private fun handleDownloadBook(rawPath: String, output: OutputStream) {
+        val params = parseQueryParams(rawPath)
+        val targetName = params["name"] ?: params["filename"] ?: ""
+        if (targetName.isEmpty()) {
+            sendResponse(output, 400, "application/json", """{"status":"error","message":"缺少书籍名称"}""")
+            return
         }
 
+        val cleanName = File(targetName).name
+        val targetFile = File(booksDir, cleanName)
+        if (!targetFile.exists()) {
+            sendResponse(output, 404, "application/json", """{"status":"not_found","message":"书籍不存在"}""")
+            return
+        }
+
+        try {
+            val contentType = if (cleanName.endsWith(".epub", ignoreCase = true)) {
+                "application/epub+zip"
+            } else {
+                "text/plain; charset=utf-8"
+            }
+            val encodedFilename = try {
+                URLEncoder.encode(cleanName, "UTF-8").replace("+", "%20")
+            } catch (_: Exception) { cleanName }
+
+            val fileLength = targetFile.length()
+            val header = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: $contentType\r\n" +
+                "Content-Length: $fileLength\r\n" +
+                "Content-Disposition: attachment; filename*=UTF-8''$encodedFilename\r\n" +
+                "Connection: close\r\n\r\n"
+            output.write(header.toByteArray(Charsets.UTF_8))
+            FileInputStream(targetFile).use { fis ->
+                fis.copyTo(output, 32768)
+            }
+            output.flush()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error streaming download file: $cleanName", e)
+        }
+    }
+
+    private fun handleDeleteBook(rawPath: String, output: OutputStream) {
+        val params = parseQueryParams(rawPath)
+        val targetName = params["name"] ?: params["filename"] ?: ""
         if (targetName.isEmpty()) {
             sendResponse(output, 400, "application/json", """{"status":"error","message":"缺少书籍名称"}""")
             return
@@ -573,6 +612,8 @@ class WifiTransferServer(
                     .progress-fill { height: 100%; background: #388bfd; width: 0%; transition: width 0.15s ease-out; }
                     .del-btn { background: #da3633; color: #ffffff; border: none; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background 0.2s; }
                     .del-btn:hover { background: #b62324; }
+                    .down-btn { background: #238636; color: #ffffff; text-decoration: none; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background 0.2s; display: inline-block; }
+                    .down-btn:hover { background: #2ea043; }
                     .book-meta { font-size: 11px; color: #8b949e; margin-top: 2px; }
                 </style>
             </head>
@@ -707,7 +748,10 @@ class WifiTransferServer(
                                 li.innerHTML = `
                                     <div class="file-header">
                                         <span class="file-name">${'$'}{b.name}</span>
-                                        <button class="del-btn" onclick="deleteBook('${'$'}{encodeURIComponent(b.name)}')">删除</button>
+                                        <div style="display:flex;gap:6px;">
+                                            <a class="down-btn" href="/api/download?name=${'$'}{encodeURIComponent(b.name)}" download>导出</a>
+                                            <button class="del-btn" onclick="deleteBook('${'$'}{encodeURIComponent(b.name)}')">删除</button>
+                                        </div>
                                     </div>
                                     <div class="book-meta">${'$'}{sizeKb} KB</div>
                                 `;

@@ -885,9 +885,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 设置主题模式 (0: 羊皮纸/浅色, 1: 极光黑/深色, 2: 纯黑深红夜视)
      */
     fun setThemeMode(mode: Int) {
-        _uiState.update { it.copy(themeMode = mode, isDarkMode = (mode != 0)) }
+        setThemeMode(ThemeMode.fromValue(mode))
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        _uiState.update { it.copy(themeMode = mode.value, isDarkMode = (mode != ThemeMode.PARCHMENT)) }
         viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveThemeMode(appCtx, mode)
+            DataStoreManager.saveThemeMode(appCtx, mode.value)
         }
     }
 
@@ -895,9 +899,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 设置点按翻页热区 (0: 上下翻页, 1: 左右翻页, 2: 关闭点按)
      */
     fun setTapPageArea(area: Int) {
-        _uiState.update { it.copy(tapPageArea = area) }
+        setTapPageArea(TapPageArea.fromValue(area))
+    }
+
+    fun setTapPageArea(area: TapPageArea) {
+        _uiState.update { it.copy(tapPageArea = area.value) }
         viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveTapPageArea(appCtx, area)
+            DataStoreManager.saveTapPageArea(appCtx, area.value)
         }
     }
 
@@ -920,22 +928,37 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 设置字体类型 (0: 系统黑体, 1: 系统衬线体)
      */
     fun setFontType(type: Int) {
-        _uiState.update { it.copy(fontType = type) }
+        setFontType(FontType.fromValue(type))
+    }
+
+    fun setFontType(type: FontType) {
+        _uiState.update { it.copy(fontType = type.value) }
         viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveFontType(appCtx, type)
+            DataStoreManager.saveFontType(appCtx, type.value)
         }
     }
 
     /**
-     * Web 端删除书籍同步通知
+     * Web 端删除书籍同步通知：同步清理 DataStore 书架持久化记录并关闭当前已开书籍
      */
     fun notifyBookDeletedFromWeb(fileName: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val shelf = DataStoreManager.loadBookShelf(appCtx)
+            val matchedBook = shelf.firstOrNull { book ->
+                val uri = try { Uri.parse(book.uriString) } catch (_: Exception) { null }
+                val pathEnd = uri?.lastPathSegment ?: book.uriString.substringAfterLast('/')
+                pathEnd.equals(fileName, ignoreCase = true) ||
+                    book.title.equals(EpubParser.cleanBookTitle(fileName), ignoreCase = true)
+            }
+            if (matchedBook != null) {
+                DataStoreManager.removeBookFromShelf(appCtx, matchedBook.uriString)
+            }
+            val updatedShelf = DataStoreManager.loadBookShelf(appCtx)
             _uiState.update { state ->
-                val isCurrent = state.fileName == fileName
+                val isCurrent = state.fileName.equals(fileName, ignoreCase = true) ||
+                    (matchedBook != null && state.currentUri?.toString() == matchedBook.uriString)
                 state.copy(
-                    bookshelf = shelf,
+                    bookshelf = updatedShelf,
                     currentUri = if (isCurrent) null else state.currentUri,
                     currentChapterContent = if (isCurrent) null else state.currentChapterContent,
                     chapters = if (isCurrent) emptyList() else state.chapters,

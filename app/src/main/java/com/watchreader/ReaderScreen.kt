@@ -344,49 +344,24 @@ fun ReaderScreen(
                         val h = scrollView.height.toFloat()
                         if (w <= 0 || h <= 0) return true
 
-                        when (tapPageArea) {
-                            0 -> { // 上下点按翻页 (默认)
-                                val topBoundary = h * 0.35f
-                                val bottomBoundary = h * 0.65f
-                                val overlap = (32 * density).toInt()
-                                val scrollDistance = maxOf((100 * density).toInt(), (h - overlap).toInt())
+                        val action = TapPageHelper.resolveTapAction(e.x, e.y, w, h, tapPageArea)
+                        val scrollDistance = TapPageHelper.calculateScrollDistance(h, density)
 
-                                when {
-                                    e.y < topBoundary -> {
-                                        scrollView.smoothScrollBy(0, -scrollDistance)
-                                        RotaryHapticManager.performScrollTick(ctx, scrollView)
-                                    }
-                                    e.y > bottomBoundary -> {
-                                        scrollView.smoothScrollBy(0, scrollDistance)
-                                        RotaryHapticManager.performScrollTick(ctx, scrollView)
-                                    }
-                                    else -> {
-                                        onLongPress() // 中间腰部呼出菜单
-                                    }
-                                }
+                        when (action) {
+                            TapAction.PAGE_UP -> {
+                                scrollView.smoothScrollBy(0, -scrollDistance)
+                                RotaryHapticManager.performScrollTick(ctx, scrollView)
                             }
-                            1 -> { // 左右点按翻页
-                                val leftBoundary = w * 0.35f
-                                val rightBoundary = w * 0.65f
-                                val overlap = (32 * density).toInt()
-                                val scrollDistance = maxOf((100 * density).toInt(), (h - overlap).toInt())
-
-                                when {
-                                    e.x < leftBoundary -> {
-                                        scrollView.smoothScrollBy(0, -scrollDistance)
-                                        RotaryHapticManager.performScrollTick(ctx, scrollView)
-                                    }
-                                    e.x > rightBoundary -> {
-                                        scrollView.smoothScrollBy(0, scrollDistance)
-                                        RotaryHapticManager.performScrollTick(ctx, scrollView)
-                                    }
-                                    else -> {
-                                        onLongPress() // 中间呼出菜单
-                                    }
-                                }
+                            TapAction.PAGE_DOWN -> {
+                                scrollView.smoothScrollBy(0, scrollDistance)
+                                RotaryHapticManager.performScrollTick(ctx, scrollView)
                             }
-                            else -> { // 2: 关闭点按翻页，单击切换自动滚屏
-                                onAutoScrollToggle()
+                            TapAction.SHOW_MENU -> {
+                                if (tapPageArea == TapPageArea.DISABLED.value) {
+                                    onAutoScrollToggle()
+                                } else {
+                                    onLongPress()
+                                }
                             }
                         }
                         return true
@@ -521,7 +496,7 @@ fun ReaderScreen(
 
                     holder.bodyTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat())
                     holder.bodyTv.setTextColor(textColor)
-                    holder.bodyTv.typeface = if (fontType == 1) Typeface.SERIF else Typeface.SANS_SERIF
+                    holder.bodyTv.typeface = if (FontType.fromValue(fontType) == FontType.SERIF) Typeface.SERIF else Typeface.SANS_SERIF
 
                     holder.prevTv.setTextColor(onSurfaceVariantColor)
                     holder.nextTv.setTextColor(titleColor)

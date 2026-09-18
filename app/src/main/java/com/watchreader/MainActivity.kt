@@ -101,10 +101,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsState()
-            val colorScheme = when (uiState.themeMode) {
-                2 -> WatchRedNightColorScheme
-                1 -> WatchDarkColorScheme
-                else -> if (uiState.isDarkMode) WatchDarkColorScheme else WatchColorScheme
+            val colorScheme = when (ThemeMode.fromValue(uiState.themeMode)) {
+                ThemeMode.RED_NIGHT -> WatchRedNightColorScheme
+                ThemeMode.DARK -> WatchDarkColorScheme
+                ThemeMode.PARCHMENT -> WatchColorScheme
             }
 
             // 动态同步 Window 底层 DecorView 背景色与硬件独立屏幕亮度
@@ -243,7 +243,6 @@ class MainActivity : ComponentActivity() {
             is Screen.Menu -> MenuScreen(
                 chapterTitle = uiState.currentChapterContent?.title ?: "",
                 fontSize = uiState.fontSize,
-                isDarkMode = uiState.isDarkMode,
                 autoScrollSpeed = uiState.autoScrollSpeed,
                 isAutoScrolling = uiState.isAutoScrolling,
                 appBrightness = uiState.appBrightness,
@@ -258,7 +257,6 @@ class MainActivity : ComponentActivity() {
                     viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex))
                 },
                 onFontSizeChange = { viewModel.updateFontSize(it) },
-                onToggleDarkMode = { viewModel.toggleDarkMode() },
                 onToggleAutoScroll = {
                     val nextScrollState = !uiState.isAutoScrolling
                     viewModel.setAutoScrolling(nextScrollState)

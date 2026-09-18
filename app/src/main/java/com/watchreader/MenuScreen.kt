@@ -85,7 +85,6 @@ private class MenuViewHolder(
 fun MenuScreen(
     chapterTitle: String = "",
     fontSize: Int,
-    isDarkMode: Boolean,
     autoScrollSpeed: Float,
     isAutoScrolling: Boolean,
     appBrightness: Float,
@@ -94,7 +93,6 @@ fun MenuScreen(
     onPrevChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onFontSizeChange: (Int) -> Unit,
-    onToggleDarkMode: () -> Unit,
     onToggleAutoScroll: () -> Unit,
     onAutoScrollSpeedChange: (Float) -> Unit,
     onBrightnessChange: (Float) -> Unit,
@@ -172,7 +170,6 @@ fun MenuScreen(
                     density = density,
                     colors = colorScheme,
                     fontSize = fontSize,
-                    isDarkMode = isDarkMode,
                     autoScrollSpeed = autoScrollSpeed,
                     isAutoScrolling = isAutoScrolling,
                     appBrightness = appBrightness,
@@ -181,7 +178,6 @@ fun MenuScreen(
                     onPrevChapter = onPrevChapter,
                     onNextChapter = onNextChapter,
                     onFontSizeChange = onFontSizeChange,
-                    onToggleDarkMode = onToggleDarkMode,
                     onToggleAutoScroll = onToggleAutoScroll,
                     onAutoScrollSpeedChange = onAutoScrollSpeedChange,
                     onBrightnessChange = onBrightnessChange,
@@ -213,7 +209,6 @@ fun MenuScreen(
                     density = density,
                     colors = colorScheme,
                     fontSize = fontSize,
-                    isDarkMode = isDarkMode,
                     autoScrollSpeed = autoScrollSpeed,
                     isAutoScrolling = isAutoScrolling,
                     appBrightness = appBrightness,
@@ -222,7 +217,6 @@ fun MenuScreen(
                     onPrevChapter = onPrevChapter,
                     onNextChapter = onNextChapter,
                     onFontSizeChange = onFontSizeChange,
-                    onToggleDarkMode = onToggleDarkMode,
                     onToggleAutoScroll = onToggleAutoScroll,
                     onAutoScrollSpeedChange = onAutoScrollSpeedChange,
                     onBrightnessChange = onBrightnessChange,
@@ -824,13 +818,11 @@ private fun createMenuViews(
 /**
  * 属性就地绑定（0 View 重构，滚动条 0 跳变）
  */
-@Suppress("UNUSED_PARAMETER")
 private fun bindMenuData(
     holder: MenuViewHolder,
     density: Float,
     colors: ColorScheme,
     fontSize: Int,
-    isDarkMode: Boolean,
     autoScrollSpeed: Float,
     isAutoScrolling: Boolean,
     appBrightness: Float,
@@ -839,7 +831,6 @@ private fun bindMenuData(
     onPrevChapter: () -> Unit,
     onNextChapter: () -> Unit,
     onFontSizeChange: (Int) -> Unit,
-    onToggleDarkMode: () -> Unit,
     onToggleAutoScroll: () -> Unit,
     onAutoScrollSpeedChange: (Float) -> Unit,
     onBrightnessChange: (Float) -> Unit,
@@ -988,11 +979,11 @@ private fun bindMenuData(
         setColor(surfaceColor)
         cornerRadius = 16 * density
     }
-    holder.themeModeTv.text = when (themeMode) {
-        0 -> "🎨 主题: 暖色羊皮纸"
-        1 -> "🎨 主题: 极光黑 (AMOLED)"
-        2 -> "🎨 主题: 纯黑红光夜视"
-        else -> "🎨 主题设置"
+    val currentTheme = ThemeMode.fromValue(themeMode)
+    holder.themeModeTv.text = when (currentTheme) {
+        ThemeMode.PARCHMENT -> "🎨 主题: 暖色羊皮纸"
+        ThemeMode.DARK -> "🎨 主题: 极光黑 (AMOLED)"
+        ThemeMode.RED_NIGHT -> "🎨 主题: 纯黑红光夜视"
     }
     holder.themeModeTv.setTextColor(secondaryColor)
     holder.themeModeCard.setOnClickListener { onThemeModeChange((themeMode + 1) % 3) }
@@ -1002,10 +993,11 @@ private fun bindMenuData(
         setColor(surfaceColor)
         cornerRadius = 16 * density
     }
-    holder.tapPageAreaTv.text = when (tapPageArea) {
-        0 -> "👆 翻页: 上下点按翻页"
-        1 -> "👆 翻页: 左右点按翻页"
-        else -> "👆 翻页: 关闭点按翻页"
+    val currentTapArea = TapPageArea.fromValue(tapPageArea)
+    holder.tapPageAreaTv.text = when (currentTapArea) {
+        TapPageArea.TOP_BOTTOM -> "👆 翻页: 上下点按翻页"
+        TapPageArea.LEFT_RIGHT -> "👆 翻页: 左右点按翻页"
+        TapPageArea.DISABLED -> "👆 翻页: 关闭点按翻页"
     }
     holder.tapPageAreaTv.setTextColor(primaryColor)
     holder.tapPageAreaCard.setOnClickListener { onTapPageAreaChange((tapPageArea + 1) % 3) }
@@ -1024,9 +1016,10 @@ private fun bindMenuData(
         setColor(surfaceColor)
         cornerRadius = 16 * density
     }
-    holder.fontTypeTv.text = if (fontType == 1) "🔤 字体: 系统衬线体 (宋体)" else "🔤 字体: 系统黑体 (无衬线)"
+    val currentFontType = FontType.fromValue(fontType)
+    holder.fontTypeTv.text = if (currentFontType == FontType.SERIF) "🔤 字体: 系统衬线体 (宋体)" else "🔤 字体: 系统黑体 (无衬线)"
     holder.fontTypeTv.setTextColor(secondaryColor)
-    holder.fontTypeCard.setOnClickListener { onFontTypeChange(if (fontType == 1) 0 else 1) }
+    holder.fontTypeCard.setOnClickListener { onFontTypeChange(if (currentFontType == FontType.SERIF) FontType.SANS_SERIF.value else FontType.SERIF.value) }
 
     // 9. 工具双卡片（存为书签 / 闪读速读）
     holder.bookmarkCard.background = GradientDrawable().apply {
@@ -1063,9 +1056,7 @@ private fun bindMenuData(
         setColor(surfaceColor)
         cornerRadius = 16 * density
     }
-    val hours = readDurationSec / 3600
-    val mins = (readDurationSec % 3600) / 60
-    holder.readDurationTv.text = "⏱️ 累计阅读: ${hours}小时 ${mins}分钟"
+    holder.readDurationTv.text = ReadDurationFormatter.format(readDurationSec)
     holder.readDurationTv.setTextColor(onSurfaceVariantColor)
 
     // 12. 返回阅读高亮大卡片
