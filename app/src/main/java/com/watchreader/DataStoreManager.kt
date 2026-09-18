@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -41,7 +42,12 @@ data class AppInitialConfig(
     val bookshelf: List<BookItem>,
     val lastScreen: String,
     val lastUri: Uri?,
-    val lastCharOffset: Int
+    val lastCharOffset: Int,
+    val themeMode: Int = 0, // 0: 羊皮纸, 1: 极光黑, 2: 纯黑深红
+    val tapPageArea: Int = 0, // 0: 上下翻页, 1: 左右翻页, 2: 关闭点按
+    val cleanTypography: Boolean = true,
+    val fontType: Int = 0, // 0: 系统黑体, 1: 系统衬线体
+    val readDurationSec: Long = 0L
 )
 
 /**
@@ -57,6 +63,11 @@ object DataStoreManager {
     val KEY_DARK_MODE = booleanPreferencesKey("is_dark_mode")
     val KEY_AUTO_SCROLL_SPEED = floatPreferencesKey("auto_scroll_speed")
     val KEY_APP_BRIGHTNESS = floatPreferencesKey("app_brightness") // -1.0f: 跟随系统, 0.01f ~ 1.0f: 自定义亮度
+    val KEY_THEME_MODE = intPreferencesKey("theme_mode") // 0: 羊皮纸, 1: 极光黑, 2: 纯黑深红
+    val KEY_TAP_PAGE_AREA = intPreferencesKey("tap_page_area") // 0: 上下翻页, 1: 左右翻页, 2: 关闭点按
+    val KEY_CLEAN_TYPOGRAPHY = booleanPreferencesKey("clean_typography") // 智能排版净化
+    val KEY_FONT_TYPE = intPreferencesKey("font_type") // 0: 系统黑体, 1: 系统衬线体
+    val KEY_READ_DURATION_SEC = longPreferencesKey("read_duration_sec") // 累计阅读时长
 
     const val DEFAULT_FONT_SIZE = 14
     const val DEFAULT_AUTO_SCROLL_SPEED = 45f // 默认 45 像素/秒 (约 2~3 行/秒)
@@ -72,7 +83,7 @@ object DataStoreManager {
         }
 
     /**
-     * 单次 I/O 批量读取冷启动所需的所有配置（消除多 Flow 串行阻塞，将冷启动耗时降至极致）
+     * 单次 I/O 批量读取全部核心配置（用于 Application / ViewModel 冷启动智能恢复）
      */
     suspend fun loadInitialConfig(context: Context): AppInitialConfig {
         val prefs = getSafePreferencesFlow(context).first()
@@ -81,16 +92,21 @@ object DataStoreManager {
         val autoScrollSpeed = prefs[KEY_AUTO_SCROLL_SPEED] ?: DEFAULT_AUTO_SCROLL_SPEED
         val appBrightness = prefs[KEY_APP_BRIGHTNESS] ?: DEFAULT_BRIGHTNESS
         val bookshelf = parseBookShelf(prefs[KEY_BOOK_SHELF])
-        val lastScreen = prefs[KEY_LAST_SCREEN] ?: if (prefs[KEY_LAST_URI] != null) "reader" else "home"
-        val uriStr = prefs[KEY_LAST_URI]
-        val lastUri = if (!uriStr.isNullOrEmpty()) {
+        val lastScreen = prefs[KEY_LAST_SCREEN] ?: "home"
+        val lastUriStr = prefs[KEY_LAST_URI]
+        val lastUri = if (!lastUriStr.isNullOrEmpty()) {
             try {
-                Uri.parse(uriStr)
+                Uri.parse(lastUriStr)
             } catch (_: Exception) {
                 null
             }
         } else null
         val lastCharOffset = prefs[KEY_LAST_CHAR_OFFSET] ?: 0
+        val themeMode = prefs[KEY_THEME_MODE] ?: (if (isDarkMode) 1 else 0)
+        val tapPageArea = prefs[KEY_TAP_PAGE_AREA] ?: 0
+        val cleanTypography = prefs[KEY_CLEAN_TYPOGRAPHY] ?: true
+        val fontType = prefs[KEY_FONT_TYPE] ?: 0
+        val readDurationSec = prefs[KEY_READ_DURATION_SEC] ?: 0L
 
         return AppInitialConfig(
             fontSize = fontSize,
@@ -100,8 +116,44 @@ object DataStoreManager {
             bookshelf = bookshelf,
             lastScreen = lastScreen,
             lastUri = lastUri,
-            lastCharOffset = lastCharOffset
+            lastCharOffset = lastCharOffset,
+            themeMode = themeMode,
+            tapPageArea = tapPageArea,
+            cleanTypography = cleanTypography,
+            fontType = fontType,
+            readDurationSec = readDurationSec
         )
+    }
+
+    suspend fun saveThemeMode(context: Context, mode: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_THEME_MODE] = mode
+            prefs[KEY_DARK_MODE] = (mode != 0)
+        }
+    }
+
+    suspend fun saveTapPageArea(context: Context, area: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_TAP_PAGE_AREA] = area
+        }
+    }
+
+    suspend fun saveCleanTypography(context: Context, enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_CLEAN_TYPOGRAPHY] = enabled
+        }
+    }
+
+    suspend fun saveFontType(context: Context, type: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_FONT_TYPE] = type
+        }
+    }
+
+    suspend fun saveReadDurationSec(context: Context, seconds: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_READ_DURATION_SEC] = seconds
+        }
     }
 
     /** 保存最后活跃页面 */

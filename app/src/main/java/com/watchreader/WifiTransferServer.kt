@@ -43,7 +43,8 @@ data class TransferProgress(
 class WifiTransferServer(
     private val context: Context,
     private val preferredPort: Int = 8888,
-    private val onBookUploaded: ((BookItem) -> Unit)? = null
+    private val onBookUploaded: ((BookItem) -> Unit)? = null,
+    private val onBookDeleted: ((String) -> Unit)? = null
 ) {
     private val TAG = "WifiTransferServer"
     private var serverSocket: ServerSocket? = null
@@ -198,6 +199,12 @@ class WifiTransferServer(
                 method == "GET" && rawPath == "/status" -> {
                     sendResponse(output, 200, "application/json", """{"status":"ok","uploaded":${_uploadedCount.value}}""")
                 }
+                method == "GET" && (rawPath == "/api/books" || rawPath.startsWith("/api/books?")) -> {
+                    handleGetBooks(output)
+                }
+                (method == "POST" || method == "DELETE") && rawPath.startsWith("/api/books/delete") -> {
+                    handleDeleteBook(rawPath, output)
+                }
                 method == "POST" && rawPath.startsWith("/upload") -> {
                     handleFileUpload(rawPath, lines, input, output)
                 }
@@ -303,10 +310,10 @@ class WifiTransferServer(
             RotaryHapticManager.performScrollTick(context, null)
 
             val savedFile = File(booksDir, cleanName)
+            var totalRead = 0L
             FileOutputStream(savedFile).use { fos ->
                 val buf = ByteArray(32768)
                 var read: Int
-                var totalRead = 0L
                 var lastMilestone = 0
 
                 while (input.read(buf).also { read = it } != -1) {
@@ -332,6 +339,13 @@ class WifiTransferServer(
                         break
                     }
                 }
+            }
+
+            if (contentLength > 0 && totalRead < contentLength) {
+                savedFile.delete()
+                _transferProgress.value = TransferProgress(isTransferring = false)
+                sendResponse(output, 400, "application/json", """{"status":"error","message":"文件传输中断，已取消保存"}""")
+                return
             }
 
             onFileSuccessfullySaved(savedFile, cleanName, output)
@@ -458,6 +472,54 @@ class WifiTransferServer(
         }
     }
 
+    private fun handleGetBooks(output: OutputStream) {
+        val files = booksDir.listFiles()?.filter {
+            val n = it.name.lowercase()
+            n.endsWith(".txt") || n.endsWith(".epub")
+        }?.sortedByDescending { it.lastModified() } ?: emptyList()
+
+        val jsonArray = files.joinToString(prefix = "[", postfix = "]") { f ->
+            val escapedName = f.name.replace("\\", "\\\\").replace("\"", "\\\"")
+            """{"name":"$escapedName","size":${f.length()},"modified":${f.lastModified()}}"""
+        }
+        sendResponse(output, 200, "application/json; charset=utf-8", jsonArray)
+    }
+
+    private fun handleDeleteBook(rawPath: String, output: OutputStream) {
+        var targetName = ""
+        val qIdx = rawPath.indexOf('?')
+        if (qIdx >= 0 && qIdx + 1 < rawPath.length) {
+            val queryStr = rawPath.substring(qIdx + 1)
+            for (p in queryStr.split("&")) {
+                val kv = p.split("=")
+                if (kv.size == 2 && kv[0].equals("name", ignoreCase = true)) {
+                    try {
+                        targetName = URLDecoder.decode(kv[1], "UTF-8")
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+
+        if (targetName.isEmpty()) {
+            sendResponse(output, 400, "application/json", """{"status":"error","message":"缺少书籍名称"}""")
+            return
+        }
+
+        val cleanName = File(targetName).name
+        val targetFile = File(booksDir, cleanName)
+        if (targetFile.exists()) {
+            val deleted = targetFile.delete()
+            if (deleted) {
+                onBookDeleted?.invoke(cleanName)
+                sendResponse(output, 200, "application/json", """{"status":"ok","deleted":"$cleanName"}""")
+            } else {
+                sendResponse(output, 500, "application/json", """{"status":"error","message":"删除失败"}""")
+            }
+        } else {
+            sendResponse(output, 404, "application/json", """{"status":"not_found","message":"书籍不存在"}""")
+        }
+    }
+
     private fun sendResponse(output: OutputStream, statusCode: Int, contentType: String, content: String) {
         val bytes = content.toByteArray(Charsets.UTF_8)
         val statusText = when (statusCode) {
@@ -509,6 +571,9 @@ class WifiTransferServer(
                     .error { color: #f85149; }
                     .progress-track { height: 6px; background: #30363d; border-radius: 3px; overflow: hidden; margin-top: 8px; display: none; width: 100%; }
                     .progress-fill { height: 100%; background: #388bfd; width: 0%; transition: width 0.15s ease-out; }
+                    .del-btn { background: #da3633; color: #ffffff; border: none; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background 0.2s; }
+                    .del-btn:hover { background: #b62324; }
+                    .book-meta { font-size: 11px; color: #8b949e; margin-top: 2px; }
                 </style>
             </head>
             <body>
@@ -522,6 +587,13 @@ class WifiTransferServer(
                     <input type="file" id="fileInput" multiple accept=".txt,.epub">
                     <button class="btn" id="uploadBtn" disabled>开始传输到手表</button>
                     <ul class="file-list" id="fileList"></ul>
+                </div>
+
+                <div class="card" style="margin-top: 20px;">
+                    <div class="title" style="font-size: 17px; margin-bottom: 4px;">手表已存书籍管理</div>
+                    <div class="desc" style="margin-bottom: 14px;">查看手表内已存书架，支持网页一键清理</div>
+                    <div id="shelfLoading" style="text-align:center; color:#8b949e; font-size:13px; padding:12px;">正在加载书架...</div>
+                    <ul class="file-list" id="shelfList"></ul>
                 </div>
 
                 <script>
@@ -613,7 +685,55 @@ class WifiTransferServer(
                             });
                         }
                         selectedFiles = [];
+                        loadShelf();
                     });
+
+                    async function loadShelf() {
+                        const shelfList = document.getElementById('shelfList');
+                        const shelfLoading = document.getElementById('shelfLoading');
+                        try {
+                            const res = await fetch('/api/books');
+                            const books = await res.json();
+                            shelfLoading.style.display = 'none';
+                            shelfList.innerHTML = '';
+                            if (books.length === 0) {
+                                shelfList.innerHTML = '<li style="text-align:center; color:#8b949e; font-size:13px; padding:12px;">手表书架暂无书籍</li>';
+                                return;
+                            }
+                            for (let b of books) {
+                                const li = document.createElement('li');
+                                li.className = 'file-item';
+                                const sizeKb = Math.round(b.size / 1024);
+                                li.innerHTML = `
+                                    <div class="file-header">
+                                        <span class="file-name">${'$'}{b.name}</span>
+                                        <button class="del-btn" onclick="deleteBook('${'$'}{encodeURIComponent(b.name)}')">删除</button>
+                                    </div>
+                                    <div class="book-meta">${'$'}{sizeKb} KB</div>
+                                `;
+                                shelfList.appendChild(li);
+                            }
+                        } catch (e) {
+                            shelfLoading.innerText = '加载失败';
+                        }
+                    }
+
+                    async function deleteBook(encodedName) {
+                        const name = decodeURIComponent(encodedName);
+                        if (!confirm('确定要从手表中删除《' + name + '》吗？')) return;
+                        try {
+                            const res = await fetch('/api/books/delete?name=' + encodedName, { method: 'POST' });
+                            if (res.ok) {
+                                loadShelf();
+                            } else {
+                                alert('删除失败');
+                            }
+                        } catch (e) {
+                            alert('网络错误');
+                        }
+                    }
+
+                    window.addEventListener('DOMContentLoaded', loadShelf);
                 </script>
             </body>
             </html>

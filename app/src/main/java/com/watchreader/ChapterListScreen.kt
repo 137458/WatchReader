@@ -98,9 +98,6 @@ fun ChapterListScreen(
     val bgColor = colorScheme.background.toArgb()
     val activeColor = colorScheme.primary.toArgb()
     val normalColor = colorScheme.onSurfaceVariant.toArgb()
-    val onSurfaceColor = colorScheme.onSurface.toArgb()
-    val surfaceVariantColor = colorScheme.surfaceVariant.toArgb()
-    val errorColor = colorScheme.error.toArgb()
 
     val noIndication = remember { MutableInteractionSource() }
     var currentListView by remember { mutableStateOf<ListView?>(null) }
@@ -148,103 +145,8 @@ fun ChapterListScreen(
                         }
                     }
 
-                    listView.adapter = object : BaseAdapter() {
-                        override fun getCount(): Int = chapters.size
-                        override fun getItem(position: Int): Any = chapters[position]
-                        override fun getItemId(position: Int): Long = position.toLong()
-
-                        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                            val isCurrent = position == currentChapterIndex
-                            val chapter = chapters[position]
-
-                            val container: FrameLayout
-                            val holder: ChapterCardViewHolder
-
-                            if (convertView == null) {
-                                container = FrameLayout(context).apply {
-                                    layoutParams = ViewGroup.LayoutParams(
-                                        ViewGroup.LayoutParams.MATCH_PARENT,
-                                        ViewGroup.LayoutParams.WRAP_CONTENT
-                                    )
-                                    setPadding((11 * density).toInt(), (8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt())
-                                }
-
-                                val textLayout = LinearLayout(context).apply {
-                                    orientation = LinearLayout.HORIZONTAL
-                                    layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                                        gravity = Gravity.CENTER_VERTICAL
-                                    }
-                                    gravity = Gravity.CENTER_VERTICAL
-                                }
-
-                                val indicatorTv = TextView(context).apply {
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
-                                    typeface = Typeface.DEFAULT_BOLD
-                                    setPadding(0, 0, (5 * density).toInt(), 0)
-                                }
-                                textLayout.addView(indicatorTv)
-
-                                val titleTv = TextView(context).apply {
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-                                    maxLines = 1
-                                    ellipsize = TextUtils.TruncateAt.END
-                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                                }
-                                textLayout.addView(titleTv)
-
-                                val tagTv = TextView(context).apply {
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
-                                    typeface = Typeface.DEFAULT_BOLD
-                                    setPadding((6 * density).toInt(), (1.5f * density).toInt(), (6 * density).toInt(), (1.5f * density).toInt())
-                                    background = android.graphics.drawable.GradientDrawable().apply {
-                                        setColor(colorScheme.primary.copy(alpha = 0.25f).toArgb())
-                                        cornerRadius = 6 * density
-                                    }
-                                }
-                                textLayout.addView(tagTv)
-
-                                container.addView(textLayout)
-                                holder = ChapterCardViewHolder(indicatorTv, titleTv, tagTv)
-                                container.tag = holder
-                            } else {
-                                container = convertView as FrameLayout
-                                holder = container.tag as ChapterCardViewHolder
-                            }
-
-                            val cardBg = android.graphics.drawable.GradientDrawable().apply {
-                                cornerRadius = 12 * density
-                                if (isCurrent) {
-                                    setColor(colorScheme.primary.copy(alpha = 0.18f).toArgb())
-                                    setStroke((1.5f * density).toInt(), activeColor)
-                                } else {
-                                    setColor(colorScheme.surfaceVariant.copy(alpha = 0.70f).toArgb())
-                                }
-                            }
-                            container.background = cardBg
-
-                            holder.titleTv.text = chapter.title
-
-                            if (isCurrent) {
-                                holder.indicatorTv.visibility = View.VISIBLE
-                                holder.indicatorTv.text = "●"
-                                holder.indicatorTv.setTextColor(activeColor)
-                                holder.titleTv.setTextColor(activeColor)
-                                holder.titleTv.typeface = Typeface.DEFAULT_BOLD
-
-                                holder.tagTv.visibility = View.VISIBLE
-                                holder.tagTv.text = "正在读"
-                                holder.tagTv.setTextColor(activeColor)
-                            } else {
-                                holder.indicatorTv.visibility = View.GONE
-                                holder.titleTv.setTextColor(onSurfaceColor)
-                                holder.titleTv.typeface = Typeface.DEFAULT
-
-                                holder.tagTv.visibility = View.GONE
-                            }
-
-                            return container
-                        }
-                    }
+                    val adapter = ChapterListAdapter(chapters, currentChapterIndex, colorScheme, density)
+                    listView.adapter = adapter
 
                     listView.setOnItemClickListener { _, _, position, _ ->
                         if (position in chapters.indices) {
@@ -264,7 +166,13 @@ fun ChapterListScreen(
                 update = { listView ->
                     currentListView = listView
                     listView.setBackgroundColor(bgColor)
-                    (listView.adapter as? BaseAdapter)?.notifyDataSetChanged()
+                    val adapter = listView.adapter as? ChapterListAdapter
+                    if (adapter != null) {
+                        adapter.chapters = chapters
+                        adapter.currentChapterIndex = currentChapterIndex
+                        adapter.colorScheme = colorScheme
+                        adapter.notifyDataSetChanged()
+                    }
                 }
             )
         } else {
@@ -316,89 +224,19 @@ fun ChapterListScreen(
                             }
                         }
 
-                        val timeFormat = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-
-                        bookmarkListView.adapter = object : BaseAdapter() {
-                            override fun getCount(): Int = bookmarks.size
-                            override fun getItem(position: Int): Any = bookmarks[position]
-                            override fun getItemId(position: Int): Long = position.toLong()
-
-                            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                                val bm = bookmarks[position]
-                                val container = LinearLayout(context).apply {
-                                    orientation = LinearLayout.HORIZONTAL
-                                    layoutParams = ViewGroup.LayoutParams(
-                                        ViewGroup.LayoutParams.MATCH_PARENT,
-                                        ViewGroup.LayoutParams.WRAP_CONTENT
-                                    )
-                                    gravity = Gravity.CENTER_VERTICAL
-                                    background = android.graphics.drawable.GradientDrawable().apply {
-                                        setColor(surfaceVariantColor)
-                                        cornerRadius = 12 * density
-                                    }
-                                    setPadding((10 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
-                                }
-
-                                val textLayout = LinearLayout(context).apply {
-                                    orientation = LinearLayout.VERTICAL
-                                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                                }
-
-                                val titleTv = TextView(context).apply {
-                                    text = bm.chapterTitle.ifEmpty { "第 ${bm.chapterIndex + 1} 章" }
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-                                    typeface = Typeface.DEFAULT_BOLD
-                                    setTextColor(activeColor)
-                                    maxLines = 1
-                                    ellipsize = TextUtils.TruncateAt.END
-                                }
-                                textLayout.addView(titleTv)
-
-                                if (bm.snippet.isNotEmpty()) {
-                                    val snippetTv = TextView(context).apply {
-                                        text = "“${bm.snippet.take(30)}…”"
-                                        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
-                                        setTextColor(onSurfaceColor)
-                                        maxLines = 1
-                                        ellipsize = TextUtils.TruncateAt.END
-                                        setPadding(0, (2 * density).toInt(), 0, 0)
-                                    }
-                                    textLayout.addView(snippetTv)
-                                }
-
-                                val dateTv = TextView(context).apply {
-                                    text = timeFormat.format(Date(bm.time))
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
-                                    setTextColor(normalColor)
-                                    setPadding(0, (2 * density).toInt(), 0, 0)
-                                }
-                                textLayout.addView(dateTv)
-                                container.addView(textLayout)
-
-                                val delBtn = TextView(context).apply {
-                                    text = "✕"
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                                    setTextColor(errorColor)
-                                    setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
-                                    setOnClickListener {
-                                        onDeleteBookmark(bm)
-                                    }
-                                }
-                                container.addView(delBtn)
-
-                                container.setOnClickListener {
-                                    onBookmarkClick(bm)
-                                }
-
-                                return container
-                            }
-                        }
+                        val adapter = BookmarkListAdapter(bookmarks, colorScheme, density, onBookmarkClick, onDeleteBookmark)
+                        bookmarkListView.adapter = adapter
 
                         bookmarkListView
                     },
                     update = { bookmarkListView ->
                         bookmarkListView.setBackgroundColor(bgColor)
-                        (bookmarkListView.adapter as? BaseAdapter)?.notifyDataSetChanged()
+                        val adapter = bookmarkListView.adapter as? BookmarkListAdapter
+                        if (adapter != null) {
+                            adapter.bookmarks = bookmarks
+                            adapter.colorScheme = colorScheme
+                            adapter.notifyDataSetChanged()
+                        }
                     }
                 )
             }
@@ -724,5 +562,206 @@ fun ChapterListScreen(
                 }
             }
         }
+    }
+}
+
+private class ChapterListAdapter(
+    var chapters: List<Chapter>,
+    var currentChapterIndex: Int,
+    var colorScheme: androidx.compose.material3.ColorScheme,
+    val density: Float
+) : BaseAdapter() {
+    override fun getCount(): Int = chapters.size
+    override fun getItem(position: Int): Any = chapters[position]
+    override fun getItemId(position: Int): Long = position.toLong()
+
+    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+        val context = parent.context
+        val isCurrent = position == currentChapterIndex
+        val chapter = chapters[position]
+        val activeColor = colorScheme.primary.toArgb()
+        val onSurfaceColor = colorScheme.onSurface.toArgb()
+
+        val container: FrameLayout
+        val holder: ChapterCardViewHolder
+
+        if (convertView == null) {
+            container = FrameLayout(context).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                setPadding((11 * density).toInt(), (8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt())
+            }
+
+            val textLayout = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                gravity = Gravity.CENTER_VERTICAL
+            }
+
+            val indicatorTv = TextView(context).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding(0, 0, (5 * density).toInt(), 0)
+            }
+            textLayout.addView(indicatorTv)
+
+            val titleTv = TextView(context).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            }
+            textLayout.addView(titleTv)
+
+            val tagTv = TextView(context).apply {
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+                typeface = Typeface.DEFAULT_BOLD
+                setPadding((6 * density).toInt(), (1.5f * density).toInt(), (6 * density).toInt(), (1.5f * density).toInt())
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(colorScheme.primary.copy(alpha = 0.25f).toArgb())
+                    cornerRadius = 6 * density
+                }
+            }
+            textLayout.addView(tagTv)
+
+            container.addView(textLayout)
+            holder = ChapterCardViewHolder(indicatorTv, titleTv, tagTv)
+            container.tag = holder
+        } else {
+            container = convertView as FrameLayout
+            holder = container.tag as ChapterCardViewHolder
+        }
+
+        val cardBg = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 12 * density
+            if (isCurrent) {
+                setColor(colorScheme.primary.copy(alpha = 0.18f).toArgb())
+                setStroke((1.5f * density).toInt(), activeColor)
+            } else {
+                setColor(colorScheme.surfaceVariant.copy(alpha = 0.70f).toArgb())
+            }
+        }
+        container.background = cardBg
+
+        holder.titleTv.text = chapter.title
+
+        if (isCurrent) {
+            holder.indicatorTv.visibility = View.VISIBLE
+            holder.indicatorTv.text = "●"
+            holder.indicatorTv.setTextColor(activeColor)
+            holder.titleTv.setTextColor(activeColor)
+            holder.titleTv.typeface = Typeface.DEFAULT_BOLD
+
+            holder.tagTv.visibility = View.VISIBLE
+            holder.tagTv.text = "正在读"
+            holder.tagTv.setTextColor(activeColor)
+        } else {
+            holder.indicatorTv.visibility = View.GONE
+            holder.titleTv.setTextColor(onSurfaceColor)
+            holder.titleTv.typeface = Typeface.DEFAULT
+
+            holder.tagTv.visibility = View.GONE
+        }
+
+        return container
+    }
+}
+
+private class BookmarkListAdapter(
+    var bookmarks: List<Bookmark>,
+    var colorScheme: androidx.compose.material3.ColorScheme,
+    val density: Float,
+    val onBookmarkClick: (Bookmark) -> Unit,
+    val onDeleteBookmark: (Bookmark) -> Unit
+) : BaseAdapter() {
+    private val timeFormat = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+
+    override fun getCount(): Int = bookmarks.size
+    override fun getItem(position: Int): Any = bookmarks[position]
+    override fun getItemId(position: Int): Long = position.toLong()
+
+    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+        val context = parent.context
+        val bm = bookmarks[position]
+        val activeColor = colorScheme.primary.toArgb()
+        val surfaceVariantColor = colorScheme.surfaceVariant.toArgb()
+        val onSurfaceColor = colorScheme.onSurface.toArgb()
+        val normalColor = colorScheme.onSurfaceVariant.toArgb()
+        val errorColor = colorScheme.error.toArgb()
+
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            gravity = Gravity.CENTER_VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(surfaceVariantColor)
+                cornerRadius = 12 * density
+            }
+            setPadding((10 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+        }
+
+        val textLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val titleTv = TextView(context).apply {
+            text = bm.chapterTitle.ifEmpty { "第 ${bm.chapterIndex + 1} 章" }
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(activeColor)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        textLayout.addView(titleTv)
+
+        if (bm.snippet.isNotEmpty()) {
+            val snippetTv = TextView(context).apply {
+                text = "“${bm.snippet.take(30)}…”"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                setTextColor(onSurfaceColor)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, (2 * density).toInt(), 0, 0)
+            }
+            textLayout.addView(snippetTv)
+        }
+
+        val dateTv = TextView(context).apply {
+            text = timeFormat.format(Date(bm.time))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            setTextColor(normalColor)
+            setPadding(0, (2 * density).toInt(), 0, 0)
+        }
+        textLayout.addView(dateTv)
+        container.addView(textLayout)
+
+        // 删除按钮：热区扩大至 42dp 以上，带点击触达保护
+        val delBtn = TextView(context).apply {
+            text = "✕"
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(errorColor)
+            gravity = Gravity.CENTER
+            minWidth = (42 * density).toInt()
+            minHeight = (42 * density).toInt()
+            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+            setOnClickListener {
+                onDeleteBookmark(bm)
+            }
+        }
+        container.addView(delBtn)
+
+        container.setOnClickListener {
+            onBookmarkClick(bm)
+        }
+
+        return container
     }
 }

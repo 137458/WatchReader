@@ -56,8 +56,14 @@ private class MenuViewHolder(
     val fontMinusBtn: TextView,
     val fontValTv: TextView,
     val fontPlusBtn: TextView,
-    val darkModeCard: FrameLayout,
-    val darkModeTv: TextView,
+    val themeModeCard: FrameLayout,
+    val themeModeTv: TextView,
+    val tapPageAreaCard: FrameLayout,
+    val tapPageAreaTv: TextView,
+    val cleanTypographyCard: FrameLayout,
+    val cleanTypographyTv: TextView,
+    val fontTypeCard: FrameLayout,
+    val fontTypeTv: TextView,
     val bookmarkCard: FrameLayout,
     val bookmarkTv: TextView,
     val rsvpCard: FrameLayout,
@@ -66,6 +72,8 @@ private class MenuViewHolder(
     val chapterListTv: TextView,
     val bookshelfCard: FrameLayout,
     val bookshelfTv: TextView,
+    val readDurationCard: FrameLayout,
+    val readDurationTv: TextView,
     val backReaderCard: FrameLayout,
     val backReaderTv: TextView
 )
@@ -94,7 +102,16 @@ fun MenuScreen(
     onOpenRsvp: () -> Unit,
     onChapterListClick: () -> Unit,
     onBack: () -> Unit,
-    onHome: () -> Unit
+    onHome: () -> Unit,
+    themeMode: Int = 0,
+    onThemeModeChange: (Int) -> Unit = {},
+    tapPageArea: Int = 0,
+    onTapPageAreaChange: (Int) -> Unit = {},
+    cleanTypography: Boolean = true,
+    onCleanTypographyChange: (Boolean) -> Unit = {},
+    fontType: Int = 0,
+    onFontTypeChange: (Int) -> Unit = {},
+    readDurationSec: Long = 0L
 ) {
     BackHandler(onBack = onBack)
 
@@ -128,8 +145,13 @@ fun MenuScreen(
                     clipToPadding = false
                 }
 
-                // 原生物理表冠旋转监听（完全对齐 ReaderScreen：由原生 ScrollView 满帧驱动并由系统分发微振）
-                scrollView.setOnGenericMotionListener { _, _ ->
+                // 原生物理表冠旋转监听（对齐 ReaderScreen：原生平滑滚屏 + 细腻微振）
+                scrollView.setOnGenericMotionListener { v, event ->
+                    if (CrownScrollHelper.isCrownScrollEvent(event)) {
+                        val delta = CrownScrollHelper.extractCrownDelta(event)
+                        CrownScrollHelper.dispatchScroll(delta, scrollView, ctx, v)
+                        return@setOnGenericMotionListener true
+                    }
                     false
                 }
 
@@ -167,7 +189,16 @@ fun MenuScreen(
                     onOpenRsvp = onOpenRsvp,
                     onChapterListClick = onChapterListClick,
                     onBack = onBack,
-                    onHome = onHome
+                    onHome = onHome,
+                    themeMode = themeMode,
+                    onThemeModeChange = onThemeModeChange,
+                    tapPageArea = tapPageArea,
+                    onTapPageAreaChange = onTapPageAreaChange,
+                    cleanTypography = cleanTypography,
+                    onCleanTypographyChange = onCleanTypographyChange,
+                    fontType = fontType,
+                    onFontTypeChange = onFontTypeChange,
+                    readDurationSec = readDurationSec
                 )
 
                 scrollView
@@ -199,7 +230,16 @@ fun MenuScreen(
                     onOpenRsvp = onOpenRsvp,
                     onChapterListClick = onChapterListClick,
                     onBack = onBack,
-                    onHome = onHome
+                    onHome = onHome,
+                    themeMode = themeMode,
+                    onThemeModeChange = onThemeModeChange,
+                    tapPageArea = tapPageArea,
+                    onTapPageAreaChange = onTapPageAreaChange,
+                    cleanTypography = cleanTypography,
+                    onCleanTypographyChange = onCleanTypographyChange,
+                    fontType = fontType,
+                    onFontTypeChange = onFontTypeChange,
+                    readDurationSec = readDurationSec
                 )
             }
         )
@@ -527,26 +567,83 @@ private fun createMenuViews(
     fontCard.addView(fontPlusBtn)
     container.addView(fontCard)
 
-    // 5. 深色/浅色模式切换卡片
-    val darkModeTv = TextView(context).apply {
+    // 5. 视觉主题切换卡片 (羊皮纸 / 极光黑 / 纯黑红光夜视)
+    val themeModeTv = TextView(context).apply {
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
     }
-    val darkModeCard = FrameLayout(context).apply {
+    val themeModeCard = FrameLayout(context).apply {
         layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
             setMargins(0, 0, 0, (8 * density).toInt())
         }
-        setPadding((10 * density).toInt(), (9 * density).toInt(), (10 * density).toInt(), (9 * density).toInt())
+        setPadding((10 * density).toInt(), (10 * density).toInt(), (10 * density).toInt(), (10 * density).toInt())
         isClickable = true
-        addView(darkModeTv)
+        addView(themeModeTv)
     }
-    container.addView(darkModeCard)
+    container.addView(themeModeCard)
 
-    // 6. 书签与闪读快捷卡片（双药丸胶囊）
+    // 6. 点按翻页热区设置 (上下 / 左右 / 关闭)
+    val tapPageAreaTv = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+    }
+    val tapPageAreaCard = FrameLayout(context).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, (8 * density).toInt())
+        }
+        setPadding((10 * density).toInt(), (10 * density).toInt(), (10 * density).toInt(), (10 * density).toInt())
+        isClickable = true
+        addView(tapPageAreaTv)
+    }
+    container.addView(tapPageAreaCard)
+
+    // 7. 网文排版智能净化
+    val cleanTypographyTv = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+    }
+    val cleanTypographyCard = FrameLayout(context).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, (8 * density).toInt())
+        }
+        setPadding((10 * density).toInt(), (10 * density).toInt(), (10 * density).toInt(), (10 * density).toInt())
+        isClickable = true
+        addView(cleanTypographyTv)
+    }
+    container.addView(cleanTypographyCard)
+
+    // 8. 字体风格切换 (系统黑体 / 系统衬线体)
+    val fontTypeTv = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+    }
+    val fontTypeCard = FrameLayout(context).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, (8 * density).toInt())
+        }
+        setPadding((10 * density).toInt(), (10 * density).toInt(), (10 * density).toInt(), (10 * density).toInt())
+        isClickable = true
+        addView(fontTypeTv)
+    }
+    container.addView(fontTypeCard)
+
+    // 9. 书签与闪读快捷卡片（双药丸胶囊）
     val toolRow = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         layoutParams = LinearLayout.LayoutParams(
@@ -568,7 +665,7 @@ private fun createMenuViews(
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             setMargins(0, 0, (4 * density).toInt(), 0)
         }
-        setPadding((6 * density).toInt(), (9 * density).toInt(), (6 * density).toInt(), (9 * density).toInt())
+        setPadding((6 * density).toInt(), (10 * density).toInt(), (6 * density).toInt(), (10 * density).toInt())
         isClickable = true
         addView(bookmarkTv)
     }
@@ -584,14 +681,14 @@ private fun createMenuViews(
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             setMargins((4 * density).toInt(), 0, 0, 0)
         }
-        setPadding((6 * density).toInt(), (9 * density).toInt(), (6 * density).toInt(), (9 * density).toInt())
+        setPadding((6 * density).toInt(), (10 * density).toInt(), (6 * density).toInt(), (10 * density).toInt())
         isClickable = true
         addView(rsvpTv)
     }
     toolRow.addView(rsvpCard)
     container.addView(toolRow)
 
-    // 7. 导航双卡片（章节目录 / 返回书架）
+    // 10. 导航双卡片（章节目录 / 返回书架）
     val navRow = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         layoutParams = LinearLayout.LayoutParams(
@@ -613,7 +710,7 @@ private fun createMenuViews(
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             setMargins(0, 0, (4 * density).toInt(), 0)
         }
-        setPadding((6 * density).toInt(), (9 * density).toInt(), (6 * density).toInt(), (9 * density).toInt())
+        setPadding((6 * density).toInt(), (10 * density).toInt(), (6 * density).toInt(), (10 * density).toInt())
         isClickable = true
         addView(chapterListTv)
     }
@@ -629,14 +726,32 @@ private fun createMenuViews(
         layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
             setMargins((4 * density).toInt(), 0, 0, 0)
         }
-        setPadding((6 * density).toInt(), (9 * density).toInt(), (6 * density).toInt(), (9 * density).toInt())
+        setPadding((6 * density).toInt(), (10 * density).toInt(), (6 * density).toInt(), (10 * density).toInt())
         isClickable = true
         addView(bookshelfTv)
     }
     navRow.addView(bookshelfCard)
     container.addView(navRow)
 
-    // 8. 返回阅读高亮大卡片
+    // 11. 累计阅读统计轻量卡片
+    val readDurationTv = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+        typeface = Typeface.DEFAULT_BOLD
+        gravity = Gravity.CENTER
+    }
+    val readDurationCard = FrameLayout(context).apply {
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, 0, 0, (8 * density).toInt())
+        }
+        setPadding((10 * density).toInt(), (8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt())
+        addView(readDurationTv)
+    }
+    container.addView(readDurationCard)
+
+    // 12. 返回阅读高亮大卡片
     val backReaderTv = TextView(context).apply {
         text = "‹ 返回继续阅读"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
@@ -683,8 +798,14 @@ private fun createMenuViews(
         fontMinusBtn = fontMinusBtn,
         fontValTv = fontValTv,
         fontPlusBtn = fontPlusBtn,
-        darkModeCard = darkModeCard,
-        darkModeTv = darkModeTv,
+        themeModeCard = themeModeCard,
+        themeModeTv = themeModeTv,
+        tapPageAreaCard = tapPageAreaCard,
+        tapPageAreaTv = tapPageAreaTv,
+        cleanTypographyCard = cleanTypographyCard,
+        cleanTypographyTv = cleanTypographyTv,
+        fontTypeCard = fontTypeCard,
+        fontTypeTv = fontTypeTv,
         bookmarkCard = bookmarkCard,
         bookmarkTv = bookmarkTv,
         rsvpCard = rsvpCard,
@@ -693,6 +814,8 @@ private fun createMenuViews(
         chapterListTv = chapterListTv,
         bookshelfCard = bookshelfCard,
         bookshelfTv = bookshelfTv,
+        readDurationCard = readDurationCard,
+        readDurationTv = readDurationTv,
         backReaderCard = backReaderCard,
         backReaderTv = backReaderTv
     )
@@ -701,6 +824,7 @@ private fun createMenuViews(
 /**
  * 属性就地绑定（0 View 重构，滚动条 0 跳变）
  */
+@Suppress("UNUSED_PARAMETER")
 private fun bindMenuData(
     holder: MenuViewHolder,
     density: Float,
@@ -723,7 +847,16 @@ private fun bindMenuData(
     onOpenRsvp: () -> Unit,
     onChapterListClick: () -> Unit,
     onBack: () -> Unit,
-    onHome: () -> Unit
+    onHome: () -> Unit,
+    themeMode: Int,
+    onThemeModeChange: (Int) -> Unit,
+    tapPageArea: Int,
+    onTapPageAreaChange: (Int) -> Unit,
+    cleanTypography: Boolean,
+    onCleanTypographyChange: (Boolean) -> Unit,
+    fontType: Int,
+    onFontTypeChange: (Int) -> Unit,
+    readDurationSec: Long
 ) {
     val primaryColor = colors.primary.toArgb()
     val onBgColor = colors.onBackground.toArgb()
@@ -850,16 +983,52 @@ private fun bindMenuData(
     }
     holder.fontPlusBtn.setOnClickListener { onFontSizeChange(fontSize + 1) }
 
-    // 5. 深色/浅色模式卡片
-    holder.darkModeCard.background = GradientDrawable().apply {
+    // 5. 视觉主题卡片
+    holder.themeModeCard.background = GradientDrawable().apply {
         setColor(surfaceColor)
         cornerRadius = 16 * density
     }
-    holder.darkModeTv.text = if (isDarkMode) "🌙 深色模式（AMOLED纯黑）" else "☀️ 浅色模式（羊皮纸护眼）"
-    holder.darkModeTv.setTextColor(secondaryColor)
-    holder.darkModeCard.setOnClickListener { onToggleDarkMode() }
+    holder.themeModeTv.text = when (themeMode) {
+        0 -> "🎨 主题: 暖色羊皮纸"
+        1 -> "🎨 主题: 极光黑 (AMOLED)"
+        2 -> "🎨 主题: 纯黑红光夜视"
+        else -> "🎨 主题设置"
+    }
+    holder.themeModeTv.setTextColor(secondaryColor)
+    holder.themeModeCard.setOnClickListener { onThemeModeChange((themeMode + 1) % 3) }
 
-    // 6. 工具双卡片（存为书签 / 闪读速读）
+    // 6. 点按翻页热区卡片
+    holder.tapPageAreaCard.background = GradientDrawable().apply {
+        setColor(surfaceColor)
+        cornerRadius = 16 * density
+    }
+    holder.tapPageAreaTv.text = when (tapPageArea) {
+        0 -> "👆 翻页: 上下点按翻页"
+        1 -> "👆 翻页: 左右点按翻页"
+        else -> "👆 翻页: 关闭点按翻页"
+    }
+    holder.tapPageAreaTv.setTextColor(primaryColor)
+    holder.tapPageAreaCard.setOnClickListener { onTapPageAreaChange((tapPageArea + 1) % 3) }
+
+    // 7. 网文排版智能净化
+    holder.cleanTypographyCard.background = GradientDrawable().apply {
+        setColor(surfaceColor)
+        cornerRadius = 16 * density
+    }
+    holder.cleanTypographyTv.text = if (cleanTypography) "🧹 排版净化: 已开启" else "🧹 排版净化: 已关闭"
+    holder.cleanTypographyTv.setTextColor(if (cleanTypography) primaryColor else onSurfaceVariantColor)
+    holder.cleanTypographyCard.setOnClickListener { onCleanTypographyChange(!cleanTypography) }
+
+    // 8. 字体风格卡片
+    holder.fontTypeCard.background = GradientDrawable().apply {
+        setColor(surfaceColor)
+        cornerRadius = 16 * density
+    }
+    holder.fontTypeTv.text = if (fontType == 1) "🔤 字体: 系统衬线体 (宋体)" else "🔤 字体: 系统黑体 (无衬线)"
+    holder.fontTypeTv.setTextColor(secondaryColor)
+    holder.fontTypeCard.setOnClickListener { onFontTypeChange(if (fontType == 1) 0 else 1) }
+
+    // 9. 工具双卡片（存为书签 / 闪读速读）
     holder.bookmarkCard.background = GradientDrawable().apply {
         setColor(surfaceColor)
         cornerRadius = 16 * density
@@ -874,7 +1043,7 @@ private fun bindMenuData(
     holder.rsvpTv.setTextColor(secondaryColor)
     holder.rsvpCard.setOnClickListener { onOpenRsvp() }
 
-    // 7. 导航双卡片
+    // 10. 导航双卡片
     holder.chapterListCard.background = GradientDrawable().apply {
         setColor(surfaceColor)
         cornerRadius = 16 * density
@@ -889,7 +1058,17 @@ private fun bindMenuData(
     holder.bookshelfTv.setTextColor(outlineColor)
     holder.bookshelfCard.setOnClickListener { onHome() }
 
-    // 8. 返回阅读高亮大卡片
+    // 11. 累计阅读统计轻量卡片
+    holder.readDurationCard.background = GradientDrawable().apply {
+        setColor(surfaceColor)
+        cornerRadius = 16 * density
+    }
+    val hours = readDurationSec / 3600
+    val mins = (readDurationSec % 3600) / 60
+    holder.readDurationTv.text = "⏱️ 累计阅读: ${hours}小时 ${mins}分钟"
+    holder.readDurationTv.setTextColor(onSurfaceVariantColor)
+
+    // 12. 返回阅读高亮大卡片
     holder.backReaderCard.background = GradientDrawable().apply {
         setColor(surfaceVariantColor)
         cornerRadius = 16 * density

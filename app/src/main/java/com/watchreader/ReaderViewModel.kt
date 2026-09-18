@@ -61,7 +61,12 @@ data class ReaderUiState(
     val isTransferring: Boolean = false,
     val transferProgress: Float = 0f,
     val transferFileName: String = "",
-    val rsvpSpeed: Float = 350f
+    val rsvpSpeed: Float = 350f,
+    val themeMode: Int = 0,
+    val tapPageArea: Int = 0,
+    val cleanTypography: Boolean = true,
+    val fontType: Int = 0,
+    val readDurationSec: Long = 0L
 )
 
 /**
@@ -89,6 +94,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     @Volatile
     private var currentReadingOffset: Int = 0
 
+    // Wi-Fi 传书协程监听生命周期托管
+    private var wifiCollectJob: Job? = null
+
+    // 活跃阅读时长统计器
+    private var readingTimerJob: Job? = null
+    private var lastActiveTime = System.currentTimeMillis()
+
     /**
      * 初始化：单次 I/O 批量读取 DataStore 配置，按最后活跃页面智能秒开
      */
@@ -106,6 +118,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         autoScrollSpeed = config.autoScrollSpeed,
                         appBrightness = config.appBrightness,
                         bookshelf = config.bookshelf,
+                        themeMode = config.themeMode,
+                        tapPageArea = config.tapPageArea,
+                        cleanTypography = config.cleanTypography,
+                        fontType = config.fontType,
+                        readDurationSec = config.readDurationSec,
                         screen = Screen.Loading,
                         isLoading = true,
                         currentUri = config.lastUri
@@ -121,12 +138,18 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         autoScrollSpeed = config.autoScrollSpeed,
                         appBrightness = config.appBrightness,
                         bookshelf = config.bookshelf,
+                        themeMode = config.themeMode,
+                        tapPageArea = config.tapPageArea,
+                        cleanTypography = config.cleanTypography,
+                        fontType = config.fontType,
+                        readDurationSec = config.readDurationSec,
                         screen = Screen.Home,
                         isLoading = false,
                         currentUri = null
                     )
                 }
             }
+            startReadingTimer()
         }
     }
 
@@ -207,13 +230,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     val epubMeta = withContext(Dispatchers.IO) {
                         val fileSize = getFileSize(appCtx, uri)
                         val cacheKey = "${uri}_${fileSize}"
-                        val cachedChapters = chapterIndexCache[cacheKey] ?: ChapterDiskCache.load(appCtx, cacheKey)
+                        val cachedChapters = chapterIndexCache[cacheKey] ?: ChapterDiskCache.load(appCtx, cacheKey)?.chapters
                         if (cachedChapters != null) {
                             chapterIndexCache[cacheKey] = cachedChapters
                         }
                         val meta = EpubParser.parseEpub(appCtx, uri)
                         if (cachedChapters == null) {
-                            ChapterDiskCache.save(appCtx, cacheKey, meta.chapters)
+                            ChapterDiskCache.save(appCtx, cacheKey, meta.chapters, meta.totalChars)
                             chapterIndexCache[cacheKey] = meta.chapters
                         }
                         meta
@@ -228,8 +251,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         val fileSize = getFileSize(appCtx, uri)
                         val cacheKey = "${uri}_${fileSize}"
                         var detected = chapterIndexCache[cacheKey]
+                        var cachedTotalChars = 0
                         if (detected == null) {
-                            detected = ChapterDiskCache.load(appCtx, cacheKey)
+                            val cachedData = ChapterDiskCache.load(appCtx, cacheKey)
+                            if (cachedData != null) {
+                                detected = cachedData.chapters
+                                cachedTotalChars = cachedData.totalChars
+                            }
                         }
 
                         val totalChars: Int
@@ -240,16 +268,20 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                                 throw IllegalStateException("文件为空或无法读取")
                             }
                             totalChars = scannedChars
-                            ChapterDiskCache.save(appCtx, cacheKey, scanned)
+                            ChapterDiskCache.save(appCtx, cacheKey, scanned, scannedChars)
                             chapterIndexCache[cacheKey] = scanned
                             detected = scanned
                         } else {
                             chapterIndexCache[cacheKey] = detected
-                            val lastChap = detected.lastOrNull()
-                            val estimated = (fileSize / (if (currentEncoding.startsWith("UTF-16")) 2 else 1)).toInt()
-                            totalChars = if (lastChap != null) {
-                                maxOf(estimated, lastChap.charOffset + 3000)
-                            } else estimated
+                            totalChars = if (cachedTotalChars > 0) {
+                                cachedTotalChars
+                            } else {
+                                val lastChap = detected.lastOrNull()
+                                val estimated = (fileSize / (if (currentEncoding.startsWith("UTF-16")) 2 else 1)).toInt()
+                                if (lastChap != null) {
+                                    maxOf(estimated, lastChap.charOffset + 3000)
+                                } else estimated
+                            }
                         }
                         detected to totalChars
                     }
@@ -364,7 +396,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         val isEpub = EpubParser.isEpubFile(appCtx, uri)
-        val formatted = if (isEpub) {
+        val loaded = if (isEpub) {
             EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters)
         } else {
             val currentChap = chapters[chapterIndex]
@@ -373,6 +405,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
             val rawChunk = readChapterChunkFromUri(appCtx, uri, currentEncoding, startOffset, endOffset)
             formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset)
+        }
+
+        val formatted = if (_uiState.value.cleanTypography) {
+            loaded.copy(formattedBody = TypographyCleaner.clean(loaded.formattedBody))
+        } else {
+            loaded
         }
 
         chapterContentCache[chapterIndex] = formatted
@@ -414,6 +452,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val nextIdx = _uiState.value.currentChapterIndex + 1
         if (nextIdx < _uiState.value.chapters.size) {
             goToChapter(nextIdx)
+        } else {
+            setAutoScrolling(false)
         }
     }
 
@@ -465,9 +505,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val state = _uiState.value
         val uri = state.currentUri ?: return
         currentReadingOffset = offset
+        notifyUserActive()
 
         savePositionJob?.cancel()
         savePositionJob = viewModelScope.launch(Dispatchers.IO) {
+            kotlinx.coroutines.delay(500L)
             val currentChapTitle = state.currentChapterContent?.title ?: ""
             DataStoreManager.saveReadingPosition(
                 appCtx,
@@ -535,6 +577,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         val shelf = DataStoreManager.loadBookShelf(appCtx)
                         _uiState.update { it.copy(bookshelf = shelf) }
                     }
+                },
+                onBookDeleted = { fileName ->
+                    notifyBookDeletedFromWeb(fileName)
                 }
             )
         }
@@ -550,19 +595,22 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 wifiUploadedCount = 0
             )
         }
-        viewModelScope.launch {
-            wifiServer?.uploadedCount?.collect { count ->
-                _uiState.update { it.copy(wifiUploadedCount = count) }
+        wifiCollectJob?.cancel()
+        wifiCollectJob = viewModelScope.launch {
+            launch {
+                wifiServer?.uploadedCount?.collect { count ->
+                    _uiState.update { it.copy(wifiUploadedCount = count) }
+                }
             }
-        }
-        viewModelScope.launch {
-            wifiServer?.transferProgress?.collect { tp ->
-                _uiState.update {
-                    it.copy(
-                        isTransferring = tp.isTransferring,
-                        transferProgress = tp.progress,
-                        transferFileName = tp.fileName
-                    )
+            launch {
+                wifiServer?.transferProgress?.collect { tp ->
+                    _uiState.update {
+                        it.copy(
+                            isTransferring = tp.isTransferring,
+                            transferProgress = tp.progress,
+                            transferFileName = tp.fileName
+                        )
+                    }
                 }
             }
         }
@@ -573,6 +621,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun closeWifiTransfer() {
         wifiServer?.stop()
+        wifiCollectJob?.cancel()
+        wifiCollectJob = null
         viewModelScope.launch(Dispatchers.IO) {
             val shelf = DataStoreManager.loadBookShelf(appCtx)
             _uiState.update {
@@ -801,6 +851,98 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val safeSpeed = speed.coerceIn(100f, 900f)
         _uiState.update { it.copy(rsvpSpeed = safeSpeed) }
         RotaryHapticManager.performScrollTick(appCtx, null)
+    }
+
+    /**
+     * 标记用户在阅读器中有活跃操作
+     */
+    fun notifyUserActive() {
+        lastActiveTime = System.currentTimeMillis()
+    }
+
+    /**
+     * 启动阅读时长后台统计循环
+     */
+    private fun startReadingTimer() {
+        readingTimerJob?.cancel()
+        readingTimerJob = viewModelScope.launch(Dispatchers.IO) {
+            while (true) {
+                kotlinx.coroutines.delay(10_000L)
+                val state = _uiState.value
+                if (state.screen is Screen.Reader) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastActiveTime <= 60_000L) {
+                        val newSec = state.readDurationSec + 10L
+                        _uiState.update { it.copy(readDurationSec = newSec) }
+                        DataStoreManager.saveReadDurationSec(appCtx, newSec)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 设置主题模式 (0: 羊皮纸/浅色, 1: 极光黑/深色, 2: 纯黑深红夜视)
+     */
+    fun setThemeMode(mode: Int) {
+        _uiState.update { it.copy(themeMode = mode, isDarkMode = (mode != 0)) }
+        viewModelScope.launch(Dispatchers.IO) {
+            DataStoreManager.saveThemeMode(appCtx, mode)
+        }
+    }
+
+    /**
+     * 设置点按翻页热区 (0: 上下翻页, 1: 左右翻页, 2: 关闭点按)
+     */
+    fun setTapPageArea(area: Int) {
+        _uiState.update { it.copy(tapPageArea = area) }
+        viewModelScope.launch(Dispatchers.IO) {
+            DataStoreManager.saveTapPageArea(appCtx, area)
+        }
+    }
+
+    /**
+     * 开关智能排版净化
+     */
+    fun setCleanTypography(enabled: Boolean) {
+        _uiState.update { it.copy(cleanTypography = enabled) }
+        viewModelScope.launch(Dispatchers.IO) {
+            DataStoreManager.saveCleanTypography(appCtx, enabled)
+        }
+        chapterContentCache.clear()
+        val state = _uiState.value
+        if (state.chapters.isNotEmpty() && state.currentChapterIndex in state.chapters.indices) {
+            goToChapter(state.currentChapterIndex, currentReadingOffset)
+        }
+    }
+
+    /**
+     * 设置字体类型 (0: 系统黑体, 1: 系统衬线体)
+     */
+    fun setFontType(type: Int) {
+        _uiState.update { it.copy(fontType = type) }
+        viewModelScope.launch(Dispatchers.IO) {
+            DataStoreManager.saveFontType(appCtx, type)
+        }
+    }
+
+    /**
+     * Web 端删除书籍同步通知
+     */
+    fun notifyBookDeletedFromWeb(fileName: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val shelf = DataStoreManager.loadBookShelf(appCtx)
+            _uiState.update { state ->
+                val isCurrent = state.fileName == fileName
+                state.copy(
+                    bookshelf = shelf,
+                    currentUri = if (isCurrent) null else state.currentUri,
+                    currentChapterContent = if (isCurrent) null else state.currentChapterContent,
+                    chapters = if (isCurrent) emptyList() else state.chapters,
+                    screen = if (isCurrent) Screen.Home else state.screen
+                )
+            }
+        }
     }
 }
 

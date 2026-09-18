@@ -104,10 +104,10 @@ fun detectChaptersStream(
 ): Pair<List<Chapter>, Int> {
     val cr = context.contentResolver
 
-    // 优先尝试 FileChannel 直读流
+    // 优先尝试 FileChannel 直读流（使用 AutoCloseInputStream 托管 PFD 生命周期防泄漏）
     val fis: java.io.InputStream = try {
         cr.openFileDescriptor(uri, "r")?.let { pfd ->
-            java.io.FileInputStream(pfd.fileDescriptor)
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd)
         } ?: cr.openInputStream(uri) ?: throw java.io.FileNotFoundException("无法打开文件流")
     } catch (_: Exception) {
         cr.openInputStream(uri) ?: throw java.io.FileNotFoundException("无法打开文件流")

@@ -52,7 +52,8 @@ private class ReaderViewHolder(
     val nextBtn: FrameLayout,
     val nextTv: TextView,
     val endTv: TextView,
-    var autoScrollEngine: AutoScrollEngine? = null
+    var autoScrollEngine: AutoScrollEngine? = null,
+    var currentContent: ChapterContent? = null
 )
 
 /**
@@ -76,7 +77,13 @@ fun ReaderScreen(
     onAutoScrollToggle: () -> Unit,
     onAutoScrollSpeedChange: (Float) -> Unit,
     appBrightness: Float,
-    onBrightnessChange: (Float) -> Unit
+    onBrightnessChange: (Float) -> Unit,
+    tapPageArea: Int = 0,
+    fontType: Int = 0,
+    chapters: List<Chapter> = emptyList(),
+    currentChapterIndex: Int = 0,
+    onSeekChapter: (Int) -> Unit = {},
+    onFlushReadingPosition: () -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
 
@@ -103,6 +110,8 @@ fun ReaderScreen(
     DisposableEffect(Unit) {
         onDispose {
             scrollDebounceHandler.removeCallbacksAndMessages(null)
+            onCharOffsetChange(currentReadingOffset)
+            onFlushReadingPosition()
         }
     }
     val resetInactivityKeepScreenOn = remember(window, isAutoScrolling) {
@@ -315,7 +324,7 @@ fun ReaderScreen(
                 )
                 scrollView.tag = holder
 
-                // 手势交互：单击切换自动滚屏 + 长按呼出菜单（全屏触摸手势纯净专职服务于正文滚动）
+                // 手势交互：支持上下/左右点按翻页、长按呼出菜单、自动滚屏时单击暂停
                 val gestureDetector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
                     override fun onLongPress(e: MotionEvent) {
                         autoEngine.stop()
@@ -323,8 +332,62 @@ fun ReaderScreen(
                     }
 
                     override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                        if (!isScrolling) {
+                        if (isScrolling) return true
+
+                        // 若正在自动滚屏，单击任意位置暂停
+                        if (isAutoScrolling) {
                             onAutoScrollToggle()
+                            return true
+                        }
+
+                        val w = scrollView.width.toFloat()
+                        val h = scrollView.height.toFloat()
+                        if (w <= 0 || h <= 0) return true
+
+                        when (tapPageArea) {
+                            0 -> { // 上下点按翻页 (默认)
+                                val topBoundary = h * 0.35f
+                                val bottomBoundary = h * 0.65f
+                                val overlap = (32 * density).toInt()
+                                val scrollDistance = maxOf((100 * density).toInt(), (h - overlap).toInt())
+
+                                when {
+                                    e.y < topBoundary -> {
+                                        scrollView.smoothScrollBy(0, -scrollDistance)
+                                        RotaryHapticManager.performScrollTick(ctx, scrollView)
+                                    }
+                                    e.y > bottomBoundary -> {
+                                        scrollView.smoothScrollBy(0, scrollDistance)
+                                        RotaryHapticManager.performScrollTick(ctx, scrollView)
+                                    }
+                                    else -> {
+                                        onLongPress() // 中间腰部呼出菜单
+                                    }
+                                }
+                            }
+                            1 -> { // 左右点按翻页
+                                val leftBoundary = w * 0.35f
+                                val rightBoundary = w * 0.65f
+                                val overlap = (32 * density).toInt()
+                                val scrollDistance = maxOf((100 * density).toInt(), (h - overlap).toInt())
+
+                                when {
+                                    e.x < leftBoundary -> {
+                                        scrollView.smoothScrollBy(0, -scrollDistance)
+                                        RotaryHapticManager.performScrollTick(ctx, scrollView)
+                                    }
+                                    e.x > rightBoundary -> {
+                                        scrollView.smoothScrollBy(0, scrollDistance)
+                                        RotaryHapticManager.performScrollTick(ctx, scrollView)
+                                    }
+                                    else -> {
+                                        onLongPress() // 中间呼出菜单
+                                    }
+                                }
+                            }
+                            else -> { // 2: 关闭点按翻页，单击切换自动滚屏
+                                onAutoScrollToggle()
+                            }
                         }
                         return true
                     }
@@ -372,31 +435,40 @@ fun ReaderScreen(
                 }
 
                 // 首次绑定数据
-                bindChapterData(holder, chapterContent, fontSize, textColor, titleColor, onSurfaceVariantColor)
+                bindChapterData(holder, chapterContent, fontSize, fontType, textColor, titleColor, onSurfaceVariantColor)
 
                 // 首次布局完成后精准恢复阅读位置并请求焦点
                 scrollView.post {
                     scrollView.requestFocus()
-                    restoreScrollPosition(scrollView, holder, chapterContent, initialCharOffset)
+                    safeRestoreScrollPosition(scrollView, holder, chapterContent, initialCharOffset)
                     if (isAutoScrolling) {
                         autoEngine.start()
                     }
                 }
 
-                // 滚动监听：基于 bodyTv 真实高度进行精准防抖持久化
+                // 滚动监听：基于 bodyTv 真实行定位进行精准防抖持久化，消除线性映射偏差
                 val handler = Handler(Looper.getMainLooper())
                 var saveRunnable: Runnable? = null
                 var lastReportedOffset = -1
 
                 scrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
                     notifyScrollActivity()
-                    if (chapterContent != null && chapterContent.formattedBody.isNotEmpty()) {
+                    val content = holder.currentContent
+                    if (content != null && content.formattedBody.isNotEmpty()) {
                         val bodyTop = holder.bodyTv.top
-                        val bodyHeight = maxOf(1, holder.bodyTv.height)
-                        val relativeY = (scrollY - bodyTop).coerceIn(0, bodyHeight)
-                        val scrollRatio = relativeY.toFloat() / bodyHeight
-                        val chapterLen = chapterContent.endCharOffset - chapterContent.startCharOffset
-                        val currentOffset = chapterContent.startCharOffset + (chapterLen * scrollRatio).toInt()
+                        val layout = holder.bodyTv.layout
+                        val currentOffset = if (layout != null && layout.lineCount > 0 && holder.bodyTv.height > 0) {
+                            val clampedY = (scrollY - bodyTop).coerceIn(0, maxOf(0, holder.bodyTv.height - 1))
+                            val line = layout.getLineForVertical(clampedY)
+                            val charOffsetInBody = layout.getLineStart(line).coerceIn(0, content.formattedBody.length)
+                            content.startCharOffset + charOffsetInBody
+                        } else {
+                            val bodyHeight = maxOf(1, holder.bodyTv.height)
+                            val relativeY = (scrollY - bodyTop).coerceIn(0, bodyHeight)
+                            val scrollRatio = relativeY.toFloat() / bodyHeight
+                            val chapterLen = content.endCharOffset - content.startCharOffset
+                            content.startCharOffset + (chapterLen * scrollRatio).toInt()
+                        }
                         currentReadingOffset = currentOffset
 
                         if (currentOffset != lastReportedOffset) {
@@ -437,13 +509,11 @@ fun ReaderScreen(
                 val lastChapterIndex = holder.container.tag as? Int
                 val currentChapterIdx = chapterContent?.chapterIndex
 
-                if (lastChapterIndex != currentChapterIdx) {
-                    bindChapterData(holder, chapterContent, fontSize, textColor, titleColor, onSurfaceVariantColor)
-                    scrollView.post {
-                        restoreScrollPosition(scrollView, holder, chapterContent, initialCharOffset)
-                        if (isAutoScrolling) {
-                            holder.autoScrollEngine?.start()
-                        }
+                if (lastChapterIndex != currentChapterIdx || holder.currentContent != chapterContent) {
+                    bindChapterData(holder, chapterContent, fontSize, fontType, textColor, titleColor, onSurfaceVariantColor)
+                    safeRestoreScrollPosition(scrollView, holder, chapterContent, initialCharOffset)
+                    if (isAutoScrolling) {
+                        holder.autoScrollEngine?.start()
                     }
                 } else {
                     holder.titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSize + 2).toFloat())
@@ -451,6 +521,7 @@ fun ReaderScreen(
 
                     holder.bodyTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat())
                     holder.bodyTv.setTextColor(textColor)
+                    holder.bodyTv.typeface = if (fontType == 1) Typeface.SERIF else Typeface.SANS_SERIF
 
                     holder.prevTv.setTextColor(onSurfaceVariantColor)
                     holder.nextTv.setTextColor(titleColor)
@@ -551,6 +622,13 @@ fun ReaderScreen(
                 )
             }
         }
+
+        // F-05 表盘边缘弧形快速寻道滑块（贴圆屏边缘交互，松手即跳）
+        ArcSeekOverlay(
+            chapters = chapters,
+            currentChapterIndex = currentChapterIndex,
+            onSeekConfirm = onSeekChapter
+        )
     }
 }
 
@@ -561,10 +639,12 @@ private fun bindChapterData(
     holder: ReaderViewHolder,
     content: ChapterContent?,
     fontSize: Int,
+    fontType: Int,
     textColor: Int,
     titleColor: Int,
     onSurfaceVariantColor: Int
 ) {
+    holder.currentContent = content
     if (content == null) {
         holder.container.tag = null
         holder.prevBtn.visibility = View.GONE
@@ -594,10 +674,11 @@ private fun bindChapterData(
     holder.titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSize + 2).toFloat())
     holder.titleTv.setTextColor(titleColor)
 
-    // 3. 章节正文（单 TextLayout 一体排版）
+    // 3. 章节正文（单 TextLayout 一体排版 + 字体切换）
     holder.bodyTv.text = content.formattedBody
     holder.bodyTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat())
     holder.bodyTv.setTextColor(textColor)
+    holder.bodyTv.typeface = if (fontType == 1) Typeface.SERIF else Typeface.SANS_SERIF
 
     // 4. 下一章 / 全书完
     if (content.hasNextChapter) {
@@ -613,7 +694,7 @@ private fun bindChapterData(
 }
 
 /**
- * 恢复滚动位置
+ * 恢复滚动位置：采用原生 Layout 行高映射定位，根除线性比例漂移
  */
 private fun restoreScrollPosition(
     scrollView: ScrollView,
@@ -621,19 +702,55 @@ private fun restoreScrollPosition(
     content: ChapterContent?,
     initialCharOffset: Int
 ) {
-    if (content == null || initialCharOffset <= content.startCharOffset) {
+    if (content == null) return
+    if (initialCharOffset <= content.startCharOffset) {
         val density = scrollView.resources.displayMetrics.density
         val targetTop = maxOf(0, holder.titleTv.top - (6 * density).toInt())
         scrollView.scrollTo(0, targetTop)
         return
     }
 
-    val chapterLen = maxOf(1, content.endCharOffset - content.startCharOffset)
-    val relativeOffset = (initialCharOffset - content.startCharOffset).coerceIn(0, chapterLen)
-    val ratio = relativeOffset.toFloat() / chapterLen
+    val layout = holder.bodyTv.layout
+    if (layout != null && layout.lineCount > 0 && holder.bodyTv.height > 0) {
+        val charOffsetInBody = (initialCharOffset - content.startCharOffset).coerceIn(0, content.formattedBody.length)
+        val line = layout.getLineForOffset(charOffsetInBody)
+        val lineTop = layout.getLineTop(line)
+        val targetY = maxOf(0, holder.bodyTv.top + lineTop)
+        scrollView.scrollTo(0, targetY)
+    } else {
+        val chapterLen = maxOf(1, content.endCharOffset - content.startCharOffset)
+        val relativeOffset = (initialCharOffset - content.startCharOffset).coerceIn(0, chapterLen)
+        val ratio = relativeOffset.toFloat() / chapterLen
+        val bodyTop = holder.bodyTv.top
+        val bodyHeight = maxOf(1, holder.bodyTv.height)
+        val targetY = (bodyTop + (bodyHeight * ratio)).toInt()
+        scrollView.scrollTo(0, targetY)
+    }
+}
 
-    val bodyTop = holder.bodyTv.top
-    val bodyHeight = maxOf(1, holder.bodyTv.height)
-    val targetY = (bodyTop + (bodyHeight * ratio)).toInt()
-    scrollView.scrollTo(0, targetY)
+/**
+ * 安全恢复滚动位置：若 bodyTv 尚未完成 measure/layout，自动监听布局就绪后精准还原，杜绝 0 高度归零
+ */
+private fun safeRestoreScrollPosition(
+    scrollView: ScrollView,
+    holder: ReaderViewHolder,
+    content: ChapterContent?,
+    initialCharOffset: Int
+) {
+    if (content == null) return
+    if (holder.bodyTv.height > 0 && holder.bodyTv.layout != null) {
+        restoreScrollPosition(scrollView, holder, content, initialCharOffset)
+    } else {
+        holder.bodyTv.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(
+                v: View?, left: Int, top: Int, right: Int, bottom: Int,
+                oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int
+            ) {
+                if (bottom - top > 0 && holder.bodyTv.layout != null) {
+                    holder.bodyTv.removeOnLayoutChangeListener(this)
+                    restoreScrollPosition(scrollView, holder, holder.currentContent, initialCharOffset)
+                }
+            }
+        })
+    }
 }

@@ -66,6 +66,32 @@ val WatchDarkColorScheme = darkColorScheme(
     onError = Color(0xFF000000)
 )
 
+// ── F-03 深红夜视模式（睡前极暗护眼 + 零刺激 + OLED 单色子像素省电） ──
+private val RedNightBackground = Color(0xFF000000)
+private val RedNightInkPrimary = Color(0xFFE57373)   // 柔和珊瑚红（高对比度不刺眼）
+private val RedNightInkSecondary = Color(0xFF8C3838) // 次级深红
+private val RedNightAccent = Color(0xFFFF5252)       // 明亮珊瑚红
+private val RedNightCardSurface = Color(0xFF0D0303)  // 微红黑底
+private val RedNightCardVariant = Color(0xFF1A0606)  // 按钮深红底
+private val RedNightDivider = Color(0xFF330B0B)
+
+val WatchRedNightColorScheme = darkColorScheme(
+    primary = RedNightAccent,
+    onPrimary = Color(0xFF000000),
+    secondary = RedNightInkPrimary,
+    onSecondary = Color(0xFF000000),
+    tertiary = RedNightInkSecondary,
+    background = RedNightBackground,
+    onBackground = RedNightInkPrimary,
+    surface = RedNightCardSurface,
+    onSurface = RedNightInkPrimary,
+    surfaceVariant = RedNightCardVariant,
+    onSurfaceVariant = RedNightInkSecondary,
+    outline = RedNightDivider,
+    error = Color(0xFFFF1744),
+    onError = Color(0xFF000000)
+)
+
 val WatchTypography = Typography(
     titleMedium = TextStyle(
         fontSize = 15.sp,

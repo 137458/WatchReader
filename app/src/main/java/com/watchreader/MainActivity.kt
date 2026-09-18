@@ -101,7 +101,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsState()
-            val colorScheme = if (uiState.isDarkMode) WatchDarkColorScheme else WatchColorScheme
+            val colorScheme = when (uiState.themeMode) {
+                2 -> WatchRedNightColorScheme
+                1 -> WatchDarkColorScheme
+                else -> if (uiState.isDarkMode) WatchDarkColorScheme else WatchColorScheme
+            }
 
             // 动态同步 Window 底层 DecorView 背景色与硬件独立屏幕亮度
             SideEffect {
@@ -227,7 +231,13 @@ class MainActivity : ComponentActivity() {
                 onAutoScrollToggle = { viewModel.setAutoScrolling(!uiState.isAutoScrolling) },
                 onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
                 appBrightness = uiState.appBrightness,
-                onBrightnessChange = { viewModel.updateAppBrightness(it) }
+                onBrightnessChange = { viewModel.updateAppBrightness(it) },
+                tapPageArea = uiState.tapPageArea,
+                fontType = uiState.fontType,
+                chapters = uiState.chapters,
+                currentChapterIndex = uiState.currentChapterIndex,
+                onSeekChapter = { index -> viewModel.goToChapter(index) },
+                onFlushReadingPosition = { viewModel.flushReadingPosition() }
             )
 
             is Screen.Menu -> MenuScreen(
@@ -265,7 +275,16 @@ class MainActivity : ComponentActivity() {
                 onOpenRsvp = { viewModel.openRsvp() },
                 onChapterListClick = { viewModel.navigateTo(Screen.ChapterList) },
                 onBack = { viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex)) },
-                onHome = { viewModel.closeBook() }
+                onHome = { viewModel.closeBook() },
+                themeMode = uiState.themeMode,
+                onThemeModeChange = { viewModel.setThemeMode(it) },
+                tapPageArea = uiState.tapPageArea,
+                onTapPageAreaChange = { viewModel.setTapPageArea(it) },
+                cleanTypography = uiState.cleanTypography,
+                onCleanTypographyChange = { viewModel.setCleanTypography(it) },
+                fontType = uiState.fontType,
+                onFontTypeChange = { viewModel.setFontType(it) },
+                readDurationSec = uiState.readDurationSec
             )
 
             is Screen.ChapterList -> ChapterListScreen(

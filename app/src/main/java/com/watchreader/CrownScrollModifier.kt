@@ -88,8 +88,8 @@ object CrownScrollHelper {
             rawOrPixelDelta
         }
 
-        // 顺时针旋转向下滚动：使用正向 dispatchRawDelta(scrollPixels)
-        scrollState.dispatchRawDelta(scrollPixels)
+        // 顺时针旋转向下滚动：使用负向 dispatchRawDelta(-scrollPixels) 贴合 Compose 滚动物理直觉
+        scrollState.dispatchRawDelta(-scrollPixels)
 
         // 每次有效旋转直接触发 1 次微振（单格对齐 1 振）
         RotaryHapticManager.performScrollTick(context, view)

@@ -256,7 +256,16 @@ object EpubParser {
                     norm.endsWith(".xhtml") || norm.endsWith(".html") || norm.endsWith(".htm") ||
                     norm.contains("container")
                 ) {
-                    val text = zis.bufferedReader(Charsets.UTF_8).readText()
+                    val text = if (norm.endsWith(".xml") || norm.endsWith(".opf") || norm.endsWith(".ncx") ||
+                        norm.contains("container") || norm.contains("nav") || norm.contains("toc")
+                    ) {
+                        zis.bufferedReader(Charsets.UTF_8).readText()
+                    } else {
+                        // 正文 HTML 仅读取前 2048 字符供提取标题，杜绝穿戴设备内存暴涨 OOM
+                        val buf = CharArray(2048)
+                        val read = zis.bufferedReader(Charsets.UTF_8).read(buf)
+                        if (read > 0) String(buf, 0, read) else ""
+                    }
                     entriesMap[normalizePath(entry.name)] = text
                 }
                 entry = zis.nextEntry

@@ -239,8 +239,7 @@ fun CurvedSideStatusBar(
                 val x = (cx + arcRadius * Math.cos(angle)).toFloat()
                 val y = (cy + arcRadius * Math.sin(angle)).toFloat() + verticalCenteringOffset
 
-                val charStr = batteryChars[i].toString()
-                nativeCanvas.drawText(charStr, x, y, paint)
+                nativeCanvas.drawText(batteryChars, i, 1, x, y, paint)
             }
 
             // 2. 右侧 3 点钟方向时间：字符最右侧外边缘严格相切于圆弧，彻底消除冒号过窄引起的视觉内凹塌陷
@@ -256,8 +255,7 @@ fun CurvedSideStatusBar(
                 val colonYOffset = if (isColon) with(density) { 0.5.dp.toPx() } else 0f
                 val y = (cy + arcRadius * Math.sin(angle)).toFloat() + verticalCenteringOffset + colonYOffset
 
-                val charStr = timeChars[i].toString()
-                nativeCanvas.drawText(charStr, x, y, paint)
+                nativeCanvas.drawText(timeChars, i, 1, x, y, paint)
             }
         }
     }
