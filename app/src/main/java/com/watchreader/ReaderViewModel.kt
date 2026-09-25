@@ -50,7 +50,6 @@ data class ReaderUiState(
     val bookmarks: List<Bookmark> = emptyList(),
     val fullTextLength: Int = 0,
     val fontSize: Int = 14,
-    val isDarkMode: Boolean = false,
     val autoScrollSpeed: Float = 45f,
     val isAutoScrolling: Boolean = false,
     val appBrightness: Float = -1.0f,
@@ -118,7 +117,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update {
                     it.copy(
                         fontSize = config.fontSize,
-                        isDarkMode = config.isDarkMode,
                         autoScrollSpeed = config.autoScrollSpeed,
                         appBrightness = config.appBrightness,
                         bookshelf = config.bookshelf,
@@ -138,7 +136,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update {
                     it.copy(
                         fontSize = config.fontSize,
-                        isDarkMode = config.isDarkMode,
                         autoScrollSpeed = config.autoScrollSpeed,
                         appBrightness = config.appBrightness,
                         bookshelf = config.bookshelf,
@@ -158,14 +155,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * 切换深色模式 / 浅色模式
+     * 书架主页「日 / 夜」快捷开关：直接切主题本身
+     *
+     * 这里过去只翻转独立的 isDarkMode 布尔量，而真正决定配色的是 themeMode ——
+     * 于是主页按下"夜"后界面纹丝不动，只有重启时 loadInitialConfig 用 isDarkMode
+     * 反推 themeMode 才生效（即"需要重启应用"的根因）。现在两个入口（主页快捷开关 /
+     * 菜单主题轮换）共用同一状态源，均即时生效。
      */
     fun toggleDarkMode() {
-        val newMode = !_uiState.value.isDarkMode
-        _uiState.update { it.copy(isDarkMode = newMode) }
-        viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveDarkMode(appCtx, newMode)
-        }
+        val current = ThemeMode.fromValue(_uiState.value.themeMode)
+        setThemeMode(if (current == ThemeMode.PARCHMENT) ThemeMode.DARK else ThemeMode.PARCHMENT)
     }
 
     /**
@@ -893,7 +892,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setThemeMode(mode: ThemeMode) {
-        _uiState.update { it.copy(themeMode = mode.value, isDarkMode = (mode != ThemeMode.PARCHMENT)) }
+        _uiState.update { it.copy(themeMode = mode.value) }
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.saveThemeMode(appCtx, mode.value)
         }

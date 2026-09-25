@@ -8,6 +8,9 @@ enum class ThemeMode(val value: Int, val title: String) {
     DARK(1, "🌌 主题: 极光深色"),
     RED_NIGHT(2, "🌙 主题: 纯黑深红夜视");
 
+    /** 是否属于深色系（极光黑 / 红光夜视）—— 由主题本身派生，杜绝第二个"深色"状态量 */
+    val isDark: Boolean get() = this != PARCHMENT
+
     companion object {
         fun fromValue(value: Int): ThemeMode = entries.firstOrNull { it.value == value } ?: PARCHMENT
     }

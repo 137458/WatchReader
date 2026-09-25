@@ -87,9 +87,16 @@ fun ReaderScreen(
     chapters: List<Chapter> = emptyList(),
     currentChapterIndex: Int = 0,
     onSeekChapter: (Int) -> Unit = {},
-    onFlushReadingPosition: () -> Unit = {}
+    onFlushReadingPosition: () -> Unit = {},
+    /**
+     * 是否被覆盖页（菜单 / 目录 / 速读）压顶。为 true 时本页保持组合与原生视图挂载
+     * （返回时零重建、整章排版与滚动位置原样保留），但原生视图转 INVISIBLE、
+     * 叠加层退出组合，隐藏期不产生任何绘制与表冠交互
+     */
+    covered: Boolean = false
 ) {
-    BackHandler(onBack = onBack)
+    // 被覆盖时让出返回键：由上层覆盖页的 BackHandler 接管
+    BackHandler(enabled = !covered, onBack = onBack)
 
     val context = LocalContext.current
     val window = (context as? Activity)?.window
@@ -170,9 +177,15 @@ fun ReaderScreen(
         }
     }
 
-    // 阅读状态下智能常亮：自动滚屏中永久常亮；静态阅读 5 分钟无操作自动释放休眠省电；退出时自动恢复
-    DisposableEffect(isAutoScrolling) {
-        resetInactivityKeepScreenOn()
+    // 阅读状态下智能常亮：自动滚屏中永久常亮；静态阅读 5 分钟无操作自动释放休眠省电；
+    // 被覆盖页压顶时立即释放常亮（阅读页已不可见，交还系统息屏策略），退出时自动恢复
+    DisposableEffect(isAutoScrolling, covered) {
+        if (covered) {
+            keepScreenOnHandler.removeCallbacksAndMessages(null)
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            resetInactivityKeepScreenOn()
+        }
         onDispose {
             keepScreenOnHandler.removeCallbacksAndMessages(null)
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -538,6 +551,15 @@ fun ReaderScreen(
                 val holder = scrollView.tag as? ReaderViewHolder ?: return@AndroidView
                 scrollView.setBackgroundColor(bgColor)
 
+                // 被覆盖页压顶：原生视图转 INVISIBLE 退出绘制但保持挂载 ——
+                // ViewGroup 跳过不可见子节点，隐藏期零绘制开销；返回阅读时零重建，
+                // 整章排版、滚动位置与表冠监听原样保留（本页常驻化的核心收益）
+                val targetVisibility = if (covered) View.INVISIBLE else View.VISIBLE
+                if (scrollView.visibility != targetVisibility) {
+                    scrollView.visibility = targetVisibility
+                    if (covered) CrownScrollHelper.abortFling(scrollView)
+                }
+
                 // 卡片背景零分配复用：仅主题色真正变化时重着色。
                 // 此前每次重组都新建 GradientDrawable 并重设 background，
                 // 滚动期间（offset 状态逐帧推进）等于逐帧分配 + 双 View 失效，是滚动卡顿主源之一
@@ -547,10 +569,12 @@ fun ReaderScreen(
                     holder.nextBackground?.setColor(surfaceVariantColor)
                 }
 
-                // 同步自动滚屏引擎状态
+                // 同步自动滚屏引擎状态（被覆盖时挂起，避免不可见状态下空转滚动）
                 holder.autoScrollEngine?.let { engine ->
                     engine.speedPxPerSec = autoScrollSpeed
-                    if (isAutoScrolling && !engine.isRunning) {
+                    if (covered) {
+                        if (engine.isRunning) engine.stop()
+                    } else if (isAutoScrolling && !engine.isRunning) {
                         engine.start()
                     } else if (!isAutoScrolling && engine.isRunning) {
                         engine.stop()
@@ -581,95 +605,99 @@ fun ReaderScreen(
             }
         )
 
-        // 顶部/底部平滑渐变羽化遮罩（统一 EdgeFadeMask 基元，Brush 随主题色缓存）
-        EdgeFadeMask(
-            edge = Alignment.Top,
-            modifier = Modifier.align(Alignment.TopCenter),
-            height = 48.dp
-        )
-        EdgeFadeMask(
-            edge = Alignment.Bottom,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            height = 36.dp
-        )
-
-        // 顶部沿表盘外边缘弧形排布的章节名
-        CurvedChapterHeader(
-            title = currentChapterTitle,
-            modifier = Modifier.align(Alignment.TopCenter)
-        )
-
-        // 9 点与 3 点方向贴边弧形排布的竖排电量与时间
-        CurvedSideStatusBar(
-            modifier = Modifier.fillMaxSize(),
-            textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
-        )
-
-        val bottomProgressAlpha by androidx.compose.animation.core.animateFloatAsState(
-            targetValue = if (!isScrolling && !isAutoScrolling) 0.80f else 0.0f,
-            animationSpec = androidx.compose.animation.core.tween(
-                durationMillis = if (isScrolling) 150 else 350
-            ),
-            label = "bottomProgressAlpha"
-        )
-
-        // 静态阅读时微光常驻的进度指示（滑动/转表冠时敏捷隐去避让，静止后平滑淡入恢复；自动滚屏时由底部胶囊接管避让）
-        // 淡入淡出 alpha 于 graphicsLayer 内逐帧读取（仅图层失效）；整数百分比经 derivedStateOf 去重，
-        // 滚动期间仅当百分比数字真正变化才重组，杜绝逐帧全页重组
-        if (chapterContent != null) {
-            val progressPercent by remember(fullTextLength) {
-                derivedStateOf {
-                    if (fullTextLength > 0) {
-                        ((currentReadingOffset.toFloat() / fullTextLength) * 100).toInt().coerceIn(0, 100)
-                    } else 0
-                }
-            }
-            val currentChapterNum = chapterContent.chapterIndex + 1
-            val progressText = if (totalChapters > 1) {
-                "第 $currentChapterNum/$totalChapters 章 · $progressPercent%"
-            } else {
-                "$progressPercent%"
-            }
-            Text(
-                text = progressText,
-                style = TextStyle(
-                    fontSize = 9.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = colorScheme.onSurfaceVariant
-                ),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 10.dp)
-                    .graphicsLayer { alpha = bottomProgressAlpha }
+        // 被覆盖页压顶时整组叠加层退出组合：底层阅读页已转为不可见，
+        // 这些叠加层若不退出会透过覆盖页的透明底直接穿帮（侧边时间 / 羽化渐变 / 进度指示）
+        if (!covered) {
+            // 顶部/底部平滑渐变羽化遮罩（统一 EdgeFadeMask 基元，Brush 随主题色缓存）
+            EdgeFadeMask(
+                edge = Alignment.Top,
+                modifier = Modifier.align(Alignment.TopCenter),
+                height = 48.dp
             )
-        }
+            EdgeFadeMask(
+                edge = Alignment.Bottom,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                height = 36.dp
+            )
 
-        // 自动滚屏运行时右下角轻量胶囊状态提示
-        if (isAutoScrolling) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 18.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(colorScheme.surfaceVariant.copy(alpha = 0.90f))
-                    .clickable { onAutoScrollToggle() }
-                    .padding(horizontal = 10.dp, vertical = 3.dp)
-            ) {
+            // 顶部沿表盘外边缘弧形排布的章节名
+            CurvedChapterHeader(
+                title = currentChapterTitle,
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
+
+            // 9 点与 3 点方向贴边弧形排布的竖排电量与时间
+            CurvedSideStatusBar(
+                modifier = Modifier.fillMaxSize(),
+                textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+            )
+
+            val bottomProgressAlpha by androidx.compose.animation.core.animateFloatAsState(
+                targetValue = if (!isScrolling && !isAutoScrolling) 0.80f else 0.0f,
+                animationSpec = androidx.compose.animation.core.tween(
+                    durationMillis = if (isScrolling) 150 else 350
+                ),
+                label = "bottomProgressAlpha"
+            )
+
+            // 静态阅读时微光常驻的进度指示（滑动/转表冠时敏捷隐去避让，静止后平滑淡入恢复；自动滚屏时由底部胶囊接管避让）
+            // 淡入淡出 alpha 于 graphicsLayer 内逐帧读取（仅图层失效）；整数百分比经 derivedStateOf 去重，
+            // 滚动期间仅当百分比数字真正变化才重组，杜绝逐帧全页重组
+            if (chapterContent != null) {
+                val progressPercent by remember(fullTextLength) {
+                    derivedStateOf {
+                        if (fullTextLength > 0) {
+                            ((currentReadingOffset.toFloat() / fullTextLength) * 100).toInt().coerceIn(0, 100)
+                        } else 0
+                    }
+                }
+                val currentChapterNum = chapterContent.chapterIndex + 1
+                val progressText = if (totalChapters > 1) {
+                    "第 $currentChapterNum/$totalChapters 章 · $progressPercent%"
+                } else {
+                    "$progressPercent%"
+                }
                 Text(
-                    text = "▶ 自动滚屏 ${autoScrollSpeed.toInt()} px/s",
-                    style = TextStyle(fontSize = 9.5.sp, fontWeight = FontWeight.Bold),
-                    color = colorScheme.primary
+                    text = progressText,
+                    style = TextStyle(
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colorScheme.onSurfaceVariant
+                    ),
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 10.dp)
+                        .graphicsLayer { alpha = bottomProgressAlpha }
                 )
             }
-        }
 
-        // F-05 表盘边缘弧形快速寻道滑块（贴圆屏边缘交互，松手即跳）
-        // 纯绘制：手势由原生触摸管线中的 ArcSeekGestureRecognizer 识别后驱动本层渲染，
-        // 角度与目标章节在叠加层绘制/派生阶段读取，高频移动事件不引发本页重组
-        ArcSeekOverlay(
-            chapters = chapters,
-            seekState = seekState
-        )
+            // 自动滚屏运行时右下角轻量胶囊状态提示
+            if (isAutoScrolling) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 18.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(colorScheme.surfaceVariant.copy(alpha = 0.90f))
+                        .clickable { onAutoScrollToggle() }
+                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = "▶ 自动滚屏 ${autoScrollSpeed.toInt()} px/s",
+                        style = TextStyle(fontSize = 9.5.sp, fontWeight = FontWeight.Bold),
+                        color = colorScheme.primary
+                    )
+                }
+            }
+
+            // F-05 表盘边缘弧形快速寻道滑块（贴圆屏边缘交互，松手即跳）
+            // 纯绘制：手势由原生触摸管线中的 ArcSeekGestureRecognizer 识别后驱动本层渲染，
+            // 角度与目标章节在叠加层绘制/派生阶段读取，高频移动事件不引发本页重组
+            ArcSeekOverlay(
+                chapters = chapters,
+                seekState = seekState
+            )
+        }
     }
 }
 

@@ -12,11 +12,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -127,10 +127,17 @@ class MainActivity : ComponentActivity() {
                 ThemeMode.PARCHMENT -> WatchColorScheme
             }
 
-            // 动态同步 Window 底层 DecorView 背景色与硬件独立屏幕亮度
+            // 动态同步 Window 底层 DecorView 背景色与硬件独立屏幕亮度。
+            // 底色必须带变更守卫：无守卫时每次重组（搜索逐键 / 亮度步进 / 阅读时长 tick）
+            // 都会令 DecorView 全窗口失效重绘，抵消全部逐帧绘制优化
+            val lastDecorBackground = remember { intArrayOf(Int.MIN_VALUE) }
             SideEffect {
                 BrightnessManager.applyToWindow(this@MainActivity, uiState.appBrightness)
-                window.decorView.setBackgroundColor(colorScheme.background.toArgb())
+                val bgArgb = colorScheme.background.toArgb()
+                if (bgArgb != lastDecorBackground[0]) {
+                    lastDecorBackground[0] = bgArgb
+                    window.decorView.setBackgroundColor(bgArgb)
+                }
             }
 
             MaterialTheme(
@@ -216,48 +223,28 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun AppContent(uiState: ReaderUiState) {
-        // 页面级切换过渡：短促淡入 + 微缩放归位，键控于屏幕类型（阅读中参数变化不触发过渡）
-        AnimatedContent(
-            targetState = uiState.screen,
-            contentKey = { it::class },
-            transitionSpec = {
-                (fadeIn(tween(WatchMotion.DUR_FADE, easing = WatchMotion.EnterEasing)) +
-                    scaleIn(
-                        initialScale = 0.94f,
-                        animationSpec = tween(WatchMotion.DUR_FADE, easing = WatchMotion.EnterEasing)
-                    )) togetherWith
-                    (fadeOut(tween(WatchMotion.DUR_FADE_OUT, easing = WatchMotion.ExitEasing)) +
-                        scaleOut(
-                            targetScale = 1.02f,
-                            animationSpec = tween(WatchMotion.DUR_FADE_OUT, easing = WatchMotion.ExitEasing)
-                        ))
-            },
-            label = "screen-transition"
-        ) { current ->
-            when (current) {
-                is Screen.Home -> BookshelfScreen(
-                    bookshelf = uiState.bookshelf,
-                    searchQuery = uiState.searchQuery,
-                    fontSize = uiState.fontSize,
-                    isDarkMode = uiState.isDarkMode,
-                    onOpenFile = {
-                        openFileLauncher.launch(arrayOf("text/plain", "application/epub+zip", "application/octet-stream", "*/*"))
-                    },
-                    onOpenBook = { book -> viewModel.openFromShelf(book) },
-                    onDeleteBook = { book -> viewModel.deleteFromShelf(book) },
-                    onTogglePin = { book -> viewModel.toggleBookPin(book.uriString) },
-                    onSearchChange = { viewModel.setSearchQuery(it) },
-                    onOpenWifiTransfer = { viewModel.openWifiTransfer() },
-                    onFontSizeChange = { viewModel.updateFontSize(it) },
-                    onToggleDarkMode = { viewModel.toggleDarkMode() },
-                    errorMessage = uiState.errorMessage
-                )
+        val screen = uiState.screen
 
-                is Screen.Loading -> LoadingScreen()
+        // 阅读页常驻层：呼出菜单 / 目录 / 速读时不再拆解阅读页 ——
+        // 阅读页是"单 TextLayout 承载整章文本 + 6 个复用原生 View"，销毁重建一次就要
+        // 整章重新断行排版并重建视图树，这正是"返回阅读"顿挫的根因。覆盖页改为叠加其上，
+        // 阅读页原生视图转 INVISIBLE 退出绘制（View 树跳过不可见子节点，隐藏期零绘制），
+        // 返回时排版、滚动位置、表冠管线与自动滚屏引擎原样保留。
+        val readerAlive = uiState.currentUri != null && (
+            screen is Screen.Reader || screen is Screen.Menu ||
+                screen is Screen.ChapterList || screen is Screen.Rsvp
+            )
 
-                is Screen.Reader -> ReaderScreen(
+        // 离开阅读页后屏幕状态不再携带阅读定位参数，故保留最后一次的阅读参数：
+        // 避免常驻阅读页的 initialCharOffset 抖动引发其内部偏移状态重置
+        val readerArgs = remember { mutableStateOf(Screen.Reader()) }
+        if (screen is Screen.Reader) readerArgs.value = screen
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (readerAlive) {
+                ReaderScreen(
                     chapterContent = uiState.currentChapterContent,
-                    initialCharOffset = current.charOffset,
+                    initialCharOffset = readerArgs.value.charOffset,
                     totalChapters = uiState.chapters.size,
                     fullTextLength = uiState.fullTextLength,
                     onCharOffsetChange = { offset ->
@@ -279,8 +266,64 @@ class MainActivity : ComponentActivity() {
                     chapters = uiState.chapters,
                     currentChapterIndex = uiState.currentChapterIndex,
                     onSeekChapter = { index -> viewModel.goToChapter(index) },
-                    onFlushReadingPosition = { viewModel.flushReadingPosition() }
+                    onFlushReadingPosition = { viewModel.flushReadingPosition() },
+                    covered = screen !is Screen.Reader
                 )
+            }
+
+            ScreenSlot(uiState = uiState, screen = screen)
+        }
+    }
+
+    /**
+     * 页面内容槽位。阅读页槽位只占一个透明空 Box（真实阅读页由常驻层承载），
+     * 使页面切换不再销毁阅读页；其余页面按其自身入场节奏淡入。
+     */
+    @Composable
+    private fun ScreenSlot(uiState: ReaderUiState, screen: Screen) {
+        // 页面级切换过渡。阅读页槽位为空 Box，切换零成本；书架 / 菜单自带错峰入场
+        // （staggeredEnter 逐卡淡入上浮），父层淡入只是与其重叠的重复劳动，一并瞬时切换。
+        // 其余页面保留纯 alpha 淡入淡出（不用 scale：缩放会逐帧重建全屏离屏缓冲并重采样）
+        AnimatedContent(
+            targetState = screen,
+            contentKey = { it::class },
+            transitionSpec = {
+                val instantSwitch = initialState is Screen.Reader ||
+                    targetState is Screen.Reader ||
+                    targetState is Screen.Menu ||
+                    targetState is Screen.Home
+                if (instantSwitch) {
+                    EnterTransition.None togetherWith ExitTransition.None
+                } else {
+                    fadeIn(tween(WatchMotion.DUR_FADE, easing = WatchMotion.EnterEasing)) togetherWith
+                        fadeOut(tween(WatchMotion.DUR_FADE_OUT, easing = WatchMotion.ExitEasing))
+                }
+            },
+            label = "screen-transition"
+        ) { current ->
+            when (current) {
+                is Screen.Home -> BookshelfScreen(
+                    bookshelf = uiState.bookshelf,
+                    searchQuery = uiState.searchQuery,
+                    fontSize = uiState.fontSize,
+                    isDarkMode = ThemeMode.fromValue(uiState.themeMode).isDark,
+                    onOpenFile = {
+                        openFileLauncher.launch(arrayOf("text/plain", "application/epub+zip", "application/octet-stream", "*/*"))
+                    },
+                    onOpenBook = { book -> viewModel.openFromShelf(book) },
+                    onDeleteBook = { book -> viewModel.deleteFromShelf(book) },
+                    onTogglePin = { book -> viewModel.toggleBookPin(book.uriString) },
+                    onSearchChange = { viewModel.setSearchQuery(it) },
+                    onOpenWifiTransfer = { viewModel.openWifiTransfer() },
+                    onFontSizeChange = { viewModel.updateFontSize(it) },
+                    onToggleDarkMode = { viewModel.toggleDarkMode() },
+                    errorMessage = uiState.errorMessage
+                )
+
+                is Screen.Loading -> LoadingScreen()
+
+                // 阅读页由常驻层承载，此槽位保持透明空占位（零绘制）
+                is Screen.Reader -> Box(modifier = Modifier.fillMaxSize())
 
                 is Screen.Menu -> MenuScreen(
                     chapterTitle = uiState.currentChapterContent?.title ?: "",
@@ -635,26 +678,51 @@ fun BookshelfScreen(
             }
         }
 
-        // ── 底部显示调节行 ──
-        Row(
+        // ── 底部显示调节区 ──
+        // 圆屏底部弦宽小于屏宽，定宽并排会整排伸出屏幕右侧被裁切（"日/夜"键首当其冲：
+        // 旧版一行塞下 标签 + 字号值 + 三枚胶囊共约 188dp > 可用 185dp）。
+        // 故拆为标签行 + 权重行：标签与数值单独占一行，控制键按权重均分剩余宽度，
+        // 任何屏宽 / 字号下都由布局本身保证不溢出。
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .staggeredEnter(6 + filteredBooks.size.coerceAtMost(6)),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            SectionLabel("显示")
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SectionLabel("显示")
                 Text(
-                    "字号 $fontSize",
+                    text = "字号 $fontSize",
                     style = MaterialTheme.typography.labelMedium,
-                    color = colors.onSurface
+                    color = colors.primary
                 )
-                PillButton("−", verticalPadding = 5.dp) { onFontSizeChange(fontSize - 1) }
-                PillButton("+", verticalPadding = 5.dp) { onFontSizeChange(fontSize + 1) }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 PillButton(
-                    if (isDarkMode) "夜" else "日",
-                    verticalPadding = 5.dp
+                    "−",
+                    Modifier.weight(1f),
+                    verticalPadding = 8.dp,
+                    horizontalPadding = 0.dp
+                ) { onFontSizeChange(fontSize - 1) }
+                PillButton(
+                    "+",
+                    Modifier.weight(1f),
+                    verticalPadding = 8.dp,
+                    horizontalPadding = 0.dp
+                ) { onFontSizeChange(fontSize + 1) }
+                PillButton(
+                    if (isDarkMode) "夜间" else "日间",
+                    Modifier.weight(1.7f),
+                    active = isDarkMode,
+                    verticalPadding = 8.dp,
+                    horizontalPadding = 0.dp
                 ) { onToggleDarkMode() }
             }
         }

@@ -14,7 +14,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,11 +28,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -120,7 +118,8 @@ fun rememberTickHaptic(): () -> Unit {
 
 /**
  * 发丝描边卡片：surface + 1dp 低透明度轮廓描边，构成腕上卡片层次基元
- * （基于原生 OutlinedCard 实现，禁用其默认描边色与阴影语义，保留设计令牌外观）
+ * （直绘 clip+底色+描边，不用 M3 OutlinedCard：卡片页每卡省去 Surface 阴影语义
+ * 与 BorderStroke 一套机器，书架 / 菜单这类多卡页面的组合开销显著更低）
  */
 @Composable
 fun SurfaceCard(
@@ -131,11 +130,11 @@ fun SurfaceCard(
     borderWidth: Dp = 1.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    OutlinedCard(
-        modifier = modifier,
-        shape = shape,
-        colors = CardDefaults.outlinedCardColors(containerColor = containerColor),
-        border = BorderStroke(borderWidth, borderColor),
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(containerColor)
+            .border(borderWidth, borderColor, shape),
         content = content
     )
 }
@@ -151,6 +150,7 @@ fun PillButton(
     emphasis: PillEmphasis = PillEmphasis.Tonal,
     active: Boolean = false,
     verticalPadding: Dp = 10.dp,
+    horizontalPadding: Dp = 14.dp,
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
@@ -190,7 +190,7 @@ fun PillButton(
                 tick()
                 onClick()
             }
-            .padding(horizontal = 14.dp, vertical = verticalPadding),
+            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -257,11 +257,20 @@ fun ProgressTrack(
 }
 
 /**
- * 错峰入场：alpha + 上浮 + 轻缩放，动画值全程在 graphicsLayer 块内读取（仅图层失效）
+ * 错峰入场：alpha + 上浮，动画值全程在 graphicsLayer 块内读取（仅图层失效）
+ *
+ * 帧率取舍（大卡片页面的入场动效）：
+ * 1. 不做缩放 —— 逐帧改变缩放矩阵会让整块卡片的字形光栅化缓存全部失效并重光栅化，
+ *    文字越多的卡片代价越大（菜单 / 书架的主卡片正是文字最密处）；
+ * 2. alpha 采用 Modulate 合成策略 —— 直接调制各绘制指令的透明度，不再为每张卡片
+ *    开辟并逐帧重绘整块离屏缓冲（自动策略下 alpha<1 的子树必须整组离屏合成）。
+ *    卡片底色均为不透明色块，调制结果与整组合成在视觉上一致。
  */
 @Composable
 fun Modifier.staggeredEnter(order: Int): Modifier {
-    val progress = remember(order) { Animatable(0f) }
+    // 不以 order 为 remember 键：书架增删书籍会使行序漂移，键控复位会让全部位移行
+    // 整体重放入场动画（一次性全屏动画突发 + 无谓掉帧）；单例持有使动画仅在首次组合执行
+    val progress = remember { Animatable(0f) }
     LaunchedEffect(order) {
         if (progress.value < 1f) {
             delay(order.coerceAtMost(WatchMotion.MAX_STAGGER) * WatchMotion.STAGGER_STEP_MS)
@@ -272,9 +281,7 @@ fun Modifier.staggeredEnter(order: Int): Modifier {
         val v = progress.value
         alpha = v
         translationY = (1f - v) * 14.dp.toPx()
-        val scale = 0.975f + 0.025f * v
-        scaleX = scale
-        scaleY = scale
+        compositingStrategy = CompositingStrategy.ModulateAlpha
     }
 }
 

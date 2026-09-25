@@ -103,7 +103,8 @@ fun MenuScreen(
     }
     val fontLabel = if (FontType.fromValue(fontType) == FontType.SERIF) "衬线" else "黑体"
 
-    Box(modifier = Modifier.fillMaxSize().background(colors.background)) {
+    // 底色由 Window decorView 统一承载，此处不再整屏填充（少一层全屏 overdraw）
+    Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -225,11 +226,12 @@ fun MenuScreen(
                         )
                     }
                     HairlineDivider()
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        PillButton("系统", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(-1f) }
-                        PillButton("暗", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(0.10f) }
-                        PillButton("中", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(0.65f) }
-                        PillButton("亮", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(1f) }
+                    // 四档并排最窄处每键仅 ~37dp，必须紧凑内边距才能完整容纳"系统"两字
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        PillButton("系统", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(-1f) }
+                        PillButton("暗", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(0.10f) }
+                        PillButton("中", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(0.65f) }
+                        PillButton("亮", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(1f) }
                     }
                 }
             }

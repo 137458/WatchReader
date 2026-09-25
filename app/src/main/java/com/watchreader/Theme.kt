@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.sp
 private val PaperBackground = Color(0xFFF7F4EB)     // 暖调羊皮纸白背景
 private val InkPrimary = Color(0xFF181B1F)          // 浓黑墨水字
 private val InkSecondary = Color(0xFF3E454D)        // 次要深灰字（高对比度，确保上一章/辅助信息清晰易读）
-private val ThemeAccent = Color(0xFF1E6091)         // 经典墨蓝主色
+private val ThemeAccent = Color(0xFF1F7BB0)         // 晴空墨蓝主色（比旧版 #1E6091 提亮约 70% 亮度，白色文字对比度 4.6:1 仍达标）
 private val ThemeGreen = Color(0xFF2D6A4F)          // 护眼竹青次色
 private val CardSurface = Color(0xFFEDE8DC)         // 卡片浅暖色
 private val CardVariant = Color(0xFFE2DCCF)         // 按钮浅暖色

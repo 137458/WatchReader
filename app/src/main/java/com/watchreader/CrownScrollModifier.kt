@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Choreographer
 import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.View
@@ -290,6 +291,10 @@ object CrownScrollHelper {
     private var flingSurface: Any? = null
     private var flingLastPos = 0f
     private var flingRunnable: Runnable? = null
+    private var flingFrameCallback: Choreographer.FrameCallback? = null
+
+    // Choreographer 仅可在 Looper 线程获取；全部 fling 调度都发生在主线程输入路径上
+    private val mainChoreographer: Choreographer by lazy { Choreographer.getInstance() }
 
     /** 速度估计（纯函数，可测）：累计位移 × 700 / 毫秒 → px/s，钳制 ±2000 */
     internal fun computeFlingVelocity(accumDeltaPx: Float, windowMs: Long): Float {
@@ -392,7 +397,14 @@ object CrownScrollHelper {
     private fun postFlingFrame(surface: Any, step: Runnable) {
         when (surface) {
             is View -> surface.postOnAnimation(step)
-            else -> mainHandler.postDelayed(step, 16L)
+            else -> {
+                // Compose 滚动面无 View 载体：以 Choreographer vsync 对齐帧步进。
+                // 16ms Handler 定时器与刷新率漂移，惯性期会规律性产生双帧/跳帧，
+                // 表现为书架 / 菜单表冠惯性滚动顿挫（原生 View 路径的 postOnAnimation 同源语义）
+                val callback = Choreographer.FrameCallback { step.run() }
+                flingFrameCallback = callback
+                mainChoreographer.postFrameCallback(callback)
+            }
         }
     }
 
@@ -405,6 +417,8 @@ object CrownScrollHelper {
 
     private fun stopFlingInternal() {
         flingScroller?.forceFinished(true)
+        flingFrameCallback?.let(mainChoreographer::removeFrameCallback)
+        flingFrameCallback = null
         flingRunnable?.let { r ->
             val view = flingSurface as? View
             if (view != null) view.removeCallbacks(r) else mainHandler.removeCallbacks(r)

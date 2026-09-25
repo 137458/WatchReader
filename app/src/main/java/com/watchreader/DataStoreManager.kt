@@ -36,7 +36,6 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
  */
 data class AppInitialConfig(
     val fontSize: Int,
-    val isDarkMode: Boolean,
     val autoScrollSpeed: Float,
     val appBrightness: Float,
     val bookshelf: List<BookItem>,
@@ -88,7 +87,6 @@ object DataStoreManager {
     suspend fun loadInitialConfig(context: Context): AppInitialConfig {
         val prefs = getSafePreferencesFlow(context).first()
         val fontSize = prefs[KEY_FONT_SIZE] ?: DEFAULT_FONT_SIZE
-        val isDarkMode = prefs[KEY_DARK_MODE] ?: false
         val autoScrollSpeed = prefs[KEY_AUTO_SCROLL_SPEED] ?: DEFAULT_AUTO_SCROLL_SPEED
         val appBrightness = prefs[KEY_APP_BRIGHTNESS] ?: DEFAULT_BRIGHTNESS
         val bookshelf = parseBookShelf(prefs[KEY_BOOK_SHELF])
@@ -102,7 +100,8 @@ object DataStoreManager {
             }
         } else null
         val lastCharOffset = prefs[KEY_LAST_CHAR_OFFSET] ?: 0
-        val themeMode = prefs[KEY_THEME_MODE] ?: (if (isDarkMode) 1 else 0)
+        // 主题是配色的唯一状态源；KEY_DARK_MODE 仅作旧版遗留数据的迁移输入（老版本只写这个键）
+        val themeMode = prefs[KEY_THEME_MODE] ?: (if (prefs[KEY_DARK_MODE] == true) 1 else 0)
         val tapPageArea = prefs[KEY_TAP_PAGE_AREA] ?: 0
         val cleanTypography = prefs[KEY_CLEAN_TYPOGRAPHY] ?: true
         val fontType = prefs[KEY_FONT_TYPE] ?: 0
@@ -110,7 +109,6 @@ object DataStoreManager {
 
         return AppInitialConfig(
             fontSize = fontSize,
-            isDarkMode = isDarkMode,
             autoScrollSpeed = autoScrollSpeed,
             appBrightness = appBrightness,
             bookshelf = bookshelf,
@@ -175,17 +173,8 @@ object DataStoreManager {
         }
     }
 
-    // ── 深色模式设置 ──
-    fun getDarkModeFlow(context: Context): Flow<Boolean> =
-        getSafePreferencesFlow(context).map { prefs ->
-            prefs[KEY_DARK_MODE] ?: false
-        }
-
-    suspend fun saveDarkMode(context: Context, isDark: Boolean) {
-        context.dataStore.edit { prefs ->
-            prefs[KEY_DARK_MODE] = isDark
-        }
-    }
+    // ── 深色模式不再单独存储：深色只是主题（themeMode）的一种取值，
+    //    读写一律走 saveThemeMode / loadInitialConfig，避免两套状态各说各话 ──
 
     // ── 自动滚屏速度设置 ──
     fun getAutoScrollSpeedFlow(context: Context): Flow<Float> =
