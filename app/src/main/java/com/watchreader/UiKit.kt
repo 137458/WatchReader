@@ -1,8 +1,10 @@
 package com.watchreader
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.EaseInCubic
 import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -12,6 +14,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,7 +29,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Divider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,14 +42,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -61,13 +68,13 @@ import kotlinx.coroutines.delay
 /** 统一动效令牌：时长、缓动与弹簧参数 */
 object WatchMotion {
     const val DUR_ENTER = 340
-    const val DUR_FADE = 220
-    const val DUR_FADE_OUT = 140
+    const val DUR_FADE = 200
+    const val DUR_FADE_OUT = 160
     const val STAGGER_STEP_MS = 36L
     const val MAX_STAGGER = 8
 
-    val EnterEasing = EaseOutCubic
-    val ExitEasing = EaseInCubic
+    val EnterEasing = FastOutSlowInEasing
+    val ExitEasing = CubicBezierEasing(0.4f, 0f, 0.6f, 1f)
 
     /** 按压回弹：快速沉稳，不过弹 */
     fun <T> pressSpring() = spring<T>(dampingRatio = 0.75f, stiffness = Spring.StiffnessMedium)
@@ -101,17 +108,19 @@ fun Modifier.pressScale(
     }
 }
 
-/** 轻触感点击反馈（复用官方线性马达表冠齿轮波形，声效级轻振） */
+/** 轻触感点击反馈（系统 CLOCK_TICK 表冠刻度波形，与阅读页原生 View 路径同链路同手感） */
 @Composable
 fun rememberTickHaptic(): () -> Unit {
+    val view = LocalView.current
     val context = LocalContext.current
-    return remember(context) {
-        { RotaryHapticManager.performScrollTick(context, null) }
+    return remember(view, context) {
+        { RotaryHapticManager.performScrollTick(context, view) }
     }
 }
 
 /**
  * 发丝描边卡片：surface + 1dp 低透明度轮廓描边，构成腕上卡片层次基元
+ * （基于原生 OutlinedCard 实现，禁用其默认描边色与阴影语义，保留设计令牌外观）
  */
 @Composable
 fun SurfaceCard(
@@ -122,17 +131,17 @@ fun SurfaceCard(
     borderWidth: Dp = 1.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Column(
-        modifier = modifier
-            .clip(shape)
-            .background(containerColor)
-            .border(borderWidth, borderColor, shape),
+    OutlinedCard(
+        modifier = modifier,
+        shape = shape,
+        colors = CardDefaults.outlinedCardColors(containerColor = containerColor),
+        border = BorderStroke(borderWidth, borderColor),
         content = content
     )
 }
 
 /**
- * 胶囊按钮：tonal（次要）/ primary（主要）两种强调级
+ * 胶囊按钮：tonal（次要）/ primary（主要）/ outline（主色描边强调）三种强调级
  * 按压缩放 + 轻触感，无水波纹叠加，保持克制纯粹
  */
 @Composable
@@ -146,14 +155,17 @@ fun PillButton(
     onClick: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
+    val isFilled = emphasis == PillEmphasis.Primary || active
     val container = when {
         !enabled -> colors.surfaceVariant.copy(alpha = 0.5f)
-        emphasis == PillEmphasis.Primary || active -> colors.primary
+        isFilled -> colors.primary
+        emphasis == PillEmphasis.Outline -> colors.primary.copy(alpha = 0.16f)
         else -> colors.surfaceVariant
     }
     val contentColor = when {
         !enabled -> colors.onSurfaceVariant.copy(alpha = 0.6f)
-        emphasis == PillEmphasis.Primary || active -> colors.onPrimary
+        isFilled -> colors.onPrimary
+        emphasis == PillEmphasis.Outline -> colors.primary
         else -> colors.onSurface
     }
     val interaction = remember { MutableInteractionSource() }
@@ -163,6 +175,13 @@ fun PillButton(
             .pressScale(interaction)
             .clip(WatchShapes.Pill)
             .background(container)
+            .then(
+                if (emphasis == PillEmphasis.Outline && enabled) {
+                    Modifier.border(1.dp, colors.primary.copy(alpha = 0.45f), WatchShapes.Pill)
+                } else {
+                    Modifier
+                }
+            )
             .clickable(
                 interactionSource = interaction,
                 indication = null,
@@ -183,7 +202,7 @@ fun PillButton(
     }
 }
 
-enum class PillEmphasis { Tonal, Primary }
+enum class PillEmphasis { Tonal, Primary, Outline }
 
 /** 分区小标题：加宽字距的克星级标签 */
 @Composable
@@ -201,19 +220,19 @@ fun SectionLabel(
     )
 }
 
-/** 发丝分隔线 */
+/** 发丝分隔线（基于原生 Divider，统一低透明度轮廓色） */
 @Composable
 fun HairlineDivider(modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+    Divider(
+        modifier = modifier,
+        thickness = 1.dp,
+        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)
     )
 }
 
 /**
- * 细进度轨：Canvas 绘制阶段读取动画值，逐帧仅重绘不重组
+ * 细进度轨：基于原生 LinearProgressIndicator，圆头描边与设计令牌一致；
+ * 动画值经 animateFloatAsState 一次性推进（开卷/进度刷新等一次性场景）
  */
 @Composable
 fun ProgressTrack(
@@ -228,17 +247,13 @@ fun ProgressTrack(
         animationSpec = tween(520, easing = WatchMotion.EnterEasing),
         label = "progress-track"
     )
-    Canvas(modifier.fillMaxWidth().height(height)) {
-        val r = size.height / 2f
-        drawRoundRect(color = trackColor, cornerRadius = CornerRadius(r, r))
-        if (animated > 0.004f) {
-            drawRoundRect(
-                color = fillColor,
-                size = Size(size.width * animated, size.height),
-                cornerRadius = CornerRadius(r, r)
-            )
-        }
-    }
+    LinearProgressIndicator(
+        progress = animated,
+        modifier = modifier.fillMaxWidth().height(height),
+        color = fillColor,
+        trackColor = trackColor,
+        strokeCap = StrokeCap.Round
+    )
 }
 
 /**
@@ -369,4 +384,35 @@ fun StaticDot(
             .clip(WatchShapes.Badge)
             .background(color)
     )
+}
+
+/**
+ * 上下羽化渐隐遮罩：滚动内容在圆屏表盘弧线区平滑淡出的统一基元
+ * （书架 / 菜单 / 目录 / 阅读页曾各自内联同一段 verticalGradient，统一收敛于此）
+ *
+ * @param edge 遮罩贴附的屏幕边缘（Top 向下渐隐 / Bottom 向上渐隐）
+ */
+@Composable
+fun EdgeFadeMask(
+    edge: Alignment.Vertical,
+    modifier: Modifier = Modifier,
+    height: Dp = 48.dp,
+    color: Color = MaterialTheme.colorScheme.background
+) {
+    val brush = remember(color, edge) {
+        if (edge == Alignment.Top) {
+            Brush.verticalGradient(
+                0f to color,
+                0.75f to color.copy(alpha = 0.9f),
+                1f to Color.Transparent
+            )
+        } else {
+            Brush.verticalGradient(
+                0f to Color.Transparent,
+                0.7f to color.copy(alpha = 0.9f),
+                1f to color
+            )
+        }
+    }
+    Box(modifier = modifier.fillMaxWidth().height(height).background(brush))
 }

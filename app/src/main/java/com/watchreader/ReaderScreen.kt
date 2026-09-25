@@ -28,8 +28,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -54,7 +53,12 @@ private class ReaderViewHolder(
     val endTv: TextView,
     var autoScrollEngine: AutoScrollEngine? = null,
     var currentContent: ChapterContent? = null
-)
+) {
+    // 卡片背景复用池：滚动期间 ReaderScreen 高频重组，update 阶段仅重着色不再新建 GradientDrawable
+    var prevBackground: GradientDrawable? = null
+    var nextBackground: GradientDrawable? = null
+    var appliedChromeColor: Int = 0
+}
 
 /**
  * 阅读页 — 极致单 TextLayout + 永久 5 节点零分配 View 复用池 + 0 GC Choreographer 自动平滑滚屏 + 双轨调光
@@ -93,6 +97,16 @@ fun ReaderScreen(
 
     var isScrolling by remember { mutableStateOf(false) }
     var currentReadingOffset by remember(initialCharOffset) { mutableStateOf(initialCharOffset) }
+
+    // 弧形寻道：识别下沉至原生触摸管线，叠加层仅负责绘制（其全屏 pointerInput 曾吞掉正文全部触摸流）。
+    // 三项渲染状态聚合于单个状态容器：高频 MOVE 写入经叠加层绘制阶段延迟读取，寻道全程零重组
+    val seekRecognizer = remember { ArcSeekGestureRecognizer() }
+    val seekState = remember { ArcSeekUiState() }
+    val latestChapterIndex = remember { mutableStateOf(currentChapterIndex) }
+    val latestChapterCount = remember { mutableStateOf(chapters.size) }
+    latestChapterIndex.value = currentChapterIndex
+    latestChapterCount.value = chapters.size
+
     val scrollDebounceHandler = remember { Handler(Looper.getMainLooper()) }
     val resetScrollingRunnable = remember {
         Runnable { isScrolling = false }
@@ -210,6 +224,7 @@ fun ReaderScreen(
                 }
 
                 // 1. 上一章按钮卡片
+                var prevBackgroundRef: GradientDrawable? = null
                 val prevTv = TextView(ctx).apply {
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
                     setTextColor(onSurfaceVariantColor)
@@ -235,6 +250,7 @@ fun ReaderScreen(
                     addView(prevTv)
                 }
                 container.addView(prevBtn)
+                prevBackgroundRef = prevBtn.background as GradientDrawable
 
                 // 2. 章节标题
                 val titleTv = TextView(ctx).apply {
@@ -263,6 +279,7 @@ fun ReaderScreen(
                 container.addView(bodyTv)
 
                 // 4. 下一章按钮卡片
+                var nextBackgroundRef: GradientDrawable? = null
                 val nextTv = TextView(ctx).apply {
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                     setTextColor(titleColor)
@@ -288,6 +305,7 @@ fun ReaderScreen(
                     addView(nextTv)
                 }
                 container.addView(nextBtn)
+                nextBackgroundRef = nextBtn.background as GradientDrawable
 
                 // 5. 全书完结指示
                 val endTv = TextView(ctx).apply {
@@ -322,6 +340,9 @@ fun ReaderScreen(
                     endTv = endTv,
                     autoScrollEngine = autoEngine
                 )
+                holder.prevBackground = prevBackgroundRef
+                holder.nextBackground = nextBackgroundRef
+                holder.appliedChromeColor = surfaceVariantColor
                 scrollView.tag = holder
 
                 // 手势交互：支持上下/左右点按翻页、长按呼出菜单、自动滚屏时单击暂停
@@ -368,26 +389,68 @@ fun ReaderScreen(
                     }
                 })
 
-                scrollView.setOnTouchListener { _, event ->
-                    gestureDetector.onTouchEvent(event)
+                scrollView.setOnTouchListener { view, event ->
+                    var seekHandled = false
 
                     when (event.actionMasked) {
                         MotionEvent.ACTION_DOWN -> {
+                            val tracking = seekRecognizer.onDown(
+                                event.x,
+                                event.y,
+                                view.width.toFloat(),
+                                view.height.toFloat(),
+                                latestChapterIndex.value
+                            )
+                            if (tracking) {
+                                seekState.targetIndex = latestChapterIndex.value
+                                seekState.touchAngle = 0f
+                                seekState.isSeeking = false
+                            }
+                            seekHandled = tracking
                             resetInactivityKeepScreenOn()
                             autoEngine.pauseTemporarily(1800L)
                         }
                         MotionEvent.ACTION_MOVE -> {
+                            if (seekRecognizer.isTracking) {
+                                val consumed = seekRecognizer.onMove(
+                                    event.x,
+                                    event.y,
+                                    view.width.toFloat(),
+                                    view.height.toFloat(),
+                                    latestChapterCount.value
+                                )
+                                if (consumed) {
+                                    seekState.isSeeking = seekRecognizer.isSeeking
+                                    seekState.touchAngle = seekRecognizer.currentAngle
+                                    seekState.targetIndex = seekRecognizer.targetChapterIndex
+                                    seekHandled = true
+                                }
+                            }
                             notifyScrollActivity()
                             // 手指持续滑动/慢读期间持续续租，杜绝长按拖拽时引擎强行复苏抢夺屏幕
                             autoEngine.pauseTemporarily(1800L)
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            if (seekRecognizer.isTracking) {
+                                val confirmed = seekRecognizer.onUp()
+                                seekState.isSeeking = false
+                                if (confirmed != null) {
+                                    onSeekChapter(confirmed)
+                                    seekHandled = true
+                                }
+                            }
                             resetInactivityKeepScreenOn()
                             // 手指离开屏幕后启动延时恢复
                             autoEngine.pauseTemporarily(1800L)
                         }
                     }
-                    false
+
+                    // 寻道态下不参与点按/长按判定，避免与翻页热区双重触发
+                    val tapSuppressed = seekHandled || seekRecognizer.isTracking || seekRecognizer.isSeeking
+                    if (!tapSuppressed) {
+                        gestureDetector.onTouchEvent(event)
+                    }
+                    tapSuppressed
                 }
 
                 // 表冠物理旋转监听：自动滚屏中可动态调速，未开启时按固定步进翻页并触发齿轮微振
@@ -401,7 +464,8 @@ fun ReaderScreen(
                                 val speedDelta = if (delta > 0) 5f else -5f
                                 autoEngine.adjustSpeed(speedDelta)
                                 onAutoScrollSpeedChange(autoEngine.speedPxPerSec)
-                                RotaryHapticManager.performScrollTick(ctx, v)
+                                // 调速档位微振：每物理档位（12 单位）一振，与全应用表冠振感节奏统一
+                                CrownScrollHelper.dispatchAdjustTick(delta, ctx, v)
                             }
                             return@setOnGenericMotionListener true
                         }
@@ -474,14 +538,13 @@ fun ReaderScreen(
                 val holder = scrollView.tag as? ReaderViewHolder ?: return@AndroidView
                 scrollView.setBackgroundColor(bgColor)
 
-                val density = scrollView.context.resources.displayMetrics.density
-                holder.prevBtn.background = GradientDrawable().apply {
-                    setColor(surfaceVariantColor)
-                    cornerRadius = 14 * density
-                }
-                holder.nextBtn.background = GradientDrawable().apply {
-                    setColor(surfaceVariantColor)
-                    cornerRadius = 14 * density
+                // 卡片背景零分配复用：仅主题色真正变化时重着色。
+                // 此前每次重组都新建 GradientDrawable 并重设 background，
+                // 滚动期间（offset 状态逐帧推进）等于逐帧分配 + 双 View 失效，是滚动卡顿主源之一
+                if (holder.appliedChromeColor != surfaceVariantColor) {
+                    holder.appliedChromeColor = surfaceVariantColor
+                    holder.prevBackground?.setColor(surfaceVariantColor)
+                    holder.nextBackground?.setColor(surfaceVariantColor)
                 }
 
                 // 同步自动滚屏引擎状态
@@ -518,34 +581,16 @@ fun ReaderScreen(
             }
         )
 
-        // 顶部平滑渐变羽化遮罩
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0f to colorScheme.background,
-                        0.75f to colorScheme.background.copy(alpha = 0.85f),
-                        1f to Color.Transparent
-                    )
-                )
-                .align(Alignment.TopCenter)
+        // 顶部/底部平滑渐变羽化遮罩（统一 EdgeFadeMask 基元，Brush 随主题色缓存）
+        EdgeFadeMask(
+            edge = Alignment.Top,
+            modifier = Modifier.align(Alignment.TopCenter),
+            height = 48.dp
         )
-
-        // 底部平滑渐变羽化遮罩
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(36.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.8f to colorScheme.background.copy(alpha = 0.85f),
-                        1f to colorScheme.background
-                    )
-                )
-                .align(Alignment.BottomCenter)
+        EdgeFadeMask(
+            edge = Alignment.Bottom,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            height = 36.dp
         )
 
         // 顶部沿表盘外边缘弧形排布的章节名
@@ -569,26 +614,33 @@ fun ReaderScreen(
         )
 
         // 静态阅读时微光常驻的进度指示（滑动/转表冠时敏捷隐去避让，静止后平滑淡入恢复；自动滚屏时由底部胶囊接管避让）
-        if (bottomProgressAlpha > 0.01f && chapterContent != null) {
-            val percent = if (fullTextLength > 0) {
-                ((currentReadingOffset.toFloat() / fullTextLength) * 100).toInt().coerceIn(0, 100)
-            } else 0
+        // 淡入淡出 alpha 于 graphicsLayer 内逐帧读取（仅图层失效）；整数百分比经 derivedStateOf 去重，
+        // 滚动期间仅当百分比数字真正变化才重组，杜绝逐帧全页重组
+        if (chapterContent != null) {
+            val progressPercent by remember(fullTextLength) {
+                derivedStateOf {
+                    if (fullTextLength > 0) {
+                        ((currentReadingOffset.toFloat() / fullTextLength) * 100).toInt().coerceIn(0, 100)
+                    } else 0
+                }
+            }
             val currentChapterNum = chapterContent.chapterIndex + 1
             val progressText = if (totalChapters > 1) {
-                "第 $currentChapterNum/$totalChapters 章 · $percent%"
+                "第 $currentChapterNum/$totalChapters 章 · $progressPercent%"
             } else {
-                "$percent%"
+                "$progressPercent%"
             }
             Text(
                 text = progressText,
                 style = TextStyle(
                     fontSize = 9.5.sp,
                     fontWeight = FontWeight.Medium,
-                    color = colorScheme.onSurfaceVariant.copy(alpha = bottomProgressAlpha)
+                    color = colorScheme.onSurfaceVariant
                 ),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 24.dp)
+                    .padding(bottom = 10.dp)
+                    .graphicsLayer { alpha = bottomProgressAlpha }
             )
         }
 
@@ -597,7 +649,7 @@ fun ReaderScreen(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = 22.dp)
+                    .padding(bottom = 18.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(colorScheme.surfaceVariant.copy(alpha = 0.90f))
                     .clickable { onAutoScrollToggle() }
@@ -612,10 +664,11 @@ fun ReaderScreen(
         }
 
         // F-05 表盘边缘弧形快速寻道滑块（贴圆屏边缘交互，松手即跳）
+        // 纯绘制：手势由原生触摸管线中的 ArcSeekGestureRecognizer 识别后驱动本层渲染，
+        // 角度与目标章节在叠加层绘制/派生阶段读取，高频移动事件不引发本页重组
         ArcSeekOverlay(
             chapters = chapters,
-            currentChapterIndex = currentChapterIndex,
-            onSeekConfirm = onSeekChapter
+            seekState = seekState
         )
     }
 }
@@ -731,6 +784,8 @@ private fun safeRestoreScrollPosition(
     content: ChapterContent?,
     initialCharOffset: Int
 ) {
+    // 章节切换/位置恢复与惯性滑动互斥，防止 fling 把恢复位置再拖走
+    CrownScrollHelper.abortFling(scrollView)
     if (content == null) return
     if (holder.bodyTv.height > 0 && holder.bodyTv.layout != null) {
         restoreScrollPosition(scrollView, holder, content, initialCharOffset)

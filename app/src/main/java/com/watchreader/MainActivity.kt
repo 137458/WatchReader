@@ -6,9 +6,6 @@ import android.os.Bundle
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.widget.ScrollView
-import androidx.compose.foundation.layout.size
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,6 +16,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -42,6 +40,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -54,6 +53,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -109,6 +109,9 @@ class MainActivity : ComponentActivity() {
             RotaryHapticManager.initOplusLinearmotor(applicationContext)
         }
 
+        // 读取系统表冠滚动系数（与 HeyLauncher 同源），保证灵敏度与系统应用一致
+        CrownScrollHelper.ensureSystemScrollFactor(applicationContext)
+
         // 全屏沉浸式
         @Suppress("DEPRECATION")
         window.setFlags(
@@ -162,13 +165,17 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * 顶层分发事件：优先处理 RSVP / 全局表冠转动，再分发给原生 View 树（ScrollView / ListView）
+     * 顶层分发事件：优先处理 RSVP 调速 / 页面注册的表冠滚动目标，再分发给原生 View 树
+     * （阅读页 / 目录页的原生 ScrollView / ListView 保持自身监听路径不变）
      */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         if (CrownScrollHelper.isCrownScrollEvent(event)) {
             val delta = CrownScrollHelper.extractCrownDelta(event)
             if (abs(delta) > 0.001f) {
                 if (viewModel.handleRotaryScroll(delta)) {
+                    return true
+                }
+                if (CrownScrollTargetRegistry.active?.onCrownDelta(delta) == true) {
                     return true
                 }
             }
@@ -216,10 +223,14 @@ class MainActivity : ComponentActivity() {
             transitionSpec = {
                 (fadeIn(tween(WatchMotion.DUR_FADE, easing = WatchMotion.EnterEasing)) +
                     scaleIn(
-                        initialScale = 0.985f,
+                        initialScale = 0.94f,
                         animationSpec = tween(WatchMotion.DUR_FADE, easing = WatchMotion.EnterEasing)
                     )) togetherWith
-                    fadeOut(tween(WatchMotion.DUR_FADE_OUT, easing = WatchMotion.ExitEasing))
+                    (fadeOut(tween(WatchMotion.DUR_FADE_OUT, easing = WatchMotion.ExitEasing)) +
+                        scaleOut(
+                            targetScale = 1.02f,
+                            animationSpec = tween(WatchMotion.DUR_FADE_OUT, easing = WatchMotion.ExitEasing)
+                        ))
             },
             label = "screen-transition"
         ) { current ->
@@ -386,10 +397,13 @@ fun BookshelfScreen(
     errorMessage: String? = null
 ) {
     val colors = MaterialTheme.colorScheme
-    val latestBook = bookshelf.maxByOrNull { it.lastReadTime }
-    val filteredBooks = bookshelf
-        .filter { it.title.contains(searchQuery, ignoreCase = true) }
-        .sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
+    // 过滤排序随书架/搜索词缓存：输入搜索、删除确认等重组不再反复全表扫描排序
+    val latestBook = remember(bookshelf) { bookshelf.maxByOrNull { it.lastReadTime } }
+    val filteredBooks = remember(bookshelf, searchQuery) {
+        bookshelf
+            .filter { it.title.contains(searchQuery, ignoreCase = true) }
+            .sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
+    }
 
     val tick = rememberTickHaptic()
 
@@ -404,13 +418,26 @@ fun BookshelfScreen(
 
     val scrollState = rememberScrollState()
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(scrollState)
-            .padding(horizontal = 24.dp, vertical = 42.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    // 表冠滚动目标注册：Activity 顶层管线直接寻址书架滚动（正向线性步进 + 齿轮微振），
+    // 替代依赖原生焦点存活的 1dp 隐形锚点 —— 后者在焦点迁移后会使表冠事件丢失
+    val context = LocalContext.current
+    DisposableEffect(scrollState) {
+        val target = CrownScrollTarget { delta ->
+            CrownScrollHelper.dispatchScroll(delta, scrollState, context)
+            true
+        }
+        CrownScrollTargetRegistry.activate(target)
+        onDispose { CrownScrollTargetRegistry.deactivate(target) }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 24.dp, vertical = 42.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
         // ── 头部：栏目标签 + 主标题 ──
         Row(
             modifier = Modifier
@@ -631,32 +658,7 @@ fun BookshelfScreen(
                 ) { onToggleDarkMode() }
             }
         }
-
-        // 表冠滚动焦点代理（原生 View 微型焦点锚点，保持书架表冠滚动手感与齿轮微振）
-        AndroidView(
-            modifier = Modifier.size(1.dp),
-            factory = { context ->
-                ScrollView(context).apply {
-                    layoutParams = ViewGroup.LayoutParams(1, 1)
-                    isFocusable = true
-                    isFocusableInTouchMode = true
-                    setOnGenericMotionListener { view, event ->
-                        if (CrownScrollHelper.isCrownScrollEvent(event)) {
-                            CrownScrollHelper.dispatchScroll(
-                                CrownScrollHelper.extractCrownDelta(event),
-                                scrollState,
-                                context,
-                                view
-                            )
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    post { requestFocus() }
-                }
-            }
-        )
+        }
     }
 }
 

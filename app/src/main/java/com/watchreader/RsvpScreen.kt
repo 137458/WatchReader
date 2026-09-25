@@ -5,7 +5,6 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -16,10 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.rotary.onRotaryScrollEvent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -30,7 +26,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
-import kotlin.math.abs
 
 /**
  * RSVP 单个词元单元（包含 ORP 最佳注视焦点索引）
@@ -44,6 +39,10 @@ data class RsvpToken(
 
 /**
  * RSVP 动态闪读 / 单行速读屏幕（极简防裁切 + 物理表冠高精度调速 + 触屏档位切换）
+ *
+ * 表冠统一走 Activity 顶层管线（MainActivity → ReaderViewModel.handleRotaryScroll），
+ * 本页不再自带 onRotaryScrollEvent —— 该路径在顶层管线消费事件后永远收不到输入，
+ * 历史上属于与主管线调参互不相认的第二套死代码。
  */
 @Composable
 fun RsvpScreen(
@@ -57,9 +56,7 @@ fun RsvpScreen(
 ) {
     BackHandler(onBack = onBack)
 
-    val context = LocalContext.current
-    val window = (context as? Activity)?.window
-    val focusRequester = remember { FocusRequester() }
+    val window = (LocalContext.current as? Activity)?.window
 
     // 闪读模式屏幕常亮
     DisposableEffect(Unit) {
@@ -69,9 +66,7 @@ fun RsvpScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
+    val tick = rememberTickHaptic()
 
     val colorScheme = MaterialTheme.colorScheme
 
@@ -123,19 +118,6 @@ fun RsvpScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .focusRequester(focusRequester)
-            .focusable()
-            // 表冠物理旋转监听（Compose 辅助通道）
-            .onRotaryScrollEvent { event ->
-                val delta = event.verticalScrollPixels
-                if (abs(delta) > 0.5f) {
-                    val step = if (delta > 0) 25f else -25f
-                    val newSpeed = (wordsPerMinute + step).coerceIn(100f, 900f)
-                    onSpeedChange(newSpeed)
-                    RotaryHapticManager.performScrollTick(context, null)
-                    true
-                } else false
-            }
             // 水平滑动手势：增加阻尼门限，避免轻触抖动时误跳词
             .pointerInput(tokens, currentIndex) {
                 var dragAccumulator = 0f
@@ -151,7 +133,7 @@ fun RsvpScreen(
                                 if (nextIdx != currentIndex) {
                                     currentIndex = nextIdx
                                     onCharOffsetChange(tokens[nextIdx].charOffset)
-                                    RotaryHapticManager.performScrollTick(context, null)
+                                    tick()
                                 }
                             }
                         } else if (dragAccumulator < -55f) {
@@ -161,7 +143,7 @@ fun RsvpScreen(
                                 if (prevIdx != currentIndex) {
                                     currentIndex = prevIdx
                                     onCharOffsetChange(tokens[prevIdx].charOffset)
-                                    RotaryHapticManager.performScrollTick(context, null)
+                                    tick()
                                 }
                             }
                         }
@@ -205,7 +187,7 @@ fun RsvpScreen(
                     indication = null
                 ) {
                     isPlaying = !isPlaying
-                    RotaryHapticManager.performScrollTick(context, null)
+                    tick()
                 },
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
@@ -291,58 +273,31 @@ fun RsvpScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // ‹ 退出
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(colorScheme.surfaceVariant.copy(alpha = 0.92f))
-                    .clickable {
-                        RotaryHapticManager.performScrollTick(context, null)
-                        onBack()
-                    }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "‹ 退出",
-                    style = TextStyle(
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = colorScheme.onSurfaceVariant
-                    )
-                )
-            }
+            PillButton(
+                label = "‹ 退出",
+                verticalPadding = 6.dp,
+                onClick = onBack
+            )
 
             Spacer(modifier = Modifier.width(10.dp))
 
             // 速度/播放状态胶囊（点击可循环切换预设档位，旋转表冠可任意线性微调）
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(colorScheme.surfaceVariant.copy(alpha = 0.92f))
-                    .clickable {
-                        // 点击循环档位：250 -> 350 -> 450 -> 600 -> 800 -> 250
-                        val nextSpeed = when {
-                            wordsPerMinute < 300f -> 350f
-                            wordsPerMinute < 400f -> 450f
-                            wordsPerMinute < 550f -> 600f
-                            wordsPerMinute < 750f -> 800f
-                            else -> 250f
-                        }
-                        onSpeedChange(nextSpeed)
-                        RotaryHapticManager.performScrollTick(context, null)
+            PillButton(
+                label = if (isPlaying) "⚡ ${wordsPerMinute.toInt()}字/分" else "▶ 点击继续",
+                emphasis = PillEmphasis.Outline,
+                verticalPadding = 6.dp,
+                onClick = {
+                    // 点击循环档位：250 -> 350 -> 450 -> 600 -> 800 -> 250
+                    val nextSpeed = when {
+                        wordsPerMinute < 300f -> 350f
+                        wordsPerMinute < 400f -> 450f
+                        wordsPerMinute < 550f -> 600f
+                        wordsPerMinute < 750f -> 800f
+                        else -> 250f
                     }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = if (isPlaying) "⚡ ${wordsPerMinute.toInt()}字/分" else "▶ 点击继续",
-                    style = TextStyle(
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = colorScheme.primary
-                    )
-                )
-            }
+                    onSpeedChange(nextSpeed)
+                }
+            )
         }
     }
 }

@@ -30,8 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -139,16 +137,8 @@ fun ChapterListScreen(
                     }
                     currentListView = listView
 
-                    // 表冠物理旋转无缝滚动
-                    listView.setOnGenericMotionListener { v, event ->
-                        if (CrownScrollHelper.isCrownScrollEvent(event)) {
-                            val delta = CrownScrollHelper.extractCrownDelta(event)
-                            CrownScrollHelper.dispatchScroll(delta, listView, context, v)
-                            true
-                        } else {
-                            false
-                        }
-                    }
+                    // 表冠物理旋转无缝滚动（统一管线扩展，见 bindCrownScroll）
+                    listView.bindCrownScroll(context)
 
                     val adapter = ChapterListAdapter(chapters, currentChapterIndex, colorScheme, density)
                     listView.adapter = adapter
@@ -219,15 +209,8 @@ fun ChapterListScreen(
                             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
                         }
 
-                        bookmarkListView.setOnGenericMotionListener { v, event ->
-                            if (CrownScrollHelper.isCrownScrollEvent(event)) {
-                                val delta = CrownScrollHelper.extractCrownDelta(event)
-                                CrownScrollHelper.dispatchScroll(delta, bookmarkListView, context, v)
-                                true
-                            } else {
-                                false
-                            }
-                        }
+                        // 表冠物理旋转无缝滚动（统一管线扩展）
+                        bookmarkListView.bindCrownScroll(context)
 
                         val adapter = BookmarkListAdapter(bookmarks, colorScheme, density, onBookmarkClick, onDeleteBookmark)
                         bookmarkListView.adapter = adapter
@@ -247,34 +230,16 @@ fun ChapterListScreen(
             }
         }
 
-        // 顶部平滑渐变羽化遮罩
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0f to colorScheme.background,
-                        0.75f to colorScheme.background.copy(alpha = 0.9f),
-                        1f to Color.Transparent
-                    )
-                )
-                .align(Alignment.TopCenter)
+        // 顶部/底部羽化遮罩（统一 EdgeFadeMask 基元）
+        EdgeFadeMask(
+            edge = Alignment.Top,
+            modifier = Modifier.align(Alignment.TopCenter),
+            height = 48.dp
         )
-
-        // 底部渐变羽化遮罩
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(46.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.7f to colorScheme.background.copy(alpha = 0.9f),
-                        1f to colorScheme.background
-                    )
-                )
-                .align(Alignment.BottomCenter)
+        EdgeFadeMask(
+            edge = Alignment.Bottom,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            height = 46.dp
         )
 
         // 顶部 Tab 切换胶囊（滑动式指示：填充与文字颜色双通道动画，仅绘制层失效）
@@ -293,7 +258,6 @@ fun ChapterListScreen(
         }
 
         // 底部常驻操作栏（提升至 18dp 宽阔弦长区，两端按钮不再被下弧削平）
-        val screenContext = androidx.compose.ui.platform.LocalContext.current
         Row(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -301,17 +265,16 @@ fun ChapterListScreen(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            OverlayPill(label = "‹ 返回", onClick = onBack)
+            PillButton(label = "‹ 返回", onClick = onBack)
 
             if (selectedTab == 0 && chapters.isNotEmpty()) {
                 Spacer(modifier = Modifier.width(6.dp))
-                OverlayPill(
+                PillButton(
                     label = "当前",
-                    emphasized = true,
+                    emphasis = PillEmphasis.Outline,
                     onClick = {
                         currentListView?.let { lv ->
                             if (currentChapterIndex in chapters.indices) {
-                                RotaryHapticManager.performScrollTick(screenContext, null)
                                 val viewHeight = lv.height
                                 val itemHeight = (42 * lv.resources.displayMetrics.density).toInt()
                                 val targetTop = maxOf(0, (viewHeight - itemHeight) / 2)
@@ -324,7 +287,7 @@ fun ChapterListScreen(
 
             if (selectedTab == 0 && ranges.isNotEmpty()) {
                 Spacer(modifier = Modifier.width(6.dp))
-                OverlayPill(label = "选卷") { showRangePicker = true }
+                PillButton(label = "选卷", onClick = { showRangePicker = true })
             }
         }
 
@@ -365,15 +328,8 @@ fun ChapterListScreen(
                             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
                         }
 
-                        rangeListView.setOnGenericMotionListener { v, event ->
-                            if (CrownScrollHelper.isCrownScrollEvent(event)) {
-                                val delta = CrownScrollHelper.extractCrownDelta(event)
-                                CrownScrollHelper.dispatchScroll(delta, rangeListView, context, v)
-                                true
-                            } else {
-                                false
-                            }
-                        }
+                        // 表冠物理旋转无缝滚动（统一管线扩展）
+                        rangeListView.bindCrownScroll(context)
 
                         rangeListView.adapter = object : BaseAdapter() {
 
@@ -445,34 +401,16 @@ fun ChapterListScreen(
                     }
                 )
 
-                // 顶部羽化
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .background(
-                            Brush.verticalGradient(
-                                0f to colorScheme.background,
-                                0.75f to colorScheme.background.copy(alpha = 0.9f),
-                                1f to Color.Transparent
-                            )
-                        )
-                        .align(Alignment.TopCenter)
+                // 顶部/底部羽化（统一 EdgeFadeMask 基元）
+                EdgeFadeMask(
+                    edge = Alignment.Top,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    height = 48.dp
                 )
-
-                // 底部羽化
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(46.dp)
-                        .background(
-                            Brush.verticalGradient(
-                                0f to Color.Transparent,
-                                0.7f to colorScheme.background.copy(alpha = 0.9f),
-                                1f to colorScheme.background
-                            )
-                        )
-                        .align(Alignment.BottomCenter)
+                EdgeFadeMask(
+                    edge = Alignment.Bottom,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    height = 46.dp
                 )
 
                 // 顶部弧形标题
@@ -487,7 +425,7 @@ fun ChapterListScreen(
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 18.dp)
                 ) {
-                    OverlayPill(label = "✕ 关闭") { showRangePicker = false }
+                    PillButton(label = "✕ 关闭", onClick = { showRangePicker = false })
                 }
             }
         }
@@ -531,51 +469,6 @@ private fun TabCapsule(label: String, selected: Boolean, onClick: () -> Unit) {
             text = label,
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
             color = textColor
-        )
-    }
-}
-
-/**
- * 浮层胶囊按钮：发丝描边 + 按压缩放 + 轻触感
- */
-@Composable
-private fun OverlayPill(
-    label: String,
-    emphasized: Boolean = false,
-    onClick: () -> Unit
-) {
-    val colors = MaterialTheme.colorScheme
-    val interaction = remember { MutableInteractionSource() }
-    val tick = rememberTickHaptic()
-    Box(
-        modifier = Modifier
-            .pressScale(interaction)
-            .clip(WatchShapes.Pill)
-            .background(
-                if (emphasized) colors.primary.copy(alpha = 0.16f)
-                else colors.surfaceVariant.copy(alpha = 0.94f)
-            )
-            .then(
-                if (emphasized) {
-                    Modifier.border(1.dp, colors.primary.copy(alpha = 0.45f), WatchShapes.Pill)
-                } else {
-                    Modifier
-                }
-            )
-            .clickable(interactionSource = interaction, indication = null) {
-                tick()
-                onClick()
-            }
-            .padding(horizontal = 14.dp, vertical = 7.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium.copy(
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.SemiBold
-            ),
-            color = if (emphasized) colors.primary else colors.onSurfaceVariant
         )
     }
 }

@@ -1,7 +1,5 @@
 package com.watchreader
 
-import android.view.ViewGroup
-import android.widget.ScrollView
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -23,25 +21,23 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 
 /**
  * 阅读菜单 — 设计系统统一排版：分区卡片 + 发丝分隔 + 弹簧按压反馈
@@ -79,6 +75,18 @@ fun MenuScreen(
     BackHandler(onBack = onBack)
     val colors = MaterialTheme.colorScheme
     val scrollState = rememberScrollState()
+
+    // 表冠滚动目标注册：Activity 顶层管线直接寻址菜单滚动（正向线性步进 + 齿轮微振），
+    // 替代依赖原生焦点存活的 1dp 隐形锚点
+    val context = LocalContext.current
+    DisposableEffect(scrollState) {
+        val target = CrownScrollTarget { delta ->
+            CrownScrollHelper.dispatchScroll(delta, scrollState, context)
+            true
+        }
+        CrownScrollTargetRegistry.activate(target)
+        onDispose { CrownScrollTargetRegistry.deactivate(target) }
+    }
     val themeLabel = remember(themeMode) {
         when (ThemeMode.fromValue(themeMode)) {
             ThemeMode.PARCHMENT -> "羊皮纸"
@@ -207,11 +215,11 @@ fun MenuScreen(
                     SettingLine("亮度", BrightnessManager.formatBrightnessText(appBrightness)) {
                         Stepper(
                             onMinus = {
-                                val current = if (appBrightness < 0f) 0.35f else appBrightness
+                                val current = if (appBrightness < 0f) 0.50f else appBrightness
                                 onBrightnessChange((current - 0.05f).coerceIn(0.01f, 1f))
                             },
                             onPlus = {
-                                val current = if (appBrightness < 0f) 0.35f else appBrightness
+                                val current = if (appBrightness < 0f) 0.50f else appBrightness
                                 onBrightnessChange((current + 0.05f).coerceIn(0.01f, 1f))
                             }
                         )
@@ -263,39 +271,11 @@ fun MenuScreen(
             }
         }
 
-        // 顶部羽化渐隐
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(36.dp)
-                .background(Brush.verticalGradient(listOf(colors.background, Color.Transparent)))
-                .align(Alignment.TopCenter)
-        )
-
-        // 表冠滚动焦点代理（原生 View 微型焦点锚点，保持表冠菜单滚动手感）
-        AndroidView(
-            modifier = Modifier.size(1.dp).align(Alignment.TopStart),
-            factory = { context ->
-                ScrollView(context).apply {
-                    layoutParams = ViewGroup.LayoutParams(1, 1)
-                    isFocusable = true
-                    isFocusableInTouchMode = true
-                    setOnGenericMotionListener { view, event ->
-                        if (CrownScrollHelper.isCrownScrollEvent(event)) {
-                            CrownScrollHelper.dispatchScroll(
-                                CrownScrollHelper.extractCrownDelta(event),
-                                scrollState,
-                                context,
-                                view
-                            )
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    post { requestFocus() }
-                }
-            }
+        // 顶部羽化渐隐（统一 EdgeFadeMask 基元）
+        EdgeFadeMask(
+            edge = Alignment.Top,
+            modifier = Modifier.align(Alignment.TopCenter),
+            height = 36.dp
         )
     }
 }
@@ -317,12 +297,19 @@ private fun AnimatedValue(value: String, content: @Composable (String) -> Unit) 
 @Composable
 private fun SettingLine(label: String, value: String, trailing: @Composable () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(modifier = Modifier.weight(1f)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
             AnimatedValue(value) { current ->
-                Text(current, color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                Text(
+                    text = current,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Visible
+                )
             }
         }
+        Spacer(modifier = Modifier.width(4.dp))
         trailing()
     }
 }

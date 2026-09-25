@@ -5,26 +5,34 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.PointerInputChange
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.*
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 object ArcSeekMath {
     const val SCREEN_SIZE = 466f
@@ -77,6 +85,18 @@ object ArcSeekMath {
 }
 
 /**
+ * 弧形寻道渲染状态容器
+ *
+ * 手势管线（原生 setOnTouchListener）在每次 MOVE 事件高频写入；叠加层全部在
+ * 绘制阶段（Canvas）或派生阶段（derivedStateOf）延迟读取 —— 寻道全程不引发阅读页重组。
+ */
+class ArcSeekUiState {
+    var isSeeking by mutableStateOf(false)
+    var touchAngle by mutableStateOf(0f)
+    var targetIndex by mutableStateOf(0)
+}
+
+/**
  * F-05 表盘边缘弧形快速寻道滑块组件
  *
  * 适用于 466x466 圆屏，在屏幕右侧边缘弧形带识别滑动手势；
@@ -86,95 +106,23 @@ object ArcSeekMath {
 @Composable
 fun ArcSeekOverlay(
     chapters: List<Chapter>,
-    currentChapterIndex: Int,
-    onSeekConfirm: (Int) -> Unit,
+    seekState: ArcSeekUiState,
     modifier: Modifier = Modifier
 ) {
     if (chapters.size <= 1) return
 
-    var isSeeking by remember { mutableStateOf(false) }
-    var currentTouchAngle by remember { mutableStateOf(0f) }
-    var targetChapterIndex by remember { mutableStateOf(currentChapterIndex) }
-
     val primaryColor = MaterialTheme.colorScheme.primary
     val totalChapters = chapters.size
 
+    // 纯绘制组件：手势识别由阅读页原生触摸管线（ArcSeekGestureRecognizer）承担，
+    // 禁止在此叠加可命中全屏的 pointerInput，否则会吞掉 AndroidView 正文的全部触摸事件。
     Box(
-        modifier = modifier
-            .fillMaxSize()
-            .pointerInput(totalChapters) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val cx = size.width / 2f
-                    val cy = size.height / 2f
-
-                    if (ArcSeekMath.isInSeekZone(down.position.x, down.position.y, cx, cy)) {
-                        val dx = down.position.x - cx
-                        val dy = down.position.y - cy
-                        val initAngle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
-                        val startX = down.position.x
-                        val startY = down.position.y
-
-                        var hasDragged = false
-                        var cancelled = false
-                        var lastValidIndex = currentChapterIndex
-
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change: PointerInputChange? = event.changes.firstOrNull()
-
-                            if (change == null || change.isConsumed) {
-                                break
-                            }
-
-                            if (change.pressed) {
-                                val curDx = change.position.x - cx
-                                val curDy = change.position.y - cy
-                                val r = sqrt(curDx * curDx + curDy * curDy)
-                                val curAngle = Math.toDegrees(atan2(curDy.toDouble(), curDx.toDouble())).toFloat()
-                                val dragDist = hypot(change.position.x - startX, change.position.y - startY)
-                                val angleDelta = abs(curAngle - initAngle)
-
-                                if (!hasDragged) {
-                                    if (angleDelta >= 3.0f || dragDist >= 10f) {
-                                        hasDragged = true
-                                        isSeeking = true
-                                        down.consume()
-                                    }
-                                }
-
-                                if (hasDragged) {
-                                    change.consume()
-                                    // 划入屏幕过深 (r < 165) 或角度超出范围则取消寻道
-                                    if (r < 165f || curAngle < -75f || curAngle > 75f) {
-                                        cancelled = true
-                                    } else {
-                                        cancelled = false
-                                        currentTouchAngle = curAngle.coerceIn(ArcSeekMath.MIN_ANGLE, ArcSeekMath.MAX_ANGLE)
-                                        targetChapterIndex = ArcSeekMath.angleToChapterIndex(currentTouchAngle, totalChapters)
-                                        lastValidIndex = targetChapterIndex
-                                    }
-                                }
-                            } else {
-                                // 松手确认
-                                if (hasDragged) {
-                                    change.consume()
-                                    if (!cancelled) {
-                                        onSeekConfirm(lastValidIndex)
-                                    }
-                                }
-                                break
-                            }
-                        }
-                        isSeeking = false
-                    }
-                }
-            },
+        modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
         // 寻道中屏幕右侧边缘微光弧线与光标
         AnimatedVisibility(
-            visible = isSeeking,
+            visible = seekState.isSeeking,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
@@ -194,8 +142,8 @@ fun ArcSeekOverlay(
                     style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
                 )
 
-                // 2. 当前选中位置微光游标
-                val cursorAngleRad = Math.toRadians(currentTouchAngle.toDouble())
+                // 2. 当前选中位置微光游标（角度于绘制阶段读取，MOVE 事件仅触发重绘）
+                val cursorAngleRad = Math.toRadians(seekState.touchAngle.toDouble())
                 val cursorX = cx + (arcRadius * cos(cursorAngleRad)).toFloat()
                 val cursorY = cy + (arcRadius * sin(cursorAngleRad)).toFloat()
 
@@ -214,14 +162,18 @@ fun ArcSeekOverlay(
             }
         }
 
-        // 寻道中屏幕中央大字悬浮胶囊
+        // 寻道中屏幕中央大字悬浮胶囊（文案经 derivedStateOf 去重，仅跨越章节时重组）
         AnimatedVisibility(
-            visible = isSeeking,
+            visible = seekState.isSeeking,
             enter = fadeIn(),
             exit = fadeOut()
         ) {
-            val title = chapters.getOrNull(targetChapterIndex)?.title ?: ""
-            val label = ArcSeekMath.formatSeekLabel(targetChapterIndex, totalChapters, title)
+            val label by remember(chapters) {
+                derivedStateOf {
+                    val title = chapters.getOrNull(seekState.targetIndex)?.title ?: ""
+                    ArcSeekMath.formatSeekLabel(seekState.targetIndex, totalChapters, title)
+                }
+            }
 
             Box(
                 modifier = Modifier
@@ -243,5 +195,116 @@ fun ArcSeekOverlay(
                 )
             }
         }
+    }
+}
+
+/**
+ * 弧形寻道手势识别状态机（原生触摸管线驱动）
+ *
+ * 设计约束：寻道交互不可再由全屏 Compose pointerInput 承接 —— 在 AndroidView 互操作下
+ * 该叠加层会吞掉阅读页整条触摸流，导致点击翻页、长按菜单、滑动滚动全部失效。
+ * 因此将识别逻辑下沉为不依赖平台的可测状态机，由阅读页原生 setOnTouchListener 驱动。
+ */
+class ArcSeekGestureRecognizer {
+
+    /** 按下点落在寻道带内，进入候选态 */
+    var isTracking: Boolean = false
+        private set
+
+    /** 已越过拖动门限，进入寻道态（此时应阻断正文滚动） */
+    var isSeeking: Boolean = false
+        private set
+
+    /** 当前手指极坐标角度（已钳制到寻道区间） */
+    var currentAngle: Float = 0f
+        private set
+
+    /** 当前指向的章节索引 */
+    var targetChapterIndex: Int = 0
+        private set
+
+    private var initAngle = 0f
+    private var startX = 0f
+    private var startY = 0f
+    private var hasDragged = false
+    private var cancelled = false
+    private var lastValidIndex = 0
+
+    /**
+     * ACTION_DOWN
+     * @return true 表示按下落在寻道带内（后续移动需交由寻道识别）
+     */
+    fun onDown(x: Float, y: Float, width: Float, height: Float, currentChapterIndex: Int): Boolean {
+        reset()
+        val cx = width / 2f
+        val cy = height / 2f
+        if (!ArcSeekMath.isInSeekZone(x, y, cx, cy)) return false
+
+        isTracking = true
+        startX = x
+        startY = y
+        initAngle = angleOf(x, y, cx, cy)
+        lastValidIndex = currentChapterIndex
+        targetChapterIndex = currentChapterIndex
+        return true
+    }
+
+    /**
+     * ACTION_MOVE
+     * @return true 表示本次移动已被寻道消费（应阻断正文滚动与点按判定）
+     */
+    fun onMove(x: Float, y: Float, width: Float, height: Float, totalChapters: Int): Boolean {
+        if (!isTracking) return false
+
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = kotlin.math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy))
+        val angle = angleOf(x, y, cx, cy)
+        val dragDist = kotlin.math.hypot((x - startX).toDouble(), (y - startY).toDouble()).toFloat()
+        val angleDelta = kotlin.math.abs(angle - initAngle)
+
+        if (!hasDragged) {
+            // 门限：角度变化 ≥3° 或位移 ≥10px 才认定为寻道拖动，避免轻触误跳
+            if (angleDelta >= 3.0f || dragDist >= 10f) {
+                hasDragged = true
+                isSeeking = true
+            }
+        }
+
+        if (!isSeeking) return false
+
+        // 划入屏幕过深或角度超出范围则取消本次寻道
+        if (r < 165f || angle < -75f || angle > 75f) {
+            cancelled = true
+        } else {
+            cancelled = false
+            currentAngle = angle.coerceIn(ArcSeekMath.MIN_ANGLE, ArcSeekMath.MAX_ANGLE)
+            targetChapterIndex = ArcSeekMath.angleToChapterIndex(currentAngle, totalChapters)
+            lastValidIndex = targetChapterIndex
+        }
+        return true
+    }
+
+    /**
+     * ACTION_UP / ACTION_CANCEL
+     * @return 确认跳转的章节索引；null 表示不跳转
+     */
+    fun onUp(): Int? {
+        val result = if (isTracking && hasDragged && !cancelled) lastValidIndex else null
+        val wasTracking = isTracking
+        reset()
+        if (!wasTracking) return null
+        return result
+    }
+
+    fun reset() {
+        isTracking = false
+        isSeeking = false
+        hasDragged = false
+        cancelled = false
+    }
+
+    private fun angleOf(x: Float, y: Float, cx: Float, cy: Float): Float {
+        return Math.toDegrees(kotlin.math.atan2((y - cy).toDouble(), (x - cx).toDouble())).toFloat()
     }
 }

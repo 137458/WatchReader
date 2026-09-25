@@ -223,6 +223,8 @@ fun CurvedSideStatusBar(
 
         val fontMetrics = paint.fontMetrics
         val verticalCenteringOffset = ((fontMetrics.descent - fontMetrics.ascent) / 2f) - fontMetrics.descent
+        // 冒号轻微下移修正量（消除 ASCII 冒号偏高造成的视觉悬空），逐字符循环外预计算
+        val colonYOffset = with(density) { 0.5.dp.toPx() }
         // 适当优化步进角，使得 5 字符在侧边呈现清晰饱满且自然的同心外弧
         val angleStepRad = ((charSpacingPx * 1.05f) / arcRadius).toDouble()
 
@@ -251,9 +253,8 @@ fun CurvedSideStatusBar(
                 val angle = 0.0 + (indexOffset * angleStepRad)
                 val x = (cx + arcRadius * Math.cos(angle)).toFloat()
                 val isColon = timeChars[i] == ':'
-                // 冒号轻微下移修正（消除 ASCII 冒号偏高造成的视觉悬空）
-                val colonYOffset = if (isColon) with(density) { 0.5.dp.toPx() } else 0f
-                val y = (cy + arcRadius * Math.sin(angle)).toFloat() + verticalCenteringOffset + colonYOffset
+                val y = (cy + arcRadius * Math.sin(angle)).toFloat() + verticalCenteringOffset +
+                        (if (isColon) colonYOffset else 0f)
 
                 nativeCanvas.drawText(timeChars, i, 1, x, y, paint)
             }

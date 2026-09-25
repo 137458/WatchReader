@@ -7,21 +7,19 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -29,7 +27,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -37,9 +34,21 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.graphics.Bitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
- * 腕上无线传书界面 — 极简高级纯粹排版（无花哨光晕与多余动画）
+ * 腕上无线传书界面 — 扫码直传极简排版
+ *
+ * 性能要点：
+ * 1. 二维码位图在 Default 线程异步生成（produceState），入场首帧不再被同步编码阻塞掉帧；
+ * 2. 传输进度弧线于 Canvas 绘制阶段读取动画值，百分比数字经 derivedStateOf 去重，
+ *    浮点进度逐帧推进时仅整数百分比变化才重组。
+ *
+ * 排版要点（466px 圆屏）：
+ * 内容整体垂直居中并控制总高，二维码、地址胶囊、状态行与操作按钮全部落于圆屏黄金安全区，
+ * 不再被顶部锚定的长列挤出屏幕底部。
  */
 @Composable
 fun WifiTransferScreen(
@@ -55,13 +64,22 @@ fun WifiTransferScreen(
 ) {
     BackHandler(onBack = onBack)
 
-    val context = LocalContext.current
     val colorScheme = MaterialTheme.colorScheme
-    val focusRequester = remember { FocusRequester() }
+    val tick = rememberTickHaptic()
 
+    // 就绪入场轻振：告知用户服务页已可用
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-        RotaryHapticManager.performScrollTick(context, null)
+        tick()
+    }
+
+    // 表冠空转反馈：页面无滚动内容，按系统 app 惯例每档给出齿轮微振，杜绝表冠完全无响应
+    DisposableEffect(Unit) {
+        val target = CrownScrollTarget { delta ->
+            CrownScrollHelper.dispatchIdleTick(delta, null)
+            true
+        }
+        CrownScrollTargetRegistry.activate(target)
+        onDispose { CrownScrollTargetRegistry.deactivate(target) }
     }
 
     // 细致平滑进度过渡
@@ -71,11 +89,12 @@ fun WifiTransferScreen(
         label = "transferProgress"
     )
 
+    // 百分比整数去重：spring 逐帧重定向时仅在数字变化的那一帧重组
+    val progressPercent by remember { derivedStateOf { (animatedProgress * 100).toInt() } }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .focusRequester(focusRequester)
-            .focusable()
             // 右滑手势退出（带累加阻尼防手抖误触，贴合 Wear OS 交互习惯）
             .pointerInput(isTransferring) {
                 var dragAccumulator = 0f
@@ -86,7 +105,7 @@ fun WifiTransferScreen(
                         dragAccumulator += dragAmount
                         if (dragAccumulator > 60f && !isTransferring) {
                             dragAccumulator = 0f
-                            RotaryHapticManager.performScrollTick(context, null)
+                            tick()
                             onBack()
                         }
                     }
@@ -94,46 +113,19 @@ fun WifiTransferScreen(
             },
         contentAlignment = Alignment.Center
     ) {
-        // 1. 沿屏幕边缘的极简纯色环形进度条（仅在传输时精细呈现）
+        // 1. 沿屏幕边缘的极简纯色环形进度条（原生 CircularProgressIndicator，仅在传输时呈现）
         if (isTransferring) {
-            val primaryColor = colorScheme.primary
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val strokeWidth = 3.dp.toPx()
-                val radius = (size.minDimension - strokeWidth) / 2f
-                val arcSize = Size(radius * 2, radius * 2)
-                val topLeft = Offset((size.width - radius * 2) / 2f, (size.height - radius * 2) / 2f)
-
-                // 底轨
-                drawArc(
-                    color = primaryColor.copy(alpha = 0.12f),
-                    startAngle = -90f,
-                    sweepAngle = 360f,
-                    useCenter = false,
-                    topLeft = topLeft,
-                    size = arcSize,
-                    style = Stroke(width = strokeWidth)
-                )
-
-                // 进度弧
-                drawArc(
-                    color = primaryColor,
-                    startAngle = -90f,
-                    sweepAngle = animatedProgress * 360f,
-                    useCenter = false,
-                    topLeft = topLeft,
-                    size = arcSize,
-                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                )
-            }
+            CircularProgressIndicator(
+                progress = animatedProgress,
+                modifier = Modifier.fillMaxSize(),
+                color = colorScheme.primary,
+                trackColor = colorScheme.primary.copy(alpha = 0.12f),
+                strokeWidth = 3.dp,
+                strokeCap = StrokeCap.Round
+            )
         }
 
-        // 2. 顶部弧形标题
-        CurvedChapterHeader(
-            title = "无线传书",
-            modifier = Modifier.align(Alignment.TopCenter)
-        )
-
-        // 3. 视图 A：极简传输进度展示
+        // 2. 视图 A：极简传输进度展示
         AnimatedVisibility(
             visible = isTransferring,
             enter = fadeIn(animationSpec = tween(200)),
@@ -147,7 +139,7 @@ fun WifiTransferScreen(
                 verticalArrangement = Arrangement.Center
             ) {
                 Text(
-                    text = "${(animatedProgress * 100).toInt()}%",
+                    text = "$progressPercent%",
                     style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace),
                     color = colorScheme.primary
                 )
@@ -169,7 +161,7 @@ fun WifiTransferScreen(
                 Spacer(modifier = Modifier.height(2.dp))
 
                 Text(
-                    text = if (animatedProgress >= 0.99f) "已存入书架" else "传输中…",
+                    text = if (progressPercent >= 99) "已存入书架" else "传输中…",
                     style = TextStyle(
                         fontSize = 9.5.sp,
                         color = colorScheme.outline
@@ -179,153 +171,31 @@ fun WifiTransferScreen(
             }
         }
 
-        // 4. 视图 B：极简就绪卡片
+        // 3. 视图 B：扫码就绪 / 离线提示
         AnimatedVisibility(
             visible = !isTransferring,
             enter = fadeIn(animationSpec = tween(200)),
             exit = fadeOut(animationSpec = tween(200))
         ) {
+            val serverReady = isServerRunning && !ipAddress.isNullOrEmpty()
+
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 28.dp),
+                    .fillMaxSize()
+                    .padding(horizontal = 30.dp, vertical = 4.dp)
+                    .padding(top = 34.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
-                val qrBitmap = remember(ipAddress, port, isServerRunning) {
-                    if (!ipAddress.isNullOrEmpty() && isServerRunning) {
-                        QrCodeGenerator.generateQrCodeBitmap("http://$ipAddress:$port", 260)
-                    } else null
-                }
-
-                // 状态指示
-                if (!ipAddress.isNullOrEmpty() && isServerRunning) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        PulsingDot(color = colorScheme.primary)
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "服务已就绪 · 手机扫码直连",
-                            style = TextStyle(
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = colorScheme.onSurfaceVariant
-                            )
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // 高对比度黑白二维码卡片（白底黑码，手机相机毫秒级极速识别）
-                    if (qrBitmap != null) {
-                        Box(
-                            modifier = Modifier
-                                .size(118.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color.White)
-                                .padding(5.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Image(
-                                bitmap = qrBitmap.asImageBitmap(),
-                                contentDescription = "扫码直传二维码",
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // 备用纯文本网址卡片
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(colorScheme.surfaceVariant.copy(alpha = 0.85f))
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "http://$ipAddress:$port",
-                            style = TextStyle(
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = colorScheme.primary
-                            ),
-                            maxLines = 1,
-                            softWrap = false,
-                            textAlign = TextAlign.Center
-                        )
-                    }
+                if (serverReady) {
+                    QrCodePanel(ipAddress = ipAddress!!, port = port, uploadedCount = uploadedCount)
                 } else {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        StaticDot(color = colorScheme.error)
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "Wi-Fi 未连接",
-                            style = TextStyle(
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = colorScheme.error
-                            )
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(colorScheme.surfaceVariant.copy(alpha = 0.85f))
-                            .padding(horizontal = 12.dp, vertical = 14.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "请在手表设置中连接 Wi-Fi",
-                                style = TextStyle(
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = colorScheme.onSurfaceVariant
-                                ),
-                                textAlign = TextAlign.Center
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "与手机处于同个局域网即可扫码",
-                                style = TextStyle(
-                                    fontSize = 9.sp,
-                                    color = colorScheme.outline
-                                ),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
+                    OfflinePanel()
                 }
 
-                // 接收计数
-                if (uploadedCount > 0) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "已接收 $uploadedCount 本",
-                        style = TextStyle(
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = colorScheme.primary
-                        ),
-                        textAlign = TextAlign.Center
-                    )
-                }
+                Spacer(modifier = Modifier.height(9.dp))
 
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // 底部按钮
+                // 底部操作行（服务运行中仅保留返回，避免双胶囊挤出圆屏下缘弧线）
                 Row(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically
@@ -333,7 +203,7 @@ fun WifiTransferScreen(
                     if (!isServerRunning) {
                         PillButton(
                             label = "重启服务",
-                            verticalPadding = 7.dp,
+                            verticalPadding = 6.dp,
                             onClick = onToggleServer
                         )
                         Spacer(modifier = Modifier.width(6.dp))
@@ -342,11 +212,163 @@ fun WifiTransferScreen(
                     PillButton(
                         label = "‹ 返回书架",
                         emphasis = PillEmphasis.Primary,
-                        verticalPadding = 8.dp,
+                        verticalPadding = 6.dp,
                         onClick = onBack
                     )
                 }
             }
+        }
+
+        // 顶部弧形标题
+        CurvedChapterHeader(
+            title = "无线传书",
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
+    }
+}
+
+/**
+ * 扫码就绪面板：白底黑码二维码（手机相机毫秒级识别）+ 扫码取景角标 + 地址胶囊 + 就绪状态行
+ */
+@Composable
+private fun QrCodePanel(
+    ipAddress: String,
+    port: Int,
+    uploadedCount: Int
+) {
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val outlineColor = MaterialTheme.colorScheme.outline
+    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+
+    // 二维码编码移出主线程：组合首帧零阻塞，生成期间以同尺寸占位保持布局稳定
+    val qrBitmap by produceState<Bitmap?>(initialValue = null, ipAddress, port) {
+        value = withContext(Dispatchers.Default) {
+            QrCodeGenerator.generateQrCodeBitmap("http://$ipAddress:$port", 260)
+        }
+    }
+    val qrImage = remember(qrBitmap) { qrBitmap?.asImageBitmap() }
+
+    // 扫码取景框：白色圆角码卡 + 四角主色弧形角标（纯静态绘制，无逐帧动画开销）
+    Box(
+        modifier = Modifier
+            .size(96.dp)
+            .drawBehind {
+                val corner = 12.dp.toPx()
+                val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+                drawArc(primaryColor, 180f, 90f, false, Offset.Zero, Size(corner * 2, corner * 2), style = stroke)
+                drawArc(primaryColor, 270f, 90f, false, Offset(size.width - corner * 2, 0f), Size(corner * 2, corner * 2), style = stroke)
+                drawArc(primaryColor, 0f, 90f, false, Offset(size.width - corner * 2, size.height - corner * 2), Size(corner * 2, corner * 2), style = stroke)
+                drawArc(primaryColor, 90f, 90f, false, Offset(0f, size.height - corner * 2), Size(corner * 2, corner * 2), style = stroke)
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier
+                .size(86.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(Color.White)
+                .padding(4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            if (qrImage != null) {
+                Image(
+                    bitmap = qrImage,
+                    contentDescription = "扫码直传二维码",
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                LoadingIndicator(size = 16.dp, strokeWidth = 2.dp, color = Color(0xFF444444))
+            }
+        }
+    }
+
+    Spacer(modifier = Modifier.height(5.dp))
+
+    // 备用纯文本网址胶囊
+    Box(
+        modifier = Modifier
+            .clip(WatchShapes.Pill)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .padding(horizontal = 10.dp, vertical = 3.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = "http://$ipAddress:$port",
+            style = TextStyle(
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace,
+                color = primaryColor
+            ),
+            maxLines = 1,
+            softWrap = false
+        )
+    }
+
+    Spacer(modifier = Modifier.height(5.dp))
+
+    // 就绪状态行（接收计数并入，省一行纵向空间）
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        PulsingDot(color = primaryColor)
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = if (uploadedCount > 0) "已接收 $uploadedCount 本 · 等待扫码" else "服务已开启 · 等待手机扫码",
+            style = TextStyle(fontSize = 10.5.sp, color = onSurfaceVariant)
+        )
+    }
+}
+
+/**
+ * 离线提示面板：Wi-Fi 未连接状态 + 连接指引卡片
+ */
+@Composable
+private fun OfflinePanel() {
+    val colorScheme = MaterialTheme.colorScheme
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        StaticDot(color = colorScheme.error)
+        Spacer(modifier = Modifier.width(5.dp))
+        Text(
+            text = "Wi-Fi 未连接",
+            style = TextStyle(
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = colorScheme.error
+            )
+        )
+    }
+
+    Spacer(modifier = Modifier.height(9.dp))
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(WatchShapes.Row)
+            .background(colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp)
+        ) {
+            Text(
+                text = "请在手表设置中连接 Wi-Fi",
+                style = TextStyle(
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = colorScheme.onSurfaceVariant
+                ),
+                textAlign = TextAlign.Center
+            )
+            Text(
+                text = "与手机处于同个局域网即可扫码传书",
+                style = TextStyle(
+                    fontSize = 9.sp,
+                    color = colorScheme.outline
+                ),
+                textAlign = TextAlign.Center
+            )
         }
     }
 }

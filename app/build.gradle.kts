@@ -20,6 +20,12 @@ android {
         abortOnError = false
     }
 
+    testOptions {
+        // JVM 单测桩：framework 方法（如 SystemClock）返回默认值而非抛异常，
+        // 使表冠分发等含 Android 时间源的纯逻辑可测（振感经探针观测）
+        unitTests.isReturnDefaultValues = true
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false

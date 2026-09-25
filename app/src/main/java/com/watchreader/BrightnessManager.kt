@@ -69,12 +69,12 @@ object BrightnessManager {
     fun formatBrightnessText(brightness: Float): String {
         return when {
             brightness < 0f -> "系统"
-            brightness >= 0.85f -> "3档(强)"
-            brightness >= 0.50f -> "2档(中)"
-            brightness >= HARDWARE_MIN_THRESHOLD -> "1档(弱)"
+            brightness >= 0.85f -> "3档强"
+            brightness >= 0.50f -> "2档中"
+            brightness >= HARDWARE_MIN_THRESHOLD -> "1档弱"
             else -> {
                 val percent = (brightness * 100).toInt().coerceIn(1, 29)
-                "🌙夜读($percent%)"
+                "夜读$percent%"
             }
         }
     }

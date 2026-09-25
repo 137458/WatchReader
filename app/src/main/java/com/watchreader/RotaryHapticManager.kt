@@ -3,6 +3,8 @@ package com.watchreader
 import android.content.Context
 import android.media.AudioAttributes
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -15,12 +17,14 @@ import java.lang.reflect.Method
 /**
  * 表冠旋转与线性马达触觉管理器
  *
- * 针对 OPPO Watch X2 / ColorOS Watch 深度逆向与官方对齐：
- * 1. 优先直调 OPPO 官方底层线性马达私有服务 (LinearmotorVibrator / Waveform 302)
- *    - 服务名: context.getSystemService("linearmotor")
- *    - 官方波形: WaveformEffect.Builder().setEffectStrength(2).setEffectType(302).build()
- * 2. 0ms 延迟同步触发：移除多余的单线程任务排队机制，彻底解决“手停了还在震”的振感粘连问题
- * 3. 补充降级通道：View.performHapticFeedback(CLOCK_TICK) 与标准 Vibrator
+ * 逆向对齐 OPPO Watch X2 / ColorOS Watch 系统桌面（HeyLauncher）RecyclerView 表冠管线：
+ * 1. 【后台线程】所有马达调用投递到专用 "crown_vibrate" HandlerThread（launcher 原样实现）——
+ *    UI 线程直调 linearmotor 服务会因 IPC 阻塞造成输入与显示脱节、滚动卡顿，这是历史上
+ *    "震动连成一片、没有惯性观感" 的直接根因之一；
+ * 2. 【原厂波形】齿轮微振 Waveform 302（strength 2，与 launcher 字节码一致），
+ *    View CLOCK_TICK 与标准 Vibrator 仅作非 OPPO 设备兜底；
+ *    触底/触顶不响任何振感（产品决策：边界静默钳制），301 波形仅保留给成功确认反馈；
+ * 3. 【节流】20ms 最小间隔兜底（launcher 仅靠 24px 位移门限，马达服务自身会抢占旧波形）。
  */
 object RotaryHapticManager {
 
@@ -29,6 +33,13 @@ object RotaryHapticManager {
     @Volatile
     private var lastVibrateTime = 0L
     private const val MIN_TICK_INTERVAL_MS = 20L
+
+    // 表冠震动专用后台线程（对齐 HeyLauncher "crown_vibate" 线程）
+    private val vibrateHandler: Handler by lazy {
+        val thread = HandlerThread("crown_vibrate")
+        thread.start()
+        Handler(thread.looper)
+    }
 
     // OPPO Linearmotor 反射缓存
     @Volatile private var oplusLinearMotorInitialized = false
@@ -130,7 +141,7 @@ object RotaryHapticManager {
     }
 
     /**
-     * 触发表冠旋转一格时的微振反馈（优先原厂 302 齿轮微振，杜绝长蜂鸣与尾随振动）
+     * 触发表冠旋转一格时的微振反馈（原厂 302 齿轮微振，后台线程投递）
      */
     fun performScrollTick(context: Context?, view: View? = null) {
         val now = SystemClock.uptimeMillis()
@@ -138,8 +149,24 @@ object RotaryHapticManager {
             return
         }
         lastVibrateTime = now
+        vibrateHandler.post { vibrateScrollTick(context, view) }
+    }
 
-        // 1. View 级触觉反馈
+    private fun vibrateScrollTick(context: Context?, view: View?) {
+        // 1. OPPO 私有 Linearmotor 原厂 302 瞬态齿轮波形（对齐 HeyLauncher）
+        if (context != null) {
+            try {
+                if (!oplusLinearMotorInitialized) {
+                    initOplusLinearmotor(context)
+                }
+                if (oplusLinearMotorService != null && oplusVibrateMethod != null && oplusPrebuiltTickEffect != null) {
+                    oplusVibrateMethod!!.invoke(oplusLinearMotorService, oplusPrebuiltTickEffect)
+                    return
+                }
+            } catch (_: Throwable) {}
+        }
+
+        // 2. View 级 CLOCK_TICK 兜底（非 OPPO 设备的系统刻度波形）
         view?.let { v ->
             try {
                 val flags = HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING or
@@ -152,18 +179,7 @@ object RotaryHapticManager {
 
         if (context == null) return
 
-        // 2. OPPO 私有 Linearmotor 原厂 302 瞬态齿轮波形
-        try {
-            if (!oplusLinearMotorInitialized) {
-                initOplusLinearmotor(context)
-            }
-            if (oplusLinearMotorService != null && oplusVibrateMethod != null && oplusPrebuiltTickEffect != null) {
-                oplusVibrateMethod!!.invoke(oplusLinearMotorService, oplusPrebuiltTickEffect)
-                return
-            }
-        } catch (_: Throwable) {}
-
-        // 3. 通用 Android 马达极短瞬态脉冲保底（仅在私有服务不可用时生效，8ms 瞬态杜绝拖尾）
+        // 3. 通用 Android 马达极短瞬态脉冲保底（8ms 瞬态杜绝拖尾）
         try {
             val vibrator = getVibratorFast(context)
             if (vibrator != null && vibrator.hasVibrator()) {
@@ -183,49 +199,14 @@ object RotaryHapticManager {
     }
 
     /**
-     * 触底/触顶边界振感
-     */
-    fun performBoundaryFeedback(context: Context?, view: View? = null) {
-        view?.let { v ->
-            try {
-                val flags = HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING or
-                        HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-                v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS, flags)
-            } catch (_: Throwable) {}
-        }
-
-        if (context == null) return
-        try {
-            if (!oplusLinearMotorInitialized) {
-                initOplusLinearmotor(context)
-            }
-            if (oplusLinearMotorService != null && oplusVibrateMethod != null && oplusPrebuiltBoundaryEffect != null) {
-                oplusVibrateMethod!!.invoke(oplusLinearMotorService, oplusPrebuiltBoundaryEffect)
-                return
-            }
-        } catch (_: Throwable) {}
-
-        try {
-            val vibrator = getVibratorFast(context)
-            if (vibrator != null && vibrator.hasVibrator()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(
-                        VibrationEffect.createOneShot(24, 255),
-                        touchAudioAttributes
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(24)
-                }
-            }
-        } catch (_: Throwable) {}
-    }
-
-    /**
-     * 成功完成（如 Wi-Fi 传书接收成功 / 书签保存成功）的双重确认振感
+     * 成功完成（如 Wi-Fi 传书接收成功 / 书签保存成功）的双重确认振感（后台线程投递）
      */
     fun performSuccessFeedback(context: Context?) {
         if (context == null) return
+        vibrateHandler.post { vibrateSuccess(context) }
+    }
+
+    private fun vibrateSuccess(context: Context) {
         try {
             if (!oplusLinearMotorInitialized) {
                 initOplusLinearmotor(context)
