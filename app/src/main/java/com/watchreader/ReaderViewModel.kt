@@ -30,7 +30,11 @@ data class ChapterContent(
     val hasPrevChapter: Boolean,
     val prevChapterTitle: String,
     val hasNextChapter: Boolean,
-    val nextChapterTitle: String
+    val nextChapterTitle: String,
+    // 正文内各段落起始索引（与 rawParagraphStarts 一一对应），空数组表示未提供映射（按正文坐标=原文坐标处理）
+    val bodyParagraphStarts: IntArray = IntArray(0),
+    // 原文切片内各段落首字符索引
+    val rawParagraphStarts: IntArray = IntArray(0)
 )
 
 /**
@@ -997,6 +1001,10 @@ fun formatChapterRawText(
     val chapTitle = currentChap.title.trim()
     val sb = StringBuilder(rawText.length + 64)
 
+    // 段落起点映射：正文坐标 ↔ 原文坐标的精确换算依据（持久化阅读位置必须落在原文坐标域）
+    val bodyParaList = ArrayList<Int>(32)
+    val rawParaList = ArrayList<Int>(32)
+
     var lineStart = 0
     val textLen = rawText.length
     while (lineStart < textLen) {
@@ -1021,6 +1029,8 @@ fun formatChapterRawText(
                 if (sb.isNotEmpty()) {
                     sb.append("\n\n")
                 }
+                bodyParaList.add(sb.length)
+                rawParaList.add(s)
                 sb.append("\u3000\u3000").append(rawText, s, e)
             }
         }
@@ -1042,7 +1052,9 @@ fun formatChapterRawText(
         hasPrevChapter = hasPrev,
         prevChapterTitle = prevTitle,
         hasNextChapter = hasNext,
-        nextChapterTitle = nextTitle
+        nextChapterTitle = nextTitle,
+        bodyParagraphStarts = bodyParaList.toIntArray(),
+        rawParagraphStarts = rawParaList.toIntArray()
     )
 }
 

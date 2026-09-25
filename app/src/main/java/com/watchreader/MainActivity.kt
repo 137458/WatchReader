@@ -6,6 +6,9 @@ import android.os.Bundle
 import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.ScrollView
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -399,10 +402,12 @@ fun BookshelfScreen(
         }
     }
 
+    val scrollState = rememberScrollState()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
             .padding(horizontal = 24.dp, vertical = 42.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -626,6 +631,32 @@ fun BookshelfScreen(
                 ) { onToggleDarkMode() }
             }
         }
+
+        // 表冠滚动焦点代理（原生 View 微型焦点锚点，保持书架表冠滚动手感与齿轮微振）
+        AndroidView(
+            modifier = Modifier.size(1.dp),
+            factory = { context ->
+                ScrollView(context).apply {
+                    layoutParams = ViewGroup.LayoutParams(1, 1)
+                    isFocusable = true
+                    isFocusableInTouchMode = true
+                    setOnGenericMotionListener { view, event ->
+                        if (CrownScrollHelper.isCrownScrollEvent(event)) {
+                            CrownScrollHelper.dispatchScroll(
+                                CrownScrollHelper.extractCrownDelta(event),
+                                scrollState,
+                                context,
+                                view
+                            )
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    post { requestFocus() }
+                }
+            }
+        )
     }
 }
 

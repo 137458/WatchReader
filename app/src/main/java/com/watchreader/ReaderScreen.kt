@@ -390,7 +390,7 @@ fun ReaderScreen(
                     false
                 }
 
-                // 表冠物理旋转监听：自动滚屏中可动态调速，未开启时正常翻页
+                // 表冠物理旋转监听：自动滚屏中可动态调速，未开启时按固定步进翻页并触发齿轮微振
                 scrollView.setOnGenericMotionListener { v, event ->
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
                         resetInactivityKeepScreenOn()
@@ -405,6 +405,12 @@ fun ReaderScreen(
                             }
                             return@setOnGenericMotionListener true
                         }
+                        // 常规阅读：统一走表冠管线（固定单格步进 + 24px 门限齿轮微振），
+                        // 替代原先落给原生 ScrollView 的裸滚动（无振感且步进随系统滚动系数漂移）
+                        if (abs(delta) > 0.001f) {
+                            CrownScrollHelper.dispatchScroll(delta, scrollView, ctx, v)
+                        }
+                        return@setOnGenericMotionListener true
                     }
                     false
                 }
@@ -436,7 +442,14 @@ fun ReaderScreen(
                             val clampedY = (scrollY - bodyTop).coerceIn(0, maxOf(0, holder.bodyTv.height - 1))
                             val line = layout.getLineForVertical(clampedY)
                             val charOffsetInBody = layout.getLineStart(line).coerceIn(0, content.formattedBody.length)
-                            content.startCharOffset + charOffsetInBody
+                            // 正文坐标 → 原文坐标：段落映射精确换算，持久化位置必须落在原文域
+                            content.startCharOffset + ChapterOffsetMapper.bodyToRaw(
+                                charOffsetInBody,
+                                content.bodyParagraphStarts,
+                                content.rawParagraphStarts,
+                                content.formattedBody.length,
+                                rawLength = content.endCharOffset - content.startCharOffset
+                            )
                         } else {
                             val bodyHeight = maxOf(1, holder.bodyTv.height)
                             val relativeY = (scrollY - bodyTop).coerceIn(0, bodyHeight)
@@ -687,7 +700,13 @@ private fun restoreScrollPosition(
 
     val layout = holder.bodyTv.layout
     if (layout != null && layout.lineCount > 0 && holder.bodyTv.height > 0) {
-        val charOffsetInBody = (initialCharOffset - content.startCharOffset).coerceIn(0, content.formattedBody.length)
+        // 原文坐标 → 正文坐标：段落映射精确反解后再定位排版行
+        val charOffsetInBody = ChapterOffsetMapper.rawToBody(
+            initialCharOffset - content.startCharOffset,
+            content.bodyParagraphStarts,
+            content.rawParagraphStarts,
+            content.formattedBody.length
+        )
         val line = layout.getLineForOffset(charOffsetInBody)
         val lineTop = layout.getLineTop(line)
         val targetY = maxOf(0, holder.bodyTv.top + lineTop)
