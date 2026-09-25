@@ -93,24 +93,49 @@ val WatchRedNightColorScheme = darkColorScheme(
 )
 
 val WatchTypography = Typography(
+    // 大数字 / 强调展示（传输百分比等）
+    displaySmall = TextStyle(
+        fontSize = 30.sp,
+        fontWeight = FontWeight.Bold,
+        lineHeight = 36.sp,
+        letterSpacing = (-0.3).sp
+    ),
+    // 页面主标题（书架 / 菜单头图）
+    titleLarge = TextStyle(
+        fontSize = 19.sp,
+        fontWeight = FontWeight.Bold,
+        lineHeight = 26.sp,
+        letterSpacing = 0.1.sp
+    ),
+    // 卡片标题
     titleMedium = TextStyle(
         fontSize = 15.sp,
         fontWeight = FontWeight.Bold,
-        lineHeight = 22.sp
+        lineHeight = 22.sp,
+        letterSpacing = 0.1.sp
     ),
     bodyMedium = TextStyle(
         fontSize = 14.sp,
         fontWeight = FontWeight.Normal,
         lineHeight = 24.sp
     ),
+    // 胶囊按钮
+    labelLarge = TextStyle(
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        lineHeight = 16.sp,
+        letterSpacing = 0.2.sp
+    ),
     labelSmall = TextStyle(
         fontSize = 10.sp,
         fontWeight = FontWeight.Normal,
-        lineHeight = 16.sp
+        lineHeight = 16.sp,
+        letterSpacing = 0.3.sp
     ),
     labelMedium = TextStyle(
         fontSize = 11.sp,
         fontWeight = FontWeight.Medium,
-        lineHeight = 14.sp
+        lineHeight = 14.sp,
+        letterSpacing = 0.2.sp
     )
 )

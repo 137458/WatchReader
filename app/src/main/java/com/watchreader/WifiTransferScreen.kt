@@ -10,12 +10,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -101,14 +98,14 @@ fun WifiTransferScreen(
         if (isTransferring) {
             val primaryColor = colorScheme.primary
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val strokeWidth = 3.5.dp.toPx()
+                val strokeWidth = 3.dp.toPx()
                 val radius = (size.minDimension - strokeWidth) / 2f
                 val arcSize = Size(radius * 2, radius * 2)
                 val topLeft = Offset((size.width - radius * 2) / 2f, (size.height - radius * 2) / 2f)
 
                 // 底轨
                 drawArc(
-                    color = primaryColor.copy(alpha = 0.15f),
+                    color = primaryColor.copy(alpha = 0.12f),
                     startAngle = -90f,
                     sweepAngle = 360f,
                     useCenter = false,
@@ -151,12 +148,8 @@ fun WifiTransferScreen(
             ) {
                 Text(
                     text = "${(animatedProgress * 100).toInt()}%",
-                    style = TextStyle(
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace,
-                        color = colorScheme.primary
-                    )
+                    style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace),
+                    color = colorScheme.primary
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -211,12 +204,7 @@ fun WifiTransferScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(colorScheme.primary)
-                        )
+                        PulsingDot(color = colorScheme.primary)
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = "服务已就绪 · 手机扫码直连",
@@ -276,12 +264,7 @@ fun WifiTransferScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(colorScheme.error)
-                        )
+                        StaticDot(color = colorScheme.error)
                         Spacer(modifier = Modifier.width(5.dp))
                         Text(
                             text = "Wi-Fi 未连接",
@@ -348,48 +331,20 @@ fun WifiTransferScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (!isServerRunning) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(colorScheme.surfaceVariant)
-                                .clickable {
-                                    RotaryHapticManager.performScrollTick(context, null)
-                                    onToggleServer()
-                                }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "重启服务",
-                                style = TextStyle(
-                                    fontSize = 10.5.sp,
-                                    color = colorScheme.onSurfaceVariant
-                                )
-                            )
-                        }
+                        PillButton(
+                            label = "重启服务",
+                            verticalPadding = 7.dp,
+                            onClick = onToggleServer
+                        )
                         Spacer(modifier = Modifier.width(6.dp))
                     }
 
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(colorScheme.primary)
-                            .clickable {
-                                RotaryHapticManager.performScrollTick(context, null)
-                                onBack()
-                            }
-                            .padding(horizontal = 18.dp, vertical = 7.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "‹ 返回书架",
-                            style = TextStyle(
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = colorScheme.onPrimary
-                            )
-                        )
-                    }
+                    PillButton(
+                        label = "‹ 返回书架",
+                        emphasis = PillEmphasis.Primary,
+                        verticalPadding = 8.dp,
+                        onClick = onBack
+                    )
                 }
             }
         }

@@ -13,6 +13,9 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +28,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -272,48 +277,22 @@ fun ChapterListScreen(
                 .align(Alignment.BottomCenter)
         )
 
-        // 顶部 Tab 切换胶囊（下移至安全弦长区，彻底防止左右两角切出圆屏）
+        // 顶部 Tab 切换胶囊（滑动式指示：填充与文字颜色双通道动画，仅绘制层失效）
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 18.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .clip(WatchShapes.Pill)
                 .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
+                .border(1.dp, colorScheme.outline.copy(alpha = 0.18f), WatchShapes.Pill)
                 .padding(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (selectedTab == 0) colorScheme.primary else Color.Transparent)
-                    .clickable { selectedTab = 0 }
-                    .padding(horizontal = 14.dp, vertical = 5.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "目录 (${chapters.size})",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
-                    color = if (selectedTab == 0) colorScheme.onPrimary else colorScheme.onSurfaceVariant
-                )
-            }
-
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(if (selectedTab == 1) colorScheme.primary else Color.Transparent)
-                    .clickable { selectedTab = 1 }
-                    .padding(horizontal = 14.dp, vertical = 5.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "书签 (${bookmarks.size})",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
-                    color = if (selectedTab == 1) colorScheme.onPrimary else colorScheme.onSurfaceVariant
-                )
-            }
+            TabCapsule("目录 (${chapters.size})", selected = selectedTab == 0) { selectedTab = 0 }
+            TabCapsule("书签 (${bookmarks.size})", selected = selectedTab == 1) { selectedTab = 1 }
         }
 
-        // 底部常驻操作栏（提升至 18dp 宽阔弦长区，两端按钮不再被下弧削平，并恢复触控水波纹）
+        // 底部常驻操作栏（提升至 18dp 宽阔弦长区，两端按钮不再被下弧削平）
         val screenContext = androidx.compose.ui.platform.LocalContext.current
         Row(
             modifier = Modifier
@@ -322,79 +301,30 @@ fun ChapterListScreen(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
-                    .clickable(onClick = onBack)
-                    .padding(horizontal = 12.dp, vertical = 7.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "‹ 返回",
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.SemiBold
-                    ),
-                    color = colorScheme.primary
-                )
-            }
+            OverlayPill(label = "‹ 返回", onClick = onBack)
 
             if (selectedTab == 0 && chapters.isNotEmpty()) {
                 Spacer(modifier = Modifier.width(6.dp))
-
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(colorScheme.primary.copy(alpha = 0.18f))
-                        .border(1.dp, colorScheme.primary.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
-                        .clickable {
-                            currentListView?.let { lv ->
-                                if (currentChapterIndex in chapters.indices) {
-                                    RotaryHapticManager.performScrollTick(screenContext, null)
-                                    val viewHeight = lv.height
-                                    val itemHeight = (42 * lv.resources.displayMetrics.density).toInt()
-                                    val targetTop = maxOf(0, (viewHeight - itemHeight) / 2)
-                                    lv.smoothScrollToPositionFromTop(currentChapterIndex, targetTop, 300)
-                                }
+                OverlayPill(
+                    label = "当前",
+                    emphasized = true,
+                    onClick = {
+                        currentListView?.let { lv ->
+                            if (currentChapterIndex in chapters.indices) {
+                                RotaryHapticManager.performScrollTick(screenContext, null)
+                                val viewHeight = lv.height
+                                val itemHeight = (42 * lv.resources.displayMetrics.density).toInt()
+                                val targetTop = maxOf(0, (viewHeight - itemHeight) / 2)
+                                lv.smoothScrollToPositionFromTop(currentChapterIndex, targetTop, 300)
                             }
                         }
-                        .padding(horizontal = 12.dp, vertical = 7.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "当前",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = colorScheme.primary
-                    )
-                }
+                    }
+                )
             }
 
             if (selectedTab == 0 && ranges.isNotEmpty()) {
                 Spacer(modifier = Modifier.width(6.dp))
-
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
-                        .clickable {
-                            showRangePicker = true
-                        }
-                        .padding(horizontal = 12.dp, vertical = 7.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "选卷",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        ),
-                        color = colorScheme.onSurfaceVariant
-                    )
-                }
+                OverlayPill(label = "选卷") { showRangePicker = true }
             }
         }
 
@@ -446,6 +376,26 @@ fun ChapterListScreen(
                         }
 
                         rangeListView.adapter = object : BaseAdapter() {
+
+                            // 范围行卡片背景缓存（普通态 / 当前态）
+                            var normalBg: android.graphics.drawable.GradientDrawable? = null
+                            var currentBg: android.graphics.drawable.GradientDrawable? = null
+
+                            fun drawables(): Pair<android.graphics.drawable.GradientDrawable, android.graphics.drawable.GradientDrawable> {
+                                if (normalBg == null) {
+                                    normalBg = android.graphics.drawable.GradientDrawable().apply {
+                                        cornerRadius = 14 * density
+                                        setColor(colorScheme.surfaceVariant.toArgb())
+                                    }
+                                    currentBg = android.graphics.drawable.GradientDrawable().apply {
+                                        cornerRadius = 14 * density
+                                        setColor(colorScheme.primary.copy(alpha = 0.22f).toArgb())
+                                        setStroke((1.5f * density).toInt(), activeColor)
+                                    }
+                                }
+                                return normalBg!! to currentBg!!
+                            }
+
                             override fun getCount(): Int = ranges.size
                             override fun getItem(position: Int): Any = ranges[position]
                             override fun getItemId(position: Int): Long = position.toLong()
@@ -463,16 +413,8 @@ fun ChapterListScreen(
                                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
                                 }
 
-                                val cardBg = android.graphics.drawable.GradientDrawable().apply {
-                                    cornerRadius = 14 * density
-                                    if (isCurrentRange) {
-                                        setColor(colorScheme.primary.copy(alpha = 0.22f).toArgb())
-                                        setStroke((1.5f * density).toInt(), activeColor)
-                                    } else {
-                                        setColor(colorScheme.surfaceVariant.toArgb())
-                                    }
-                                }
-                                tv.background = cardBg
+                                val (rangeNormalBg, rangeCurrentBg) = drawables()
+                                tv.background = if (isCurrentRange) rangeCurrentBg else rangeNormalBg
                                 tv.text = if (isCurrentRange) "${range.label} • 正在读" else range.label
                                 tv.setTextColor(if (isCurrentRange) activeColor else normalColor)
                                 tv.typeface = if (isCurrentRange) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
@@ -539,29 +481,102 @@ fun ChapterListScreen(
                     modifier = Modifier.align(Alignment.TopCenter)
                 )
 
-                // 底部关闭胶囊（提高至 18dp 安全区并扩充触控盒，恢复水波纹）
+                // 底部关闭胶囊（提高至 18dp 安全区并扩充触控盒）
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 18.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
-                        .clickable {
-                            showRangePicker = false
-                        }
-                        .padding(horizontal = 22.dp, vertical = 8.dp)
                 ) {
-                    Text(
-                        text = "✕ 关闭",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        ),
-                        color = colorScheme.onSurfaceVariant
-                    )
+                    OverlayPill(label = "✕ 关闭") { showRangePicker = false }
                 }
             }
         }
+    }
+}
+
+/**
+ * 顶部 Tab 胶囊：选中态填充与文字颜色双通道动画，填充绘制于 drawBehind（仅绘制层失效）
+ */
+@Composable
+private fun TabCapsule(label: String, selected: Boolean, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val pillAlpha by animateFloatAsState(
+        targetValue = if (selected) 1f else 0f,
+        animationSpec = tween(190),
+        label = "tab-pill"
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (selected) colors.onPrimary else colors.onSurfaceVariant,
+        animationSpec = tween(190),
+        label = "tab-text"
+    )
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        modifier = Modifier
+            .pressScale(interaction, pressedScale = 0.97f)
+            .clip(WatchShapes.Pill)
+            .drawBehind {
+                if (pillAlpha > 0.01f) {
+                    drawRoundRect(
+                        color = colors.primary.copy(alpha = pillAlpha),
+                        cornerRadius = CornerRadius(size.height / 2f)
+                    )
+                }
+            }
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+            color = textColor
+        )
+    }
+}
+
+/**
+ * 浮层胶囊按钮：发丝描边 + 按压缩放 + 轻触感
+ */
+@Composable
+private fun OverlayPill(
+    label: String,
+    emphasized: Boolean = false,
+    onClick: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
+    val tick = rememberTickHaptic()
+    Box(
+        modifier = Modifier
+            .pressScale(interaction)
+            .clip(WatchShapes.Pill)
+            .background(
+                if (emphasized) colors.primary.copy(alpha = 0.16f)
+                else colors.surfaceVariant.copy(alpha = 0.94f)
+            )
+            .then(
+                if (emphasized) {
+                    Modifier.border(1.dp, colors.primary.copy(alpha = 0.45f), WatchShapes.Pill)
+                } else {
+                    Modifier
+                }
+            )
+            .clickable(interactionSource = interaction, indication = null) {
+                tick()
+                onClick()
+            }
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold
+            ),
+            color = if (emphasized) colors.primary else colors.onSurfaceVariant
+        )
     }
 }
 
@@ -571,6 +586,28 @@ private class ChapterListAdapter(
     var colorScheme: androidx.compose.material3.ColorScheme,
     val density: Float
 ) : BaseAdapter() {
+
+    // 缓存两级卡片背景，杜绝快速滚动期逐帧 GradientDrawable 分配引发的 GC 抖动
+    private var cachedNormalBg: android.graphics.drawable.GradientDrawable? = null
+    private var cachedCurrentBg: android.graphics.drawable.GradientDrawable? = null
+    private var drawableCacheKey: androidx.compose.material3.ColorScheme? = null
+
+    private fun cachedDrawables(): Pair<android.graphics.drawable.GradientDrawable, android.graphics.drawable.GradientDrawable> {
+        if (drawableCacheKey !== colorScheme || cachedNormalBg == null) {
+            cachedNormalBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12 * density
+                setColor(colorScheme.surfaceVariant.copy(alpha = 0.70f).toArgb())
+            }
+            cachedCurrentBg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 12 * density
+                setColor(colorScheme.primary.copy(alpha = 0.18f).toArgb())
+                setStroke((1.5f * density).toInt(), colorScheme.primary.toArgb())
+            }
+            drawableCacheKey = colorScheme
+        }
+        return cachedNormalBg!! to cachedCurrentBg!!
+    }
+
     override fun getCount(): Int = chapters.size
     override fun getItem(position: Int): Any = chapters[position]
     override fun getItemId(position: Int): Long = position.toLong()
@@ -636,16 +673,8 @@ private class ChapterListAdapter(
             holder = container.tag as ChapterCardViewHolder
         }
 
-        val cardBg = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = 12 * density
-            if (isCurrent) {
-                setColor(colorScheme.primary.copy(alpha = 0.18f).toArgb())
-                setStroke((1.5f * density).toInt(), activeColor)
-            } else {
-                setColor(colorScheme.surfaceVariant.copy(alpha = 0.70f).toArgb())
-            }
-        }
-        container.background = cardBg
+        val (normalBg, currentBg) = cachedDrawables()
+        container.background = if (isCurrent) currentBg else normalBg
 
         holder.titleTv.text = chapter.title
 

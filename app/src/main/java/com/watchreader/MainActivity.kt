@@ -1,51 +1,65 @@
 package com.watchreader
 
-import android.content.Context
 import android.content.Intent
-import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
-import android.text.Editable
-import android.text.TextUtils
-import android.text.TextWatcher
-import android.util.TypedValue
-import android.view.Gravity
 import android.view.MotionEvent
-import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
-import android.widget.EditText
-import android.widget.FrameLayout
-import android.widget.LinearLayout
-import android.widget.ScrollView
-import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlin.math.abs
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.ColorScheme
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
-import android.graphics.Color as AndroidColor
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 /**
  * 页面路由状态
@@ -176,7 +190,7 @@ class MainActivity : ComponentActivity() {
     private fun dispatchRotaryToActiveScrollView(viewGroup: ViewGroup, event: MotionEvent): Boolean {
         for (i in 0 until viewGroup.childCount) {
             val child = viewGroup.getChildAt(i)
-            if (child.isShown && (child is ScrollView || child is android.widget.ListView)) {
+            if (child.isShown && (child is android.widget.ScrollView || child is android.widget.ListView)) {
                 if (child.dispatchGenericMotionEvent(event)) {
                     return true
                 }
@@ -192,150 +206,165 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun AppContent(uiState: ReaderUiState) {
-        when (val current = uiState.screen) {
-            is Screen.Home -> BookshelfScreen(
-                bookshelf = uiState.bookshelf,
-                searchQuery = uiState.searchQuery,
-                fontSize = uiState.fontSize,
-                isDarkMode = uiState.isDarkMode,
-                onOpenFile = {
-                    openFileLauncher.launch(arrayOf("text/plain", "application/epub+zip", "application/octet-stream", "*/*"))
-                },
-                onOpenBook = { book -> viewModel.openFromShelf(book) },
-                onDeleteBook = { book -> viewModel.deleteFromShelf(book) },
-                onTogglePin = { book -> viewModel.toggleBookPin(book.uriString) },
-                onSearchChange = { viewModel.setSearchQuery(it) },
-                onOpenWifiTransfer = { viewModel.openWifiTransfer() },
-                onFontSizeChange = { viewModel.updateFontSize(it) },
-                onToggleDarkMode = { viewModel.toggleDarkMode() },
-                errorMessage = uiState.errorMessage
-            )
+        // 页面级切换过渡：短促淡入 + 微缩放归位，键控于屏幕类型（阅读中参数变化不触发过渡）
+        AnimatedContent(
+            targetState = uiState.screen,
+            contentKey = { it::class },
+            transitionSpec = {
+                (fadeIn(tween(WatchMotion.DUR_FADE, easing = WatchMotion.EnterEasing)) +
+                    scaleIn(
+                        initialScale = 0.985f,
+                        animationSpec = tween(WatchMotion.DUR_FADE, easing = WatchMotion.EnterEasing)
+                    )) togetherWith
+                    fadeOut(tween(WatchMotion.DUR_FADE_OUT, easing = WatchMotion.ExitEasing))
+            },
+            label = "screen-transition"
+        ) { current ->
+            when (current) {
+                is Screen.Home -> BookshelfScreen(
+                    bookshelf = uiState.bookshelf,
+                    searchQuery = uiState.searchQuery,
+                    fontSize = uiState.fontSize,
+                    isDarkMode = uiState.isDarkMode,
+                    onOpenFile = {
+                        openFileLauncher.launch(arrayOf("text/plain", "application/epub+zip", "application/octet-stream", "*/*"))
+                    },
+                    onOpenBook = { book -> viewModel.openFromShelf(book) },
+                    onDeleteBook = { book -> viewModel.deleteFromShelf(book) },
+                    onTogglePin = { book -> viewModel.toggleBookPin(book.uriString) },
+                    onSearchChange = { viewModel.setSearchQuery(it) },
+                    onOpenWifiTransfer = { viewModel.openWifiTransfer() },
+                    onFontSizeChange = { viewModel.updateFontSize(it) },
+                    onToggleDarkMode = { viewModel.toggleDarkMode() },
+                    errorMessage = uiState.errorMessage
+                )
 
-            is Screen.Loading -> LoadingScreen()
+                is Screen.Loading -> LoadingScreen()
 
-            is Screen.Reader -> ReaderScreen(
-                chapterContent = uiState.currentChapterContent,
-                initialCharOffset = current.charOffset,
-                totalChapters = uiState.chapters.size,
-                fullTextLength = uiState.fullTextLength,
-                onCharOffsetChange = { offset ->
-                    viewModel.updateCharOffset(offset)
-                },
-                onNextChapter = { viewModel.goToNextChapter() },
-                onPrevChapter = { viewModel.goToPrevChapter() },
-                onLongPress = { viewModel.navigateTo(Screen.Menu) },
-                onBack = { viewModel.handleBack() },
-                fontSize = uiState.fontSize,
-                autoScrollSpeed = uiState.autoScrollSpeed,
-                isAutoScrolling = uiState.isAutoScrolling,
-                onAutoScrollToggle = { viewModel.setAutoScrolling(!uiState.isAutoScrolling) },
-                onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
-                appBrightness = uiState.appBrightness,
-                onBrightnessChange = { viewModel.updateAppBrightness(it) },
-                tapPageArea = uiState.tapPageArea,
-                fontType = uiState.fontType,
-                chapters = uiState.chapters,
-                currentChapterIndex = uiState.currentChapterIndex,
-                onSeekChapter = { index -> viewModel.goToChapter(index) },
-                onFlushReadingPosition = { viewModel.flushReadingPosition() }
-            )
+                is Screen.Reader -> ReaderScreen(
+                    chapterContent = uiState.currentChapterContent,
+                    initialCharOffset = current.charOffset,
+                    totalChapters = uiState.chapters.size,
+                    fullTextLength = uiState.fullTextLength,
+                    onCharOffsetChange = { offset ->
+                        viewModel.updateCharOffset(offset)
+                    },
+                    onNextChapter = { viewModel.goToNextChapter() },
+                    onPrevChapter = { viewModel.goToPrevChapter() },
+                    onLongPress = { viewModel.navigateTo(Screen.Menu) },
+                    onBack = { viewModel.handleBack() },
+                    fontSize = uiState.fontSize,
+                    autoScrollSpeed = uiState.autoScrollSpeed,
+                    isAutoScrolling = uiState.isAutoScrolling,
+                    onAutoScrollToggle = { viewModel.setAutoScrolling(!uiState.isAutoScrolling) },
+                    onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
+                    appBrightness = uiState.appBrightness,
+                    onBrightnessChange = { viewModel.updateAppBrightness(it) },
+                    tapPageArea = uiState.tapPageArea,
+                    fontType = uiState.fontType,
+                    chapters = uiState.chapters,
+                    currentChapterIndex = uiState.currentChapterIndex,
+                    onSeekChapter = { index -> viewModel.goToChapter(index) },
+                    onFlushReadingPosition = { viewModel.flushReadingPosition() }
+                )
 
-            is Screen.Menu -> MenuScreen(
-                chapterTitle = uiState.currentChapterContent?.title ?: "",
-                fontSize = uiState.fontSize,
-                autoScrollSpeed = uiState.autoScrollSpeed,
-                isAutoScrolling = uiState.isAutoScrolling,
-                appBrightness = uiState.appBrightness,
-                hasPrevChapter = uiState.currentChapterContent?.hasPrevChapter == true,
-                hasNextChapter = uiState.currentChapterContent?.hasNextChapter == true,
-                onPrevChapter = {
-                    viewModel.goToPrevChapter()
-                    viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex))
-                },
-                onNextChapter = {
-                    viewModel.goToNextChapter()
-                    viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex))
-                },
-                onFontSizeChange = { viewModel.updateFontSize(it) },
-                onToggleAutoScroll = {
-                    val nextScrollState = !uiState.isAutoScrolling
-                    viewModel.setAutoScrolling(nextScrollState)
-                    if (nextScrollState) {
+                is Screen.Menu -> MenuScreen(
+                    chapterTitle = uiState.currentChapterContent?.title ?: "",
+                    fontSize = uiState.fontSize,
+                    autoScrollSpeed = uiState.autoScrollSpeed,
+                    isAutoScrolling = uiState.isAutoScrolling,
+                    appBrightness = uiState.appBrightness,
+                    hasPrevChapter = uiState.currentChapterContent?.hasPrevChapter == true,
+                    hasNextChapter = uiState.currentChapterContent?.hasNextChapter == true,
+                    onPrevChapter = {
+                        viewModel.goToPrevChapter()
                         viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex))
-                    }
-                },
-                onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
-                onBrightnessChange = { viewModel.updateAppBrightness(it) },
-                onAddBookmark = {
-                    viewModel.addBookmark()
-                    viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex))
-                },
-                onOpenRsvp = { viewModel.openRsvp() },
-                onChapterListClick = { viewModel.navigateTo(Screen.ChapterList) },
-                onBack = { viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex)) },
-                onHome = { viewModel.closeBook() },
-                themeMode = uiState.themeMode,
-                onThemeModeChange = { viewModel.setThemeMode(it) },
-                tapPageArea = uiState.tapPageArea,
-                onTapPageAreaChange = { viewModel.setTapPageArea(it) },
-                cleanTypography = uiState.cleanTypography,
-                onCleanTypographyChange = { viewModel.setCleanTypography(it) },
-                fontType = uiState.fontType,
-                onFontTypeChange = { viewModel.setFontType(it) },
-                readDurationSec = uiState.readDurationSec
-            )
+                    },
+                    onNextChapter = {
+                        viewModel.goToNextChapter()
+                        viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex))
+                    },
+                    onFontSizeChange = { viewModel.updateFontSize(it) },
+                    onToggleAutoScroll = {
+                        val nextScrollState = !uiState.isAutoScrolling
+                        viewModel.setAutoScrolling(nextScrollState)
+                        if (nextScrollState) {
+                            viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex))
+                        }
+                    },
+                    onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
+                    onBrightnessChange = { viewModel.updateAppBrightness(it) },
+                    onAddBookmark = {
+                        viewModel.addBookmark()
+                        viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex))
+                    },
+                    onOpenRsvp = { viewModel.openRsvp() },
+                    onChapterListClick = { viewModel.navigateTo(Screen.ChapterList) },
+                    onBack = { viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex)) },
+                    onHome = { viewModel.closeBook() },
+                    themeMode = uiState.themeMode,
+                    onThemeModeChange = { viewModel.setThemeMode(it) },
+                    tapPageArea = uiState.tapPageArea,
+                    onTapPageAreaChange = { viewModel.setTapPageArea(it) },
+                    cleanTypography = uiState.cleanTypography,
+                    onCleanTypographyChange = { viewModel.setCleanTypography(it) },
+                    fontType = uiState.fontType,
+                    onFontTypeChange = { viewModel.setFontType(it) },
+                    readDurationSec = uiState.readDurationSec
+                )
 
-            is Screen.ChapterList -> ChapterListScreen(
-                chapters = uiState.chapters,
-                currentChapterIndex = uiState.currentChapterIndex,
-                bookmarks = uiState.bookmarks,
-                onChapterClick = { index ->
-                    viewModel.goToChapter(index)
-                },
-                onBookmarkClick = { bookmark ->
-                    viewModel.jumpToBookmark(bookmark)
-                },
-                onDeleteBookmark = { bookmark ->
-                    viewModel.removeBookmark(bookmark.id)
-                },
-                onBack = { viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex)) }
-            )
+                is Screen.ChapterList -> ChapterListScreen(
+                    chapters = uiState.chapters,
+                    currentChapterIndex = uiState.currentChapterIndex,
+                    bookmarks = uiState.bookmarks,
+                    onChapterClick = { index ->
+                        viewModel.goToChapter(index)
+                    },
+                    onBookmarkClick = { bookmark ->
+                        viewModel.jumpToBookmark(bookmark)
+                    },
+                    onDeleteBookmark = { bookmark ->
+                        viewModel.removeBookmark(bookmark.id)
+                    },
+                    onBack = { viewModel.navigateTo(Screen.Reader(viewModel.getCurrentReadingOffset(), uiState.currentChapterIndex)) }
+                )
 
-            is Screen.Rsvp -> RsvpScreen(
-                chapterContent = uiState.currentChapterContent,
-                initialCharOffset = viewModel.getCurrentReadingOffset(),
-                wordsPerMinute = uiState.rsvpSpeed,
-                onCharOffsetChange = { offset ->
-                    viewModel.updateCharOffset(offset)
-                },
-                onNextChapter = { viewModel.goToNextChapter() },
-                onSpeedChange = { viewModel.updateRsvpSpeed(it) },
-                onBack = { viewModel.handleBack() }
-            )
+                is Screen.Rsvp -> RsvpScreen(
+                    chapterContent = uiState.currentChapterContent,
+                    initialCharOffset = viewModel.getCurrentReadingOffset(),
+                    wordsPerMinute = uiState.rsvpSpeed,
+                    onCharOffsetChange = { offset ->
+                        viewModel.updateCharOffset(offset)
+                    },
+                    onNextChapter = { viewModel.goToNextChapter() },
+                    onSpeedChange = { viewModel.updateRsvpSpeed(it) },
+                    onBack = { viewModel.handleBack() }
+                )
 
-            is Screen.WifiTransfer -> WifiTransferScreen(
-                ipAddress = uiState.wifiIpAddress,
-                port = uiState.wifiPort,
-                uploadedCount = uiState.wifiUploadedCount,
-                isServerRunning = uiState.isWifiServerRunning,
-                isTransferring = uiState.isTransferring,
-                transferProgress = uiState.transferProgress,
-                transferFileName = uiState.transferFileName,
-                onToggleServer = {
-                    if (uiState.isWifiServerRunning) viewModel.closeWifiTransfer() else viewModel.openWifiTransfer()
-                },
-                onBack = { viewModel.closeWifiTransfer() }
-            )
+                is Screen.WifiTransfer -> WifiTransferScreen(
+                    ipAddress = uiState.wifiIpAddress,
+                    port = uiState.wifiPort,
+                    uploadedCount = uiState.wifiUploadedCount,
+                    isServerRunning = uiState.isWifiServerRunning,
+                    isTransferring = uiState.isTransferring,
+                    transferProgress = uiState.transferProgress,
+                    transferFileName = uiState.transferFileName,
+                    onToggleServer = {
+                        if (uiState.isWifiServerRunning) viewModel.closeWifiTransfer() else viewModel.openWifiTransfer()
+                    },
+                    onBack = { viewModel.closeWifiTransfer() }
+                )
+            }
         }
     }
 }
 
-// ═══════════════════════════════════════
-//  书架主页 Composable（原生 ScrollView 架构 + 纯黑深色/亮色自适应）
-// ═══════════════════════════════════════
+// ═════════════════════════════════════
+//  书架主页（Compose 腕上设计系统）
+// ═════════════════════════════════════
 
 /**
- * 书架主页 — 圆屏黄金安全区排版
+ * 书架主页 — 圆屏黄金安全区排版 + 发丝描边层次 + 错峰入场
  */
 @Composable
 fun BookshelfScreen(
@@ -353,718 +382,365 @@ fun BookshelfScreen(
     onToggleDarkMode: () -> Unit,
     errorMessage: String? = null
 ) {
-    val colorScheme = MaterialTheme.colorScheme
+    val colors = MaterialTheme.colorScheme
+    val latestBook = bookshelf.maxByOrNull { it.lastReadTime }
+    val filteredBooks = bookshelf
+        .filter { it.title.contains(searchQuery, ignoreCase = true) }
+        .sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
 
-    AndroidView(
-        modifier = Modifier.fillMaxSize(),
-        factory = { context ->
-            val density = context.resources.displayMetrics.density
-            val padH = (22 * density).toInt()
-            val padTop = (44 * density).toInt()
-            val padBottom = (64 * density).toInt()
+    val tick = rememberTickHaptic()
 
-            val scrollView = ScrollView(context).apply {
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
+    // 两段式删除确认：首按进入待确认，3.2s 无操作自动回滚
+    var pendingDeleteUri by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(pendingDeleteUri) {
+        if (pendingDeleteUri != null) {
+            delay(3200L)
+            pendingDeleteUri = null
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 24.dp, vertical = 42.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // ── 头部：栏目标签 + 主标题 ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .staggeredEnter(0),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Bottom
+        ) {
+            Column {
+                SectionLabel("正在阅读", color = colors.primary)
+                Text(
+                    text = "我的书架",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = colors.onBackground
                 )
-                isFocusable = true
-                isFocusableInTouchMode = true
-                isVerticalScrollBarEnabled = false
-                setBackgroundColor(colorScheme.background.toArgb())
-                setPadding(padH, padTop, padH, padBottom)
-                clipToPadding = false
-                overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             }
-
-            val container = LinearLayout(context).apply {
-                orientation = LinearLayout.VERTICAL
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-            }
-
-            val holder = createBookshelfViewHolder(context, container)
-            scrollView.tag = holder
-            scrollView.addView(container)
-
-            updateBookshelfView(
-                holder = holder,
-                bookshelf = bookshelf,
-                searchQuery = searchQuery,
-                fontSize = fontSize,
-                isDarkMode = isDarkMode,
-                errorMessage = errorMessage,
-                colors = colorScheme,
-                onOpenFile = onOpenFile,
-                onOpenBook = onOpenBook,
-                onDeleteBook = onDeleteBook,
-                onTogglePin = onTogglePin,
-                onSearchChange = onSearchChange,
-                onOpenWifiTransfer = onOpenWifiTransfer,
-                onFontSizeChange = onFontSizeChange,
-                onToggleDarkMode = onToggleDarkMode
-            )
-            scrollView
-        },
-        update = { scrollView ->
-            scrollView.setBackgroundColor(colorScheme.background.toArgb())
-            val holder = scrollView.tag as? BookshelfViewHolder ?: return@AndroidView
-            updateBookshelfView(
-                holder = holder,
-                bookshelf = bookshelf,
-                searchQuery = searchQuery,
-                fontSize = fontSize,
-                isDarkMode = isDarkMode,
-                errorMessage = errorMessage,
-                colors = colorScheme,
-                onOpenFile = onOpenFile,
-                onOpenBook = onOpenBook,
-                onDeleteBook = onDeleteBook,
-                onTogglePin = onTogglePin,
-                onSearchChange = onSearchChange,
-                onOpenWifiTransfer = onOpenWifiTransfer,
-                onFontSizeChange = onFontSizeChange,
-                onToggleDarkMode = onToggleDarkMode
+            Text(
+                text = "${bookshelf.size} 本",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.onSurfaceVariant
             )
         }
-    )
-}
 
-private class BookshelfViewHolder(
-    val container: LinearLayout,
-    val headerLayout: LinearLayout,
-    val titleTv: TextView,
-    val wifiBtn: TextView,
-    val themeBtn: TextView,
-    val importBtn: TextView,
-    val searchInput: EditText,
-    val errTv: TextView,
-    val cardsContainer: LinearLayout,
-    val emptyLayout: LinearLayout,
-    val emptyTv: TextView,
-    val pickBtn: TextView,
-    val fontLayout: LinearLayout,
-    val fontLabel: TextView,
-    val fontMinus: TextView,
-    val fontSizeVal: TextView,
-    val fontPlus: TextView,
-    val cardHolders: MutableList<BookCardHolder> = mutableListOf(),
-    var pendingDeleteUri: String? = null,
-    var resetDeleteRunnable: Runnable? = null,
-    var onSearchChangeCallback: ((String) -> Unit)? = null
-)
-
-private class BookCardHolder(
-    val card: FrameLayout,
-    val pinIndicator: TextView,
-    val bookTitle: TextView,
-    val formatBadge: TextView,
-    val bookSub: TextView,
-    val pinBtn: TextView,
-    val delBtn: TextView
-)
-
-/**
- * 首次初始化构建骨架 View
- */
-private fun createBookshelfViewHolder(context: Context, container: LinearLayout): BookshelfViewHolder {
-    val density = context.resources.displayMetrics.density
-
-    // 1. 顶部栏
-    val headerLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, 0, 0, (8 * density).toInt())
-        }
-        gravity = Gravity.CENTER_VERTICAL
-    }
-
-    val titleTv = TextView(context).apply {
-        text = "书架"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
-        typeface = Typeface.DEFAULT_BOLD
-        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-    }
-    headerLayout.addView(titleTv)
-
-    val wifiBtn = TextView(context).apply {
-        text = "📶传书"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
-        typeface = Typeface.DEFAULT_BOLD
-        setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, 0, (4 * density).toInt(), 0)
-        }
-    }
-    headerLayout.addView(wifiBtn)
-
-    val themeBtn = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
-        typeface = Typeface.DEFAULT_BOLD
-        setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, 0, (4 * density).toInt(), 0)
-        }
-    }
-    headerLayout.addView(themeBtn)
-
-    val importBtn = TextView(context).apply {
-        text = "+ 导入"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
-        typeface = Typeface.DEFAULT_BOLD
-        setPadding((10 * density).toInt(), (6 * density).toInt(), (10 * density).toInt(), (6 * density).toInt())
-    }
-    headerLayout.addView(importBtn)
-    container.addView(headerLayout)
-
-    // 2. 搜索框（配置 IME 搜索动作键与提取模式规避）
-    val searchInput = EditText(context).apply {
-        hint = "🔍 搜索小说书名…"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        maxLines = 1
-        setSingleLine(true)
-        imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, 0, 0, (8 * density).toInt())
-        }
-        setPadding((12 * density).toInt(), (7 * density).toInt(), (12 * density).toInt(), (7 * density).toInt())
-        setOnEditorActionListener { v, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE) {
-                val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-                imm?.hideSoftInputFromWindow(v.windowToken, 0)
-                v.clearFocus()
-                true
-            } else false
-        }
-    }
-    container.addView(searchInput)
-
-    // 3. 错误提示
-    val errTv = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        gravity = Gravity.CENTER
-        setPadding(0, 0, 0, (6 * density).toInt())
-        visibility = View.GONE
-    }
-    container.addView(errTv)
-
-    // 4. 卡片容器
-    val cardsContainer = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-    }
-    container.addView(cardsContainer)
-
-    // 5. 空书架布局
-    val emptyLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, (14 * density).toInt(), 0, (14 * density).toInt())
-        }
-        gravity = Gravity.CENTER_HORIZONTAL
-        visibility = View.GONE
-    }
-
-    val emptyTv = TextView(context).apply {
-        text = "书架暂无书籍"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
-        gravity = Gravity.CENTER
-        setPadding(0, 0, 0, (10 * density).toInt())
-    }
-    emptyLayout.addView(emptyTv)
-
-    val pickBtn = TextView(context).apply {
-        text = "选择本地小说 (TXT / EPUB)"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        setPadding((16 * density).toInt(), (9 * density).toInt(), (16 * density).toInt(), (9 * density).toInt())
-    }
-    emptyLayout.addView(pickBtn)
-    container.addView(emptyLayout)
-
-    // 6. 字号调节底栏（扩大加减按钮触控区至 40dp 高度）
-    val fontLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, (12 * density).toInt(), 0, (20 * density).toInt())
-        }
-        gravity = Gravity.CENTER_VERTICAL
-    }
-
-    val fontLabel = TextView(context).apply {
-        text = "阅读字号"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-    }
-    fontLayout.addView(fontLabel)
-
-    val fontMinus = TextView(context).apply {
-        text = "－"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        setPadding((14 * density).toInt(), (9 * density).toInt(), (14 * density).toInt(), (9 * density).toInt())
-    }
-    fontLayout.addView(fontMinus)
-
-    val fontSizeVal = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        setPadding((8 * density).toInt(), (6 * density).toInt(), (8 * density).toInt(), (6 * density).toInt())
-    }
-    fontLayout.addView(fontSizeVal)
-
-    val fontPlus = TextView(context).apply {
-        text = "＋"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        typeface = Typeface.DEFAULT_BOLD
-        gravity = Gravity.CENTER
-        setPadding((14 * density).toInt(), (9 * density).toInt(), (14 * density).toInt(), (9 * density).toInt())
-    }
-    fontLayout.addView(fontPlus)
-    container.addView(fontLayout)
-
-    val holder = BookshelfViewHolder(
-        container = container,
-        headerLayout = headerLayout,
-        titleTv = titleTv,
-        wifiBtn = wifiBtn,
-        themeBtn = themeBtn,
-        importBtn = importBtn,
-        searchInput = searchInput,
-        errTv = errTv,
-        cardsContainer = cardsContainer,
-        emptyLayout = emptyLayout,
-        emptyTv = emptyTv,
-        pickBtn = pickBtn,
-        fontLayout = fontLayout,
-        fontLabel = fontLabel,
-        fontMinus = fontMinus,
-        fontSizeVal = fontSizeVal,
-        fontPlus = fontPlus
-    )
-
-    // 单例监听 TextWatcher，杜绝频繁注销重绑引起 IME 震荡闪退
-    searchInput.addTextChangedListener(object : TextWatcher {
-        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-            holder.onSearchChangeCallback?.invoke(s?.toString() ?: "")
-        }
-        override fun afterTextChanged(s: Editable?) {}
-    })
-
-    return holder
-}
-
-/**
- * 刷新书架主页数据与动态样式
- */
-private fun updateBookshelfView(
-    holder: BookshelfViewHolder,
-    bookshelf: List<BookItem>,
-    searchQuery: String,
-    fontSize: Int,
-    isDarkMode: Boolean,
-    errorMessage: String?,
-    colors: ColorScheme,
-    onOpenFile: () -> Unit,
-    onOpenBook: (BookItem) -> Unit,
-    onDeleteBook: (BookItem) -> Unit,
-    onTogglePin: (BookItem) -> Unit,
-    onSearchChange: (String) -> Unit,
-    onOpenWifiTransfer: () -> Unit,
-    onFontSizeChange: (Int) -> Unit,
-    onToggleDarkMode: () -> Unit
-) {
-    val context = holder.container.context
-    val density = context.resources.displayMetrics.density
-
-    val primaryColor = colors.primary.toArgb()
-    val onBgColor = colors.onBackground.toArgb()
-    val secondaryColor = colors.secondary.toArgb()
-    val surfaceColor = colors.surface.toArgb()
-    val surfaceVariantColor = colors.surfaceVariant.toArgb()
-    val onSurfaceVariantColor = colors.onSurfaceVariant.toArgb()
-    val onSurfaceColor = colors.onSurface.toArgb()
-    val outlineColor = colors.outline.toArgb()
-    val errorColor = colors.error.toArgb()
-
-    // 1. 顶部栏更新
-    holder.titleTv.setTextColor(primaryColor)
-
-    holder.wifiBtn.apply {
-        setTextColor(primaryColor)
-        background = GradientDrawable().apply {
-            setColor(surfaceVariantColor)
-            cornerRadius = 12 * density
-        }
-        setOnClickListener { onOpenWifiTransfer() }
-    }
-
-    holder.themeBtn.apply {
-        text = if (isDarkMode) "🌙 深色" else "☀️ 浅色"
-        setTextColor(onSurfaceVariantColor)
-        background = GradientDrawable().apply {
-            setColor(surfaceVariantColor)
-            cornerRadius = 12 * density
-        }
-        setOnClickListener { onToggleDarkMode() }
-    }
-
-    holder.importBtn.apply {
-        setTextColor(secondaryColor)
-        background = GradientDrawable().apply {
-            setColor(surfaceVariantColor)
-            cornerRadius = 12 * density
-        }
-        setOnClickListener { onOpenFile() }
-    }
-
-    // 2. 搜索框样式与回调绑定（杜绝 TextWatcher 重复注销绑定引发的输入法震荡断连）
-    holder.onSearchChangeCallback = onSearchChange
-    holder.searchInput.apply {
-        setTextColor(onSurfaceColor)
-        setHintTextColor(onSurfaceVariantColor.let { Color(it).copy(alpha = 0.6f).toArgb() })
-        background = GradientDrawable().apply {
-            setColor(surfaceVariantColor)
-            cornerRadius = 10 * density
-        }
-        if (text.toString() != searchQuery) {
-            setText(searchQuery)
-        }
-    }
-
-    // 3. 错误信息展示
-    if (errorMessage != null) {
-        holder.errTv.text = errorMessage
-        holder.errTv.setTextColor(errorColor)
-        holder.errTv.visibility = View.VISIBLE
-    } else {
-        holder.errTv.visibility = View.GONE
-    }
-
-    // 根据搜索过滤书架列表
-    val filteredBooks = if (searchQuery.isNotEmpty()) {
-        bookshelf.filter { it.title.contains(searchQuery, ignoreCase = true) }
-    } else {
-        bookshelf
-    }
-
-    // 4. 书架卡片复用与绑定
-    if (filteredBooks.isNotEmpty()) {
-        holder.emptyLayout.visibility = View.GONE
-        holder.cardsContainer.visibility = View.VISIBLE
-
-        for (i in filteredBooks.indices) {
-            val book = filteredBooks[i]
-            val cardHolder: BookCardHolder
-            if (i < holder.cardHolders.size) {
-                cardHolder = holder.cardHolders[i]
-                cardHolder.card.visibility = View.VISIBLE
-            } else {
-                cardHolder = createBookCardHolder(context, density)
-                holder.cardHolders.add(cardHolder)
-                holder.cardsContainer.addView(cardHolder.card)
-            }
-
-            val isPendingDelete = holder.pendingDeleteUri == book.uriString
-
-            // 就地更新卡片数据与外观
-            cardHolder.card.apply {
-                background = GradientDrawable().apply {
-                    setColor(surfaceColor)
-                    cornerRadius = 14 * density
-                    if (book.isPinned) {
-                        setStroke((1.2f * density).toInt(), primaryColor)
+        // ── 继续阅读主卡：主色实底 + 弹簧进度轨 ──
+        if (latestBook != null) {
+            val heroInteraction = remember { MutableInteractionSource() }
+            Column(
+                modifier = Modifier
+                    .staggeredEnter(1)
+                    .pressScale(heroInteraction, pressedScale = 0.975f)
+                    .fillMaxWidth()
+                    .clip(WatchShapes.Card)
+                    .background(colors.primary)
+                    .clickable(interactionSource = heroInteraction, indication = null) {
+                        tick()
+                        onOpenBook(latestBook)
                     }
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                SectionLabel("继续阅读", color = colors.onPrimary.copy(alpha = 0.72f))
+                Text(
+                    text = latestBook.title,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
+                    color = colors.onPrimary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = latestBook.lastChapterTitle.ifBlank { "从上次阅读位置继续" },
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
+                    color = colors.onPrimary.copy(alpha = 0.82f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ProgressTrack(
+                        progress = (latestBook.progressPercent / 100f).coerceIn(0f, 1f),
+                        modifier = Modifier.weight(1f),
+                        trackColor = colors.onPrimary.copy(alpha = 0.25f),
+                        fillColor = colors.onPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "${latestBook.progressPercent}%",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.onPrimary
+                    )
                 }
-                setOnClickListener {
-                    if (holder.pendingDeleteUri != null) {
-                        holder.pendingDeleteUri = null
-                        updateBookshelfView(
-                            holder = holder,
-                            bookshelf = bookshelf,
-                            searchQuery = searchQuery,
-                            fontSize = fontSize,
-                            isDarkMode = isDarkMode,
-                            errorMessage = errorMessage,
-                            colors = colors,
-                            onOpenFile = onOpenFile,
-                            onOpenBook = onOpenBook,
-                            onDeleteBook = onDeleteBook,
-                            onTogglePin = onTogglePin,
-                            onSearchChange = onSearchChange,
-                            onOpenWifiTransfer = onOpenWifiTransfer,
-                            onFontSizeChange = onFontSizeChange,
-                            onToggleDarkMode = onToggleDarkMode
-                        )
-                    } else {
+            }
+        } else {
+            SurfaceCard(
+                modifier = Modifier
+                    .staggeredEnter(1)
+                    .fillMaxWidth()
+                    .padding(0.dp),
+                containerColor = colors.surfaceVariant.copy(alpha = 0.6f)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text("建立你的第一座书架", style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+                    Text(
+                        "导入 TXT 或 EPUB，阅读进度会自动保存。",
+                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
+        // ── 双入口操作卡 ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .staggeredEnter(2),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            BookshelfAction(
+                modifier = Modifier.weight(1f),
+                title = "导入书籍",
+                value = "TXT · EPUB",
+                onClick = onOpenFile
+            )
+            BookshelfAction(
+                modifier = Modifier.weight(1f),
+                title = "无线传书",
+                value = "扫码直连",
+                onClick = onOpenWifiTransfer
+            )
+        }
+
+        AnimatedVisibility(
+            visible = !errorMessage.isNullOrBlank(),
+            enter = fadeIn(tween(WatchMotion.DUR_FADE)) + androidx.compose.animation.expandVertically(),
+            exit = fadeOut(tween(WatchMotion.DUR_FADE_OUT)) + androidx.compose.animation.shrinkVertically()
+        ) {
+            Text(
+                text = errorMessage.orEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.error
+            )
+        }
+
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = onSearchChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .staggeredEnter(3),
+            singleLine = true,
+            placeholder = { Text("搜索书名", fontSize = 12.sp) },
+            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
+            shape = WatchShapes.Row
+        )
+
+        // ── 书库列表 ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .staggeredEnter(4),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("书库", style = MaterialTheme.typography.titleMedium, color = colors.onBackground)
+            Text(
+                text = if (searchQuery.isBlank()) "最近阅读优先" else "${filteredBooks.size} 个结果",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant
+            )
+        }
+
+        if (filteredBooks.isEmpty()) {
+            SurfaceCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .staggeredEnter(5),
+                containerColor = colors.surfaceVariant.copy(alpha = 0.45f)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 18.dp, horizontal = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = if (bookshelf.isEmpty()) "书架还是空的" else "没有匹配的书籍",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.onSurface
+                    )
+                    Text(
+                        text = if (bookshelf.isEmpty()) "从上方导入或扫码传入第一本书" else "换个书名关键词试试",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            }
+        } else {
+            filteredBooks.forEachIndexed { index, book ->
+                BookshelfBookRow(
+                    book = book,
+                    isPendingDelete = pendingDeleteUri == book.uriString,
+                    onOpen = {
+                        tick()
                         onOpenBook(book)
-                    }
-                }
-            }
-
-            cardHolder.pinIndicator.apply {
-                visibility = if (book.isPinned) View.VISIBLE else View.GONE
-                setTextColor(primaryColor)
-            }
-
-            val isEpub = book.uriString.endsWith(".epub", ignoreCase = true) || book.title.endsWith(".epub", ignoreCase = true)
-            val displayTitle = EpubParser.cleanBookTitle(book.title)
-
-            cardHolder.bookTitle.apply {
-                text = displayTitle
-                setTextColor(onBgColor)
-            }
-
-            cardHolder.formatBadge.apply {
-                text = if (isEpub) "EPUB" else "TXT"
-                setTextColor(if (isEpub) primaryColor else secondaryColor)
-                background = GradientDrawable().apply {
-                    setColor(surfaceVariantColor)
-                    cornerRadius = 4 * density
-                }
-            }
-
-            val progressText = if (book.progressPercent > 0) "已读 ${book.progressPercent}%" else "未读"
-            val chapterSub = if (book.lastChapterTitle.isNotEmpty()) " · ${book.lastChapterTitle}" else ""
-            cardHolder.bookSub.apply {
-                text = "$progressText$chapterSub"
-                setTextColor(onSurfaceVariantColor)
-            }
-
-            cardHolder.pinBtn.apply {
-                text = if (book.isPinned) "取消置顶" else "置顶"
-                setTextColor(if (book.isPinned) primaryColor else outlineColor)
-                setOnClickListener { onTogglePin(book) }
-            }
-
-            cardHolder.delBtn.apply {
-                if (isPendingDelete) {
-                    text = "确认删除?"
-                    setTextColor(errorColor)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
-                    background = GradientDrawable().apply {
-                        setColor(Color(errorColor).copy(alpha = 0.16f).toArgb())
-                        cornerRadius = 8 * density
-                    }
-                    setOnClickListener {
-                        holder.pendingDeleteUri = null
-                        holder.resetDeleteRunnable?.let { holder.container.removeCallbacks(it) }
+                    },
+                    onTogglePin = { onTogglePin(book) },
+                    onRequestDelete = { pendingDeleteUri = book.uriString },
+                    onConfirmDelete = {
+                        pendingDeleteUri = null
                         onDeleteBook(book)
-                    }
-                } else {
-                    text = "✕"
-                    setTextColor(outlineColor)
-                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                    background = null
-                    setOnClickListener {
-                        holder.pendingDeleteUri = book.uriString
-                        holder.resetDeleteRunnable?.let { holder.container.removeCallbacks(it) }
-                        holder.resetDeleteRunnable = Runnable {
-                            if (holder.pendingDeleteUri == book.uriString) {
-                                holder.pendingDeleteUri = null
-                                updateBookshelfView(
-                                    holder = holder,
-                                    bookshelf = bookshelf,
-                                    searchQuery = searchQuery,
-                                    fontSize = fontSize,
-                                    isDarkMode = isDarkMode,
-                                    errorMessage = errorMessage,
-                                    colors = colors,
-                                    onOpenFile = onOpenFile,
-                                    onOpenBook = onOpenBook,
-                                    onDeleteBook = onDeleteBook,
-                                    onTogglePin = onTogglePin,
-                                    onSearchChange = onSearchChange,
-                                    onOpenWifiTransfer = onOpenWifiTransfer,
-                                    onFontSizeChange = onFontSizeChange,
-                                    onToggleDarkMode = onToggleDarkMode
-                                )
-                            }
-                        }
-                        holder.container.postDelayed(holder.resetDeleteRunnable!!, 3200L)
-
-                        updateBookshelfView(
-                            holder = holder,
-                            bookshelf = bookshelf,
-                            searchQuery = searchQuery,
-                            fontSize = fontSize,
-                            isDarkMode = isDarkMode,
-                            errorMessage = errorMessage,
-                            colors = colors,
-                            onOpenFile = onOpenFile,
-                            onOpenBook = onOpenBook,
-                            onDeleteBook = onDeleteBook,
-                            onTogglePin = onTogglePin,
-                            onSearchChange = onSearchChange,
-                            onOpenWifiTransfer = onOpenWifiTransfer,
-                            onFontSizeChange = onFontSizeChange,
-                            onToggleDarkMode = onToggleDarkMode
-                        )
-                    }
-                }
+                    },
+                    enterOrder = 5 + index
+                )
             }
         }
 
-        // 隐藏多余卡片
-        for (i in filteredBooks.size until holder.cardHolders.size) {
-            holder.cardHolders[i].card.visibility = View.GONE
-        }
-    } else {
-        holder.cardsContainer.visibility = View.GONE
-        holder.emptyLayout.visibility = View.VISIBLE
-        holder.emptyTv.apply {
-            text = if (searchQuery.isNotEmpty()) "未找到匹配的小说" else "书架暂无书籍"
-            setTextColor(onSurfaceVariantColor)
-        }
-        holder.pickBtn.apply {
-            setTextColor(primaryColor)
-            background = GradientDrawable().apply {
-                setColor(surfaceVariantColor)
-                cornerRadius = 16 * density
+        // ── 底部显示调节行 ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .staggeredEnter(6 + filteredBooks.size.coerceAtMost(6)),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SectionLabel("显示")
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "字号 $fontSize",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.onSurface
+                )
+                PillButton("−", verticalPadding = 5.dp) { onFontSizeChange(fontSize - 1) }
+                PillButton("+", verticalPadding = 5.dp) { onFontSizeChange(fontSize + 1) }
+                PillButton(
+                    if (isDarkMode) "夜" else "日",
+                    verticalPadding = 5.dp
+                ) { onToggleDarkMode() }
             }
-            setOnClickListener { onOpenFile() }
         }
-    }
-
-    // 5. 字号底栏更新
-    holder.fontLabel.setTextColor(onSurfaceVariantColor)
-    holder.fontMinus.apply {
-        setTextColor(onSurfaceVariantColor)
-        setOnClickListener { onFontSizeChange(fontSize - 1) }
-    }
-    holder.fontSizeVal.apply {
-        text = "$fontSize"
-        setTextColor(onSurfaceColor)
-    }
-    holder.fontPlus.apply {
-        setTextColor(secondaryColor)
-        setOnClickListener { onFontSizeChange(fontSize + 1) }
     }
 }
 
-private fun createBookCardHolder(context: Context, density: Float): BookCardHolder {
-    val card = FrameLayout(context).apply {
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, 0, 0, (8 * density).toInt())
+@Composable
+private fun BookshelfAction(
+    modifier: Modifier,
+    title: String,
+    value: String,
+    onClick: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
+    Row(
+        modifier = modifier
+            .pressScale(interaction)
+            .clip(WatchShapes.Row)
+            .background(colors.surfaceVariant)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.labelMedium, color = colors.onSurface)
+            Text(value, style = MaterialTheme.typography.labelSmall, color = colors.primary)
         }
-        setPadding((10 * density).toInt(), (9 * density).toInt(), (6 * density).toInt(), (9 * density).toInt())
-        isClickable = true
-    }
-
-    val cardContent = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        layoutParams = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
+        Text(
+            text = "›",
+            style = MaterialTheme.typography.labelLarge,
+            color = colors.onSurfaceVariant.copy(alpha = 0.5f)
         )
-        gravity = Gravity.CENTER_VERTICAL
     }
+}
 
-    val infoLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.VERTICAL
-        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-    }
+@Composable
+private fun BookshelfBookRow(
+    book: BookItem,
+    isPendingDelete: Boolean,
+    onOpen: () -> Unit,
+    onTogglePin: () -> Unit,
+    onRequestDelete: () -> Unit,
+    onConfirmDelete: () -> Unit,
+    enterOrder: Int
+) {
+    val colors = MaterialTheme.colorScheme
+    val isEpub = book.uriString.endsWith(".epub", ignoreCase = true) || book.title.endsWith(".epub", ignoreCase = true)
+    val displayTitle = EpubParser.cleanBookTitle(book.title)
 
-    val titleRow = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        )
-        gravity = Gravity.CENTER_VERTICAL
-    }
-
-    val pinIndicator = TextView(context).apply {
-        text = "📌"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-        setPadding(0, 0, (3 * density).toInt(), 0)
-        visibility = View.GONE
-    }
-    titleRow.addView(pinIndicator)
-
-    val bookTitle = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-        typeface = Typeface.DEFAULT_BOLD
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-    }
-    titleRow.addView(bookTitle)
-
-    val formatBadge = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 8.5f)
-        typeface = Typeface.DEFAULT_BOLD
-        setPadding((4 * density).toInt(), (1.5f * density).toInt(), (4 * density).toInt(), (1.5f * density).toInt())
-        layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins((4 * density).toInt(), 0, (4 * density).toInt(), 0)
+    SurfaceCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .staggeredEnter(enterOrder),
+        shape = WatchShapes.Row
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpen)
+                .padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextBadge(
+                    text = if (isEpub) "EPUB" else "TXT",
+                    color = if (isEpub) colors.primary else colors.secondary
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = displayTitle,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = colors.onSurface,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "${book.progressPercent}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.primary
+                )
+            }
+            Text(
+                text = book.lastChapterTitle.ifBlank { "尚未开始" },
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                ProgressTrack(
+                    progress = (book.progressPercent / 100f).coerceIn(0f, 1f),
+                    modifier = Modifier.weight(1f),
+                    height = 3.dp
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = if (book.isPinned) "已置顶" else "置顶",
+                    modifier = Modifier.clickable(onClick = onTogglePin),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.primary
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = if (isPendingDelete) "确认删除？" else "删除",
+                    modifier = Modifier.clickable { if (isPendingDelete) onConfirmDelete() else onRequestDelete() },
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (isPendingDelete) FontWeight.Bold else FontWeight.Normal),
+                    color = if (isPendingDelete) colors.error else colors.onSurfaceVariant.copy(alpha = 0.75f)
+                )
+            }
         }
     }
-    titleRow.addView(formatBadge)
-    infoLayout.addView(titleRow)
-
-    val bookSub = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-        maxLines = 1
-        ellipsize = TextUtils.TruncateAt.END
-        setPadding(0, (2 * density).toInt(), 0, 0)
-    }
-    infoLayout.addView(bookSub)
-    cardContent.addView(infoLayout)
-
-    val pinBtn = TextView(context).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-        gravity = Gravity.CENTER
-        setPadding((8 * density).toInt(), (9 * density).toInt(), (8 * density).toInt(), (9 * density).toInt())
-    }
-    cardContent.addView(pinBtn)
-
-    val delBtn = TextView(context).apply {
-        text = "✕"
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        gravity = Gravity.CENTER
-        setPadding((10 * density).toInt(), (9 * density).toInt(), (10 * density).toInt(), (9 * density).toInt())
-    }
-    cardContent.addView(delBtn)
-
-    card.addView(cardContent)
-    return BookCardHolder(card, pinIndicator, bookTitle, formatBadge, bookSub, pinBtn, delBtn)
 }
 
 /**
- * 加载中界面
+ * 加载中界面：旋转弧环 + 呼吸文字
  */
 @Composable
 fun LoadingScreen() {
@@ -1072,10 +748,23 @@ fun LoadingScreen() {
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = "加载中…",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            LoadingIndicator(size = 30.dp, strokeWidth = 2.6.dp)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "正在打开",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "加载中…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
