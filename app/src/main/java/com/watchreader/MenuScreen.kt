@@ -273,11 +273,11 @@ fun MenuScreen(
             }
         }
 
-        // 顶部羽化渐隐（统一 EdgeFadeMask 基元）
+        // 顶部羽化渐隐（统一 EdgeFadeMask 基元 + 全应用统一 48dp 顶部高度）
         EdgeFadeMask(
             edge = Alignment.Top,
             modifier = Modifier.align(Alignment.TopCenter),
-            height = 36.dp
+            height = 48.dp
         )
     }
 }
@@ -287,8 +287,8 @@ private fun AnimatedValue(value: String, content: @Composable (String) -> Unit) 
     AnimatedContent(
         targetState = value,
         transitionSpec = {
-            (fadeIn(tween(180)) + slideInVertically { it / 3 }) togetherWith
-                (fadeOut(tween(120)) + slideOutVertically { -it / 3 })
+            (fadeIn(tween(WatchMotion.DUR_SWAP_IN)) + slideInVertically { it / 3 }) togetherWith
+                (fadeOut(tween(WatchMotion.DUR_SWAP_OUT)) + slideOutVertically { -it / 3 })
         },
         label = "menu-value"
     ) { current ->
@@ -325,7 +325,7 @@ private fun Stepper(onMinus: () -> Unit, onPlus: () -> Unit) {
     Row(
         modifier = Modifier
             .clip(WatchShapes.Pill)
-            .background(colors.surfaceVariant.copy(alpha = 0.55f))
+            .background(colors.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM))
     ) {
         StepperKey("−", colors, onMinus)
         Box(

@@ -68,6 +68,12 @@ object WatchMotion {
     const val DUR_ENTER = 340
     const val DUR_FADE = 200
     const val DUR_FADE_OUT = 160
+
+    // 微内容切换（数值轮换 / Tab 填充 / 局部淡入淡出）：比页面级淡入淡出更快一档，
+    // 全应用所有小面积状态切换统一走这一对时长，杜绝各页自定 120/180/190/200 漂移
+    const val DUR_SWAP_IN = 180
+    const val DUR_SWAP_OUT = 120
+
     const val STAGGER_STEP_MS = 36L
     const val MAX_STAGGER = 8
 
@@ -76,6 +82,27 @@ object WatchMotion {
 
     /** 按压回弹：快速沉稳，不过弹 */
     fun <T> pressSpring() = spring<T>(dampingRatio = 0.75f, stiffness = Spring.StiffnessMedium)
+}
+
+/**
+ * 统一低透明度令牌：发丝描边 / 分隔线 / 进度轨 / 强调描边在三类主题下的共享 alpha。
+ * 收敛此前散落各页的 0.14 / 0.16 / 0.18 / 0.25 / 0.45 硬编码，保证同一语义同一观感。
+ */
+object WatchAlpha {
+    /** 卡片发丝描边 */
+    const val HAIRLINE = 0.16f
+
+    /** 发丝分隔线 */
+    const val DIVIDER = 0.14f
+
+    /** 进度轨底槽 */
+    const val TRACK = 0.25f
+
+    /** 主色强调描边（outline 胶囊 / 角标徽章） */
+    const val ACCENT_BORDER = 0.45f
+
+    /** 轻量衬底（地址胶囊 / 步进器底） */
+    const val SUBTLE_SCRIM = 0.55f
 }
 
 /** 统一圆角体系 */
@@ -126,7 +153,7 @@ fun SurfaceCard(
     modifier: Modifier = Modifier,
     shape: Shape = WatchShapes.Card,
     containerColor: Color = MaterialTheme.colorScheme.surface,
-    borderColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
+    borderColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = WatchAlpha.HAIRLINE),
     borderWidth: Dp = 1.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -177,7 +204,7 @@ fun PillButton(
             .background(container)
             .then(
                 if (emphasis == PillEmphasis.Outline && enabled) {
-                    Modifier.border(1.dp, colors.primary.copy(alpha = 0.45f), WatchShapes.Pill)
+                    Modifier.border(1.dp, colors.primary.copy(alpha = WatchAlpha.ACCENT_BORDER), WatchShapes.Pill)
                 } else {
                     Modifier
                 }
@@ -226,7 +253,7 @@ fun HairlineDivider(modifier: Modifier = Modifier) {
     Divider(
         modifier = modifier,
         thickness = 1.dp,
-        color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f)
+        color = MaterialTheme.colorScheme.outline.copy(alpha = WatchAlpha.DIVIDER)
     )
 }
 
@@ -238,7 +265,7 @@ fun HairlineDivider(modifier: Modifier = Modifier) {
 fun ProgressTrack(
     progress: Float,
     modifier: Modifier = Modifier,
-    trackColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f),
+    trackColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = WatchAlpha.TRACK),
     fillColor: Color = MaterialTheme.colorScheme.primary,
     height: Dp = 4.dp
 ) {
@@ -344,7 +371,7 @@ fun TextBadge(
     Box(
         modifier = modifier
             .clip(WatchShapes.Badge)
-            .border(1.dp, color.copy(alpha = 0.45f), WatchShapes.Badge)
+            .border(1.dp, color.copy(alpha = WatchAlpha.ACCENT_BORDER), WatchShapes.Badge)
             .background(color.copy(alpha = 0.10f))
             .padding(horizontal = 5.dp, vertical = 1.dp)
     ) {

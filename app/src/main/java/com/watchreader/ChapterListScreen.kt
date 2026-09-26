@@ -45,6 +45,17 @@ private class ChapterCardViewHolder(
 )
 
 /**
+ * 原生 ListView 背景守卫：View.setBackgroundColor 每次调用都会新建 ColorDrawable 并失效重绘，
+ * 而 AndroidView 的 update 在每次父级重组都会执行 —— 仅在颜色真正变化时才设置
+ */
+private fun applyListViewBg(view: View, color: Int) {
+    val current = (view.background as? android.graphics.drawable.ColorDrawable)?.color
+    if (current != color) {
+        view.setBackgroundColor(color)
+    }
+}
+
+/**
  * 章节范围分卷模型
  */
 data class ChapterRange(
@@ -160,9 +171,15 @@ fun ChapterListScreen(
                 },
                 update = { listView ->
                     currentListView = listView
-                    listView.setBackgroundColor(bgColor)
+                    applyListViewBg(listView, bgColor)
+                    // notifyDataSetChanged 会强制全部可见行重布局：仅在数据/主题真正变化时调用，
+                    // 杜绝父级每次重组（如阅读时长 tick）都触发目录整页 invalidate
                     val adapter = listView.adapter as? ChapterListAdapter
-                    if (adapter != null) {
+                    if (adapter != null &&
+                        (adapter.chapters !== chapters ||
+                            adapter.currentChapterIndex != currentChapterIndex ||
+                            adapter.colorScheme !== colorScheme)
+                    ) {
                         adapter.chapters = chapters
                         adapter.currentChapterIndex = currentChapterIndex
                         adapter.colorScheme = colorScheme
@@ -218,9 +235,11 @@ fun ChapterListScreen(
                         bookmarkListView
                     },
                     update = { bookmarkListView ->
-                        bookmarkListView.setBackgroundColor(bgColor)
+                        applyListViewBg(bookmarkListView, bgColor)
                         val adapter = bookmarkListView.adapter as? BookmarkListAdapter
-                        if (adapter != null) {
+                        if (adapter != null &&
+                            (adapter.bookmarks !== bookmarks || adapter.colorScheme !== colorScheme)
+                        ) {
                             adapter.bookmarks = bookmarks
                             adapter.colorScheme = colorScheme
                             adapter.notifyDataSetChanged()
@@ -239,7 +258,7 @@ fun ChapterListScreen(
         EdgeFadeMask(
             edge = Alignment.Bottom,
             modifier = Modifier.align(Alignment.BottomCenter),
-            height = 46.dp
+            height = 44.dp
         )
 
         // 顶部 Tab 切换胶囊（滑动式指示：填充与文字颜色双通道动画，仅绘制层失效）
@@ -249,7 +268,7 @@ fun ChapterListScreen(
                 .padding(top = 18.dp)
                 .clip(WatchShapes.Pill)
                 .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
-                .border(1.dp, colorScheme.outline.copy(alpha = 0.18f), WatchShapes.Pill)
+                .border(1.dp, colorScheme.outline.copy(alpha = WatchAlpha.HAIRLINE), WatchShapes.Pill)
                 .padding(2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -276,7 +295,7 @@ fun ChapterListScreen(
                         currentListView?.let { lv ->
                             if (currentChapterIndex in chapters.indices) {
                                 val viewHeight = lv.height
-                                val itemHeight = (42 * lv.resources.displayMetrics.density).toInt()
+                                val itemHeight = (44 * lv.resources.displayMetrics.density).toInt()
                                 val targetTop = maxOf(0, (viewHeight - itemHeight) / 2)
                                 lv.smoothScrollToPositionFromTop(currentChapterIndex, targetTop, 300)
                             }
@@ -294,6 +313,8 @@ fun ChapterListScreen(
         // 2. 范围分卷极速直达浮层
         if (showRangePicker && ranges.isNotEmpty()) {
             val activeRangeIndex = ranges.indexOfFirst { currentChapterIndex in it.startIndex..it.endIndex }.coerceAtLeast(0)
+            // 选卷列表条件化刷新状态：[0]=章节总数快照, [1]=当前章节快照
+            val rangeSyncState = remember { intArrayOf(-1, -1) }
 
             Box(
                 modifier = Modifier
@@ -366,7 +387,7 @@ fun ChapterListScreen(
                                         (38 * density).toInt()
                                     )
                                     gravity = Gravity.CENTER
-                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                                    setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
                                 }
 
                                 val (rangeNormalBg, rangeCurrentBg) = drawables()
@@ -396,8 +417,15 @@ fun ChapterListScreen(
                         rangeListView
                     },
                     update = { rangeListView ->
-                        rangeListView.setBackgroundColor(bgColor)
-                        (rangeListView.adapter as? BaseAdapter)?.notifyDataSetChanged()
+                        applyListViewBg(rangeListView, bgColor)
+                        val adapter = rangeListView.adapter
+                        if (adapter != null &&
+                            (rangeSyncState[0] != chapters.size || rangeSyncState[1] != currentChapterIndex)
+                        ) {
+                            rangeSyncState[0] = chapters.size
+                            rangeSyncState[1] = currentChapterIndex
+                            (adapter as? BaseAdapter)?.notifyDataSetChanged()
+                        }
                     }
                 )
 
@@ -410,7 +438,7 @@ fun ChapterListScreen(
                 EdgeFadeMask(
                     edge = Alignment.Bottom,
                     modifier = Modifier.align(Alignment.BottomCenter),
-                    height = 46.dp
+                    height = 44.dp
                 )
 
                 // 顶部弧形标题
@@ -440,12 +468,12 @@ private fun TabCapsule(label: String, selected: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
     val pillAlpha by animateFloatAsState(
         targetValue = if (selected) 1f else 0f,
-        animationSpec = tween(190),
+        animationSpec = tween(WatchMotion.DUR_SWAP_IN),
         label = "tab-pill"
     )
     val textColor by animateColorAsState(
         targetValue = if (selected) colors.onPrimary else colors.onSurfaceVariant,
-        animationSpec = tween(190),
+        animationSpec = tween(WatchMotion.DUR_SWAP_IN),
         label = "tab-text"
     )
     val interaction = remember { MutableInteractionSource() }
@@ -467,7 +495,7 @@ private fun TabCapsule(label: String, selected: Boolean, onClick: () -> Unit) {
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Bold),
+            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
             color = textColor
         )
     }
@@ -488,11 +516,11 @@ private class ChapterListAdapter(
     private fun cachedDrawables(): Pair<android.graphics.drawable.GradientDrawable, android.graphics.drawable.GradientDrawable> {
         if (drawableCacheKey !== colorScheme || cachedNormalBg == null) {
             cachedNormalBg = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = 12 * density
+                cornerRadius = 14 * density
                 setColor(colorScheme.surfaceVariant.copy(alpha = 0.70f).toArgb())
             }
             cachedCurrentBg = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = 12 * density
+                cornerRadius = 14 * density
                 setColor(colorScheme.primary.copy(alpha = 0.18f).toArgb())
                 setStroke((1.5f * density).toInt(), colorScheme.primary.toArgb())
             }
@@ -533,14 +561,14 @@ private class ChapterListAdapter(
             }
 
             val indicatorTv = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
                 typeface = Typeface.DEFAULT_BOLD
                 setPadding(0, 0, (5 * density).toInt(), 0)
             }
             textLayout.addView(indicatorTv)
 
             val titleTv = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -548,7 +576,7 @@ private class ChapterListAdapter(
             textLayout.addView(titleTv)
 
             val tagTv = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 9.5f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
                 typeface = Typeface.DEFAULT_BOLD
                 setPadding((6 * density).toInt(), (1.5f * density).toInt(), (6 * density).toInt(), (1.5f * density).toInt())
                 background = android.graphics.drawable.GradientDrawable().apply {
@@ -624,7 +652,7 @@ private class BookmarkListAdapter(
             gravity = Gravity.CENTER_VERTICAL
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(surfaceVariantColor)
-                cornerRadius = 12 * density
+                cornerRadius = 14 * density
             }
             setPadding((10 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
         }
@@ -636,7 +664,7 @@ private class BookmarkListAdapter(
 
         val titleTv = TextView(context).apply {
             text = bm.chapterTitle.ifEmpty { "第 ${bm.chapterIndex + 1} 章" }
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(activeColor)
             maxLines = 1
@@ -647,7 +675,7 @@ private class BookmarkListAdapter(
         if (bm.snippet.isNotEmpty()) {
             val snippetTv = TextView(context).apply {
                 text = "“${bm.snippet.take(30)}…”"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
                 setTextColor(onSurfaceColor)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
@@ -658,7 +686,7 @@ private class BookmarkListAdapter(
 
         val dateTv = TextView(context).apply {
             text = timeFormat.format(Date(bm.time))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
             setTextColor(normalColor)
             setPadding(0, (2 * density).toInt(), 0, 0)
         }

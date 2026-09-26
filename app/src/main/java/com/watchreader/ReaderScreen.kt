@@ -20,8 +20,8 @@ import android.widget.TextView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -58,6 +58,16 @@ private class ReaderViewHolder(
     var prevBackground: GradientDrawable? = null
     var nextBackground: GradientDrawable? = null
     var appliedChromeColor: Int = 0
+
+    // update 阶段守卫状态：chapters 为不稳定 List，阅读页无法跳过父级重组，update 每次都会执行；
+    // TextView 的 setTextSize / setTextColor 是无条件 requestLayout + ColorStateList 分配，
+    // 不加守卫会把"阅读时长 10s tick / 底部百分比整数跳变"这类低频重组转化为全 ScrollView 重排版（滚动掉帧源）
+    var appliedBgColor: Int = Int.MIN_VALUE
+    var appliedFontSize: Int = -1
+    var appliedFontType: Int = -1
+    var appliedTitleColor: Int = Int.MIN_VALUE
+    var appliedBodyColor: Int = Int.MIN_VALUE
+    var appliedMetaColor: Int = Int.MIN_VALUE
 }
 
 /**
@@ -549,7 +559,6 @@ fun ReaderScreen(
             },
             update = { scrollView ->
                 val holder = scrollView.tag as? ReaderViewHolder ?: return@AndroidView
-                scrollView.setBackgroundColor(bgColor)
 
                 // 被覆盖页压顶：原生视图转 INVISIBLE 退出绘制但保持挂载 ——
                 // ViewGroup 跳过不可见子节点，隐藏期零绘制开销；返回阅读时零重建，
@@ -558,6 +567,11 @@ fun ReaderScreen(
                 if (scrollView.visibility != targetVisibility) {
                     scrollView.visibility = targetVisibility
                     if (covered) CrownScrollHelper.abortFling(scrollView)
+                }
+
+                if (holder.appliedBgColor != bgColor) {
+                    holder.appliedBgColor = bgColor
+                    scrollView.setBackgroundColor(bgColor)
                 }
 
                 // 卡片背景零分配复用：仅主题色真正变化时重着色。
@@ -590,7 +604,16 @@ fun ReaderScreen(
                     if (isAutoScrolling) {
                         holder.autoScrollEngine?.start()
                     }
-                } else {
+                } else if (holder.appliedFontSize != fontSize || holder.appliedFontType != fontType ||
+                    holder.appliedTitleColor != titleColor || holder.appliedBodyColor != textColor ||
+                    holder.appliedMetaColor != onSurfaceVariantColor
+                ) {
+                    holder.appliedFontSize = fontSize
+                    holder.appliedFontType = fontType
+                    holder.appliedTitleColor = titleColor
+                    holder.appliedBodyColor = textColor
+                    holder.appliedMetaColor = onSurfaceVariantColor
+
                     holder.titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSize + 2).toFloat())
                     holder.titleTv.setTextColor(titleColor)
 
@@ -608,7 +631,7 @@ fun ReaderScreen(
         // 被覆盖页压顶时整组叠加层退出组合：底层阅读页已转为不可见，
         // 这些叠加层若不退出会透过覆盖页的透明底直接穿帮（侧边时间 / 羽化渐变 / 进度指示）
         if (!covered) {
-            // 顶部/底部平滑渐变羽化遮罩（统一 EdgeFadeMask 基元，Brush 随主题色缓存）
+            // 顶部/底部平滑渐变羽化遮罩（统一 EdgeFadeMask 基元 + 全应用统一 48/44dp 高度）
             EdgeFadeMask(
                 edge = Alignment.Top,
                 modifier = Modifier.align(Alignment.TopCenter),
@@ -617,7 +640,7 @@ fun ReaderScreen(
             EdgeFadeMask(
                 edge = Alignment.Bottom,
                 modifier = Modifier.align(Alignment.BottomCenter),
-                height = 36.dp
+                height = 44.dp
             )
 
             // 顶部沿表盘外边缘弧形排布的章节名
@@ -660,7 +683,7 @@ fun ReaderScreen(
                 Text(
                     text = progressText,
                     style = TextStyle(
-                        fontSize = 9.5.sp,
+                        fontSize = 10.5.sp,
                         fontWeight = FontWeight.Medium,
                         color = colorScheme.onSurfaceVariant
                     ),
@@ -671,20 +694,24 @@ fun ReaderScreen(
                 )
             }
 
-            // 自动滚屏运行时右下角轻量胶囊状态提示
+            // 自动滚屏运行时右下角轻量胶囊状态提示（统一 WatchShapes.Pill + 无水波纹点击，与全应用按压语义一致）
             if (isAutoScrolling) {
+                val capsuleInteraction = remember { MutableInteractionSource() }
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 18.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(WatchShapes.Pill)
                         .background(colorScheme.surfaceVariant.copy(alpha = 0.90f))
-                        .clickable { onAutoScrollToggle() }
-                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                        .clickable(
+                            interactionSource = capsuleInteraction,
+                            indication = null
+                        ) { onAutoScrollToggle() }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
                         text = "▶ 自动滚屏 ${autoScrollSpeed.toInt()} px/s",
-                        style = TextStyle(fontSize = 9.5.sp, fontWeight = FontWeight.Bold),
+                        style = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.Bold),
                         color = colorScheme.primary
                     )
                 }
@@ -714,6 +741,11 @@ private fun bindChapterData(
     onSurfaceVariantColor: Int
 ) {
     holder.currentContent = content
+    holder.appliedFontSize = fontSize
+    holder.appliedFontType = fontType
+    holder.appliedTitleColor = titleColor
+    holder.appliedBodyColor = textColor
+    holder.appliedMetaColor = onSurfaceVariantColor
     if (content == null) {
         holder.container.tag = null
         holder.prevBtn.visibility = View.GONE

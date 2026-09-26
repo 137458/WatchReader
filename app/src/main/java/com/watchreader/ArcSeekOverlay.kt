@@ -1,6 +1,7 @@
 package com.watchreader
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
@@ -120,11 +121,11 @@ fun ArcSeekOverlay(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        // 寻道中屏幕右侧边缘微光弧线与光标
+        // 寻道中屏幕右侧边缘微光弧线与光标（时长统一走 WatchMotion 微切换令牌）
         AnimatedVisibility(
             visible = seekState.isSeeking,
-            enter = fadeIn(),
-            exit = fadeOut()
+            enter = fadeIn(tween(WatchMotion.DUR_SWAP_OUT)),
+            exit = fadeOut(tween(WatchMotion.DUR_SWAP_OUT))
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val cx = size.width / 2f
@@ -165,8 +166,8 @@ fun ArcSeekOverlay(
         // 寻道中屏幕中央大字悬浮胶囊（文案经 derivedStateOf 去重，仅跨越章节时重组）
         AnimatedVisibility(
             visible = seekState.isSeeking,
-            enter = fadeIn(),
-            exit = fadeOut()
+            enter = fadeIn(tween(WatchMotion.DUR_SWAP_OUT)),
+            exit = fadeOut(tween(WatchMotion.DUR_SWAP_OUT))
         ) {
             val label by remember(chapters) {
                 derivedStateOf {

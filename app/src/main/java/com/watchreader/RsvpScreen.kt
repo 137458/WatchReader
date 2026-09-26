@@ -92,6 +92,11 @@ fun RsvpScreen(
 
     val currentToken = if (tokens.isNotEmpty() && currentIndex in tokens.indices) tokens[currentIndex] else null
 
+    // 手势管线内读取的最新索引：pointerInput 只随分词结果重建（换章），
+    // 若以 currentIndex 为键，播放中每个词推进都会拆掉重建手势通道，
+    // 拖词手势中途被取消（accumulator 清零），表现为"播放中横滑跳词经常无效"
+    val latestIndex = rememberUpdatedState(currentIndex)
+
     // 闪读主时钟循环（响应 wordsPerMinute 毫秒级动态调速）
     LaunchedEffect(isPlaying, currentIndex, wordsPerMinute, tokens) {
         if (!isPlaying || tokens.isEmpty()) return@LaunchedEffect
@@ -119,18 +124,19 @@ fun RsvpScreen(
         modifier = Modifier
             .fillMaxSize()
             // 水平滑动手势：增加阻尼门限，避免轻触抖动时误跳词
-            .pointerInput(tokens, currentIndex) {
+            .pointerInput(tokens) {
                 var dragAccumulator = 0f
                 detectHorizontalDragGestures(
                     onDragEnd = { dragAccumulator = 0f },
                     onDragCancel = { dragAccumulator = 0f },
                     onHorizontalDrag = { _, dragAmount ->
                         dragAccumulator += dragAmount
+                        val base = latestIndex.value
                         if (dragAccumulator > 55f) {
                             dragAccumulator = 0f
                             if (tokens.isNotEmpty()) {
-                                val nextIdx = (currentIndex + 5).coerceAtMost(tokens.lastIndex)
-                                if (nextIdx != currentIndex) {
+                                val nextIdx = (base + 5).coerceAtMost(tokens.lastIndex)
+                                if (nextIdx != base) {
                                     currentIndex = nextIdx
                                     onCharOffsetChange(tokens[nextIdx].charOffset)
                                     tick()
@@ -139,8 +145,8 @@ fun RsvpScreen(
                         } else if (dragAccumulator < -55f) {
                             dragAccumulator = 0f
                             if (tokens.isNotEmpty()) {
-                                val prevIdx = (currentIndex - 5).coerceAtLeast(0)
-                                if (prevIdx != currentIndex) {
+                                val prevIdx = (base - 5).coerceAtLeast(0)
+                                if (prevIdx != base) {
                                     currentIndex = prevIdx
                                     onCharOffsetChange(tokens[prevIdx].charOffset)
                                     tick()
@@ -260,7 +266,7 @@ fun RsvpScreen(
 
             Text(
                 text = "${currentIndex + 1}/${tokens.size} · $progressPercent%",
-                style = TextStyle(fontSize = 10.5.sp, color = colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                style = TextStyle(fontSize = 11.sp, color = colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
             )
         }
 

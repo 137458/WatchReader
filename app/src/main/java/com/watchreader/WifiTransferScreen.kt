@@ -128,8 +128,8 @@ fun WifiTransferScreen(
         // 2. 视图 A：极简传输进度展示
         AnimatedVisibility(
             visible = isTransferring,
-            enter = fadeIn(animationSpec = tween(200)),
-            exit = fadeOut(animationSpec = tween(200))
+            enter = fadeIn(animationSpec = tween(WatchMotion.DUR_FADE)),
+            exit = fadeOut(animationSpec = tween(WatchMotion.DUR_FADE_OUT))
         ) {
             Column(
                 modifier = Modifier
@@ -163,8 +163,8 @@ fun WifiTransferScreen(
                 Text(
                     text = if (progressPercent >= 99) "已存入书架" else "传输中…",
                     style = TextStyle(
-                        fontSize = 9.5.sp,
-                        color = colorScheme.outline
+                        fontSize = 10.5.sp,
+                        color = colorScheme.onSurfaceVariant
                     ),
                     textAlign = TextAlign.Center
                 )
@@ -174,8 +174,8 @@ fun WifiTransferScreen(
         // 3. 视图 B：扫码就绪 / 离线提示
         AnimatedVisibility(
             visible = !isTransferring,
-            enter = fadeIn(animationSpec = tween(200)),
-            exit = fadeOut(animationSpec = tween(200))
+            enter = fadeIn(animationSpec = tween(WatchMotion.DUR_FADE)),
+            exit = fadeOut(animationSpec = tween(WatchMotion.DUR_FADE_OUT))
         ) {
             val serverReady = isServerRunning && !ipAddress.isNullOrEmpty()
 
@@ -288,7 +288,7 @@ private fun QrCodePanel(
     Box(
         modifier = Modifier
             .clip(WatchShapes.Pill)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM))
             .padding(horizontal = 10.dp, vertical = 3.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -313,7 +313,7 @@ private fun QrCodePanel(
         Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = if (uploadedCount > 0) "已接收 $uploadedCount 本 · 等待扫码" else "服务已开启 · 等待手机扫码",
-            style = TextStyle(fontSize = 10.5.sp, color = onSurfaceVariant)
+            style = TextStyle(fontSize = 11.sp, color = onSurfaceVariant)
         )
     }
 }
@@ -344,7 +344,7 @@ private fun OfflinePanel() {
         modifier = Modifier
             .fillMaxWidth()
             .clip(WatchShapes.Row)
-            .background(colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .background(colorScheme.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM))
             .padding(horizontal = 12.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -364,8 +364,8 @@ private fun OfflinePanel() {
             Text(
                 text = "与手机处于同个局域网即可扫码传书",
                 style = TextStyle(
-                    fontSize = 9.sp,
-                    color = colorScheme.outline
+                    fontSize = 10.sp,
+                    color = colorScheme.onSurfaceVariant
                 ),
                 textAlign = TextAlign.Center
             )

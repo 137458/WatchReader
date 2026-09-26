@@ -773,7 +773,8 @@ private fun BookshelfBookRow(
 ) {
     val colors = MaterialTheme.colorScheme
     val isEpub = book.uriString.endsWith(".epub", ignoreCase = true) || book.title.endsWith(".epub", ignoreCase = true)
-    val displayTitle = EpubParser.cleanBookTitle(book.title)
+    // 书名清洗含正则替换：随书名 remember，避免父级每次重组（搜索逐键 / 时长 tick）逐行重算
+    val displayTitle = remember(book.title) { EpubParser.cleanBookTitle(book.title) }
 
     SurfaceCard(
         modifier = Modifier
@@ -821,17 +822,22 @@ private fun BookshelfBookRow(
                     modifier = Modifier.weight(1f),
                     height = 3.dp
                 )
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = if (book.isPinned) "已置顶" else "置顶",
-                    modifier = Modifier.clickable(onClick = onTogglePin),
+                    modifier = Modifier
+                        .clickable(onClick = onTogglePin)
+                        // 可点击区内边距：触控热区 ≥ 文字视觉尺寸，圆屏边缘误触率显著降低
+                        .padding(horizontal = 4.dp, vertical = 6.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = colors.primary
                 )
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(2.dp))
                 Text(
                     text = if (isPendingDelete) "确认删除？" else "删除",
-                    modifier = Modifier.clickable { if (isPendingDelete) onConfirmDelete() else onRequestDelete() },
+                    modifier = Modifier
+                        .clickable { if (isPendingDelete) onConfirmDelete() else onRequestDelete() }
+                        .padding(horizontal = 4.dp, vertical = 6.dp),
                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (isPendingDelete) FontWeight.Bold else FontWeight.Normal),
                     color = if (isPendingDelete) colors.error else colors.onSurfaceVariant.copy(alpha = 0.75f)
                 )
