@@ -6,6 +6,12 @@ import androidx.compose.runtime.Immutable
  * 章节检测器 — 从全文中高性能提取章节目录与分节索引
  */
 
+/**
+ * 单章渲染字数封顶。整章正文常驻单个 TextView，StaticLayout 构建成本与字数线性相关
+ * （实测 4.7 万字 ≈ 400ms 主线程冻结），超长章节必须二次分节。
+ */
+const val MAX_CHAPTER_RENDER_CHARS = 4000
+
 /** 单个章节的信息（@Immutable 保障 Compose 稳定跳过重组） */
 @Immutable
 data class Chapter(
@@ -121,10 +127,13 @@ fun detectChaptersStream(
  */
 fun detectChaptersFromInputStream(
     inputStream: java.io.InputStream,
-    encoding: String
+    encoding: String,
+    maxChapterChars: Int = MAX_CHAPTER_RENDER_CHARS
 ): Pair<List<Chapter>, Int> {
     val safeEncoding = if (encoding.isNotEmpty()) encoding else "UTF-8"
     val chapters = ArrayList<Chapter>(512)
+    val breakOffsets = ArrayList<Int>(16)
+    var segmentStart = 0
 
     val bufferedIn = if (inputStream is java.io.BufferedInputStream) inputStream else java.io.BufferedInputStream(inputStream, 65536)
     // 跳过 UTF-8 BOM（若存在）
@@ -151,12 +160,19 @@ fun detectChaptersFromInputStream(
                 val c = charBuf[i]
                 if (c == '\n' || c == '\r') {
                     if (lineCharCount > 0) {
-                        checkAndAddChapter(lineSb, lineStartCharOffset, chapters)
+                        if (checkAndAddChapter(lineSb, lineStartCharOffset, chapters)) {
+                            segmentStart = lineStartCharOffset
+                        }
                         lineSb.setLength(0)
                         lineCharCount = 0
                     }
                     currentCharOffset++
                     lineStartCharOffset = currentCharOffset
+                    // 封顶切点吸附到自然段首字符，避免把一句话劈成两节
+                    if (maxChapterChars > 0 && currentCharOffset - segmentStart >= maxChapterChars) {
+                        breakOffsets.add(currentCharOffset)
+                        segmentStart = currentCharOffset
+                    }
                 } else {
                     if (lineCharCount == 0) {
                         lineStartCharOffset = currentCharOffset
@@ -166,6 +182,11 @@ fun detectChaptersFromInputStream(
                     }
                     lineCharCount++
                     currentCharOffset++
+                    // 整段无换行的退化文本按步长强切，保证封顶始终成立
+                    if (maxChapterChars > 0 && currentCharOffset - segmentStart >= maxChapterChars * 2) {
+                        breakOffsets.add(segmentStart + maxChapterChars)
+                        segmentStart += maxChapterChars
+                    }
                 }
             }
         }
@@ -180,14 +201,14 @@ fun detectChaptersFromInputStream(
     if (chapters.isEmpty()) {
         return createVirtualChaptersFromLength(totalChars) to totalChars
     }
-    return chapters to totalChars
+    return labelChapterParts(chapters, breakOffsets, totalChars) to totalChars
 }
 
 private fun checkAndAddChapter(
     lineSb: java.lang.StringBuilder,
     lineStartCharOffset: Int,
     chapters: ArrayList<Chapter>
-) {
+): Boolean {
     val len = lineSb.length
     if (len in 2..60) {
         var start = 0
@@ -200,10 +221,50 @@ private fun checkAndAddChapter(
                 val line = lineSb.substring(start).trimEnd()
                 if (line.length in 2..60 && CHAPTER_REGEX.matches(line)) {
                     chapters.add(Chapter(index = chapters.size, title = line, charOffset = lineStartCharOffset))
+                    return true
                 }
             }
         }
     }
+    return false
+}
+
+/** 无真实章节归属的首段哨兵键 */
+private const val HEAD_OWNER = Int.MIN_VALUE
+
+/**
+ * 并入封顶切点并按 "原标题 · n/m" 标注续节。
+ *
+ * 切点与真实章节起点重合时自动去重，避免产生零长度章节。
+ */
+private fun labelChapterParts(
+    realChapters: List<Chapter>,
+    breakOffsets: List<Int>,
+    totalChars: Int
+): List<Chapter> {
+    val starts = (realChapters.map { it.charOffset } + breakOffsets.filter { it < totalChars })
+        .toSortedSet()
+        .toList()
+    if (starts.size == realChapters.size) return realChapters
+
+    val realOffsets = realChapters.map { it.charOffset }.sorted()
+    val titleByOffset = realChapters.associateBy({ it.charOffset }, { it.title })
+    val groups = LinkedHashMap<Int, MutableList<Int>>(realChapters.size + 1)
+    for (start in starts) {
+        val owner = realOffsets.lastOrNull { it <= start } ?: HEAD_OWNER
+        groups.getOrPut(owner) { mutableListOf() }.add(start)
+    }
+
+    val result = ArrayList<Chapter>(starts.size)
+    var index = 0
+    for ((owner, members) in groups) {
+        val ownerTitle = if (owner == HEAD_OWNER) "开篇" else titleByOffset.getValue(owner)
+        for ((part, start) in members.withIndex()) {
+            val title = if (members.size == 1) ownerTitle else "$ownerTitle · ${part + 1}/${members.size}"
+            result.add(Chapter(index = index++, title = title, charOffset = start))
+        }
+    }
+    return result
 }
 
 private fun createVirtualChaptersFromLength(totalChars: Int): List<Chapter> {

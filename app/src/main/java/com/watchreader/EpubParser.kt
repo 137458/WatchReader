@@ -355,7 +355,8 @@ object EpubParser {
         context: Context,
         uri: Uri,
         chapterIndex: Int,
-        chapters: List<Chapter>
+        chapters: List<Chapter>,
+        cleanTypography: Boolean = true
     ): ChapterContent {
         if (chapters.isEmpty() || chapterIndex !in chapters.indices) {
             return ChapterContent(0, "", "", 0, 0, false, "", false, "")
@@ -363,7 +364,7 @@ object EpubParser {
 
         val fileSize = getFileSize(context, uri)
         val cacheKey = "${uri}_${fileSize}"
-        val chapterCacheKey = "${cacheKey}_$chapterIndex"
+        val chapterCacheKey = "${cacheKey}_${chapterIndex}_${if (cleanTypography) "clean" else "raw"}"
 
         chapterContentCache.get(chapterCacheKey)?.let { return it }
 
@@ -396,7 +397,7 @@ object EpubParser {
         }
 
         val plainBody = if (rawHtml.isNotEmpty()) {
-            extractFormattedTextFromHtml(rawHtml, currentEntry?.anchor ?: "", nextAnchor)
+            extractFormattedTextFromHtml(rawHtml, currentEntry?.anchor ?: "", nextAnchor, cleanTypography)
         } else {
             "（本章节无正文内容）"
         }
@@ -787,7 +788,8 @@ object EpubParser {
     fun extractFormattedTextFromHtml(
         html: String,
         targetAnchor: String = "",
-        nextAnchor: String = ""
+        nextAnchor: String = "",
+        cleanTypography: Boolean = true
     ): String {
         if (html.isEmpty()) return ""
 
@@ -830,16 +832,23 @@ object EpubParser {
         // 6. 解码 HTML 实体
         content = decodeHtmlEntities(content)
 
-        // 7. 中文段落排版与全角双空格缩进
+        // 7. 中文段落排版（净化态剥离各类缩进后统一补标准全角双空格；原样态保留源文件缩进）
         val sb = java.lang.StringBuilder(content.length + 64)
         val lines = content.split('\n')
         for (rawLine in lines) {
-            val line = rawLine.trim()
+            val line = if (cleanTypography) {
+                rawLine.trim { it <= ' ' || it == '\u3000' }
+            } else {
+                rawLine.trim()
+            }
             if (line.isNotEmpty()) {
                 if (sb.isNotEmpty()) {
                     sb.append("\n\n")
                 }
-                sb.append("\u3000\u3000").append(line)
+                if (cleanTypography) {
+                    sb.append("\u3000\u3000")
+                }
+                sb.append(line)
             }
         }
 

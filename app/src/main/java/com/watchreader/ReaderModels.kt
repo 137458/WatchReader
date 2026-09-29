@@ -33,8 +33,8 @@ enum class TapPageArea(val value: Int, val title: String) {
  * 字体样式
  */
 enum class FontType(val value: Int, val title: String) {
-    SANS_SERIF(0, "🔤 字体: 系统黑体 (无衬线)"),
-    SERIF(1, "🔤 字体: 系统衬线体 (宋体)");
+    SANS_SERIF(0, "🔤 字体: 黑体 (无衬线)"),
+    SERIF(1, "🔤 字体: 宋体 (衬线)");
 
     companion object {
         fun fromValue(value: Int): FontType = entries.firstOrNull { it.value == value } ?: SANS_SERIF

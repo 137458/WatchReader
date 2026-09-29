@@ -60,11 +60,12 @@ private class ReaderViewHolder(
     var appliedChromeColor: Int = 0
 
     // update 阶段守卫状态：chapters 为不稳定 List，阅读页无法跳过父级重组，update 每次都会执行；
-    // TextView 的 setTextSize / setTextColor 是无条件 requestLayout + ColorStateList 分配，
-    // 不加守卫会把"阅读时长 10s tick / 底部百分比整数跳变"这类低频重组转化为全 ScrollView 重排版（滚动掉帧源）
+    // TextView 的 setTextSize / setTextColor / typeface 各自都会经 checkForRelayout() 同步重建
+    // 整章 StaticLayout，不加逐项守卫会把"阅读时长 10s tick / 底部百分比整数跳变"这类低频重组
+    // 转化为全 ScrollView 重排版（滚动掉帧源），也让一次字体切换重复排版三遍
     var appliedBgColor: Int = Int.MIN_VALUE
     var appliedFontSize: Int = -1
-    var appliedFontType: Int = -1
+    var appliedBodyTypeface: Typeface? = null
     var appliedTitleColor: Int = Int.MIN_VALUE
     var appliedBodyColor: Int = Int.MIN_VALUE
     var appliedMetaColor: Int = Int.MIN_VALUE
@@ -139,7 +140,9 @@ fun ReaderScreen(
     }
 
     DisposableEffect(Unit) {
+        ReadPerf.startFrameWatch()
         onDispose {
+            ReadPerf.stopFrameWatch()
             scrollDebounceHandler.removeCallbacksAndMessages(null)
             onCharOffsetChange(currentReadingOffset)
             onFlushReadingPosition()
@@ -600,30 +603,23 @@ fun ReaderScreen(
 
                 if (lastChapterIndex != currentChapterIdx || holder.currentContent != chapterContent) {
                     bindChapterData(holder, chapterContent, fontSize, fontType, textColor, titleColor, onSurfaceVariantColor)
-                    safeRestoreScrollPosition(scrollView, holder, chapterContent, initialCharOffset)
+                    // 同一章内仅换排版（净化开关只替换正文、不跳页）时，实时偏移仍落在本章区间内，
+                    // 以它为准才不会把阅读位置弹回本章最初打开的地方
+                    val liveOffset = currentReadingOffset
+                    val sameChapter = lastChapterIndex == currentChapterIdx
+                    val restoreOffset = if (sameChapter && chapterContent != null &&
+                        liveOffset in chapterContent.startCharOffset..chapterContent.endCharOffset
+                    ) liveOffset else initialCharOffset
+                    safeRestoreScrollPosition(scrollView, holder, chapterContent, restoreOffset)
                     if (isAutoScrolling) {
                         holder.autoScrollEngine?.start()
                     }
-                } else if (holder.appliedFontSize != fontSize || holder.appliedFontType != fontType ||
+                } else if (holder.appliedFontSize != fontSize ||
+                    holder.appliedBodyTypeface !== bodyTypefaceFor(fontType) ||
                     holder.appliedTitleColor != titleColor || holder.appliedBodyColor != textColor ||
                     holder.appliedMetaColor != onSurfaceVariantColor
                 ) {
-                    holder.appliedFontSize = fontSize
-                    holder.appliedFontType = fontType
-                    holder.appliedTitleColor = titleColor
-                    holder.appliedBodyColor = textColor
-                    holder.appliedMetaColor = onSurfaceVariantColor
-
-                    holder.titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSize + 2).toFloat())
-                    holder.titleTv.setTextColor(titleColor)
-
-                    holder.bodyTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat())
-                    holder.bodyTv.setTextColor(textColor)
-                    holder.bodyTv.typeface = if (FontType.fromValue(fontType) == FontType.SERIF) Typeface.SERIF else Typeface.SANS_SERIF
-
-                    holder.prevTv.setTextColor(onSurfaceVariantColor)
-                    holder.nextTv.setTextColor(titleColor)
-                    holder.endTv.setTextColor(onSurfaceVariantColor)
+                    applyChapterStyles(holder, fontSize, fontType, textColor, titleColor, onSurfaceVariantColor)
                 }
             }
         )
@@ -729,6 +725,63 @@ fun ReaderScreen(
 }
 
 /**
+ * 字体档位 → 正文目标字面。
+ *
+ * 衬线档必须走中文宋体字面：本 ROM 的 serif 族不含中文字形、zh-Hans 回退又被换成黑体，
+ * Typeface.SERIF 下汉字与黑体同形（详见 CjkSerifFont）。此处只读取已解析结果，
+ * 绝不在排版路径上同步加载字面；预热完成后的下一次重组会自动改用真正的宋体字面。
+ */
+private fun bodyTypefaceFor(fontType: Int): Typeface =
+    if (FontType.fromValue(fontType) == FontType.SERIF) {
+        CjkSerifFont.resolvedOrNull() ?: Typeface.SERIF
+    } else {
+        Typeface.SANS_SERIF
+    }
+
+/**
+ * 正文样式逐项下发：只在值真正变化时触碰对应属性，避免同一帧内重复整章排版
+ */
+private fun applyChapterStyles(
+    holder: ReaderViewHolder,
+    fontSize: Int,
+    fontType: Int,
+    textColor: Int,
+    titleColor: Int,
+    onSurfaceVariantColor: Int
+) {
+    if (holder.appliedFontSize != fontSize) {
+        holder.appliedFontSize = fontSize
+        ReadPerf.trace("perf.sizeTitle") { holder.titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSize + 2).toFloat()) }
+        ReadPerf.trace("perf.sizeBody") { holder.bodyTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat()) }
+    }
+
+    val bodyTypeface = bodyTypefaceFor(fontType)
+    if (holder.appliedBodyTypeface !== bodyTypeface) {
+        holder.appliedBodyTypeface = bodyTypeface
+        ReadPerf.trace("perf.typeface", extra = { "face=${bodyTypeface.javaClass.simpleName}" }) {
+            holder.bodyTv.typeface = bodyTypeface
+        }
+    }
+
+    if (holder.appliedTitleColor != titleColor) {
+        holder.appliedTitleColor = titleColor
+        holder.titleTv.setTextColor(titleColor)
+        holder.nextTv.setTextColor(titleColor)
+    }
+
+    if (holder.appliedBodyColor != textColor) {
+        holder.appliedBodyColor = textColor
+        ReadPerf.trace("perf.colorBody") { holder.bodyTv.setTextColor(textColor) }
+    }
+
+    if (holder.appliedMetaColor != onSurfaceVariantColor) {
+        holder.appliedMetaColor = onSurfaceVariantColor
+        holder.prevTv.setTextColor(onSurfaceVariantColor)
+        holder.endTv.setTextColor(onSurfaceVariantColor)
+    }
+}
+
+/**
  * 极速数据绑定（微秒级直接属性赋值，0 对象分配）
  */
 private fun bindChapterData(
@@ -741,11 +794,6 @@ private fun bindChapterData(
     onSurfaceVariantColor: Int
 ) {
     holder.currentContent = content
-    holder.appliedFontSize = fontSize
-    holder.appliedFontType = fontType
-    holder.appliedTitleColor = titleColor
-    holder.appliedBodyColor = textColor
-    holder.appliedMetaColor = onSurfaceVariantColor
     if (content == null) {
         holder.container.tag = null
         holder.prevBtn.visibility = View.GONE
@@ -762,7 +810,6 @@ private fun bindChapterData(
     if (content.hasPrevChapter) {
         holder.prevBtn.visibility = View.VISIBLE
         holder.prevTv.text = "‹ 上一章: ${content.prevChapterTitle}"
-        holder.prevTv.setTextColor(onSurfaceVariantColor)
     } else {
         holder.prevBtn.visibility = View.GONE
     }
@@ -772,26 +819,23 @@ private fun bindChapterData(
     val topPad = if (content.hasPrevChapter) (8 * density).toInt() else (20 * density).toInt()
     holder.titleTv.setPadding(0, topPad, 0, (10 * density).toInt())
     holder.titleTv.text = content.title
-    holder.titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSize + 2).toFloat())
-    holder.titleTv.setTextColor(titleColor)
 
-    // 3. 章节正文（单 TextLayout 一体排版 + 字体切换）
-    holder.bodyTv.text = content.formattedBody
-    holder.bodyTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat())
-    holder.bodyTv.setTextColor(textColor)
-    holder.bodyTv.typeface = if (fontType == 1) Typeface.SERIF else Typeface.SANS_SERIF
+    // 3. 章节正文（单 TextLayout 一体排版；样式经逐项下发，避免同帧重复整章排版）
+    ReadPerf.trace("perf.setTextBody", extra = { "chars=${content.formattedBody.length}" }) {
+        holder.bodyTv.text = content.formattedBody
+    }
 
     // 4. 下一章 / 全书完
     if (content.hasNextChapter) {
         holder.nextBtn.visibility = View.VISIBLE
         holder.nextTv.text = "下一章: ${content.nextChapterTitle} ›"
-        holder.nextTv.setTextColor(titleColor)
         holder.endTv.visibility = View.GONE
     } else {
         holder.nextBtn.visibility = View.GONE
         holder.endTv.visibility = View.VISIBLE
-        holder.endTv.setTextColor(onSurfaceVariantColor)
     }
+
+    applyChapterStyles(holder, fontSize, fontType, textColor, titleColor, onSurfaceVariantColor)
 }
 
 /**

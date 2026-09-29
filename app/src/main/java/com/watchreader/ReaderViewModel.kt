@@ -108,6 +108,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 初始化：单次 I/O 批量读取 DataStore 配置，按最后活跃页面智能秒开
      */
     fun init() {
+        // 中文宋体面是 20MB 级字面，启动即后台预热，避免首次切换字体时主线程同步加载
+        viewModelScope.launch(Dispatchers.IO) { CjkSerifFont.preload() }
         viewModelScope.launch {
             val config = withContext(Dispatchers.IO) {
                 DataStoreManager.loadInitialConfig(appCtx)
@@ -359,9 +361,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
         viewModelScope.launch {
             val totalLen = state.fullTextLength
-            val chapterContent = chapterContentCache[chapterIndex] ?: withContext(Dispatchers.IO) {
-                getOrLoadChapterContent(uri, chapters, chapterIndex, totalLen)
-            }
+            val chapterContent = chapterContentCache[chapterCacheKey(chapterIndex, state.cleanTypography)]
+                ?: withContext(Dispatchers.IO) {
+                    getOrLoadChapterContent(uri, chapters, chapterIndex, totalLen)
+                }
             val offset = if (targetCharOffset >= 0) targetCharOffset else chapterContent.startCharOffset
             currentReadingOffset = offset
 
@@ -384,7 +387,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * 按需获取或流式加载单章排版内容
+     * 按需获取或流式加载单章排版内容（净化态与原样态各持一份，切换开关不再丢弃预热成果）
      */
     private fun getOrLoadChapterContent(
         uri: Uri,
@@ -392,33 +395,44 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         chapterIndex: Int,
         totalChars: Int
     ): ChapterContent {
-        chapterContentCache[chapterIndex]?.let { return it }
+        val clean = _uiState.value.cleanTypography
+        chapterContentCache[chapterCacheKey(chapterIndex, clean)]?.let {
+            ReadPerf.mark("perf.cacheHit", "chapter=$chapterIndex clean=$clean")
+            return it
+        }
 
         if (chapters.isEmpty() || chapterIndex !in chapters.indices) {
             return ChapterContent(0, "", "", 0, 0, false, "", false, "")
         }
 
         val isEpub = EpubParser.isEpubFile(appCtx, uri)
-        val loaded = if (isEpub) {
-            EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters)
-        } else {
-            val currentChap = chapters[chapterIndex]
-            val startOffset = currentChap.charOffset.coerceIn(0, totalChars)
-            val endOffset = (if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else totalChars).coerceIn(startOffset, totalChars)
+        val startChar = chapters[chapterIndex].charOffset
+        val formatted = ReadPerf.trace(
+            "perf.loadChapter",
+            extra = { "epub=$isEpub clean=$clean chars=${endOffsetOf(chapters, chapterIndex, totalChars) - startChar} skipFrom=$startChar" }
+        ) {
+            if (isEpub) {
+                EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters, clean)
+            } else {
+                val currentChap = chapters[chapterIndex]
+                val startOffset = currentChap.charOffset.coerceIn(0, totalChars)
+                val endOffset = (if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else totalChars).coerceIn(startOffset, totalChars)
 
-            val rawChunk = readChapterChunkFromUri(appCtx, uri, currentEncoding, startOffset, endOffset)
-            formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset)
+                val rawChunk = readChapterChunkFromUri(appCtx, uri, currentEncoding, startOffset, endOffset)
+                formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset, clean)
+            }
         }
 
-        val formatted = if (_uiState.value.cleanTypography) {
-            loaded.copy(formattedBody = TypographyCleaner.clean(loaded.formattedBody))
-        } else {
-            loaded
-        }
-
-        chapterContentCache[chapterIndex] = formatted
+        chapterContentCache[chapterCacheKey(chapterIndex, clean)] = formatted
         return formatted
     }
+
+    private fun endOffsetOf(chapters: List<Chapter>, chapterIndex: Int, totalChars: Int): Int =
+        if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else totalChars
+
+    /** 章节正文缓存键：章节索引左移一位，末位编码净化态，两种排版并存互不驱逐 */
+    private fun chapterCacheKey(chapterIndex: Int, clean: Boolean): Int =
+        (chapterIndex shl 1) or if (clean) 1 else 0
 
     /**
      * 异步后台预热前后相邻章节（N+1, N-1, N+2, N-2），消除翻章排版计算
@@ -431,16 +445,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         if (chapters.isEmpty()) return
         prefetchJob?.cancel()
+        val clean = _uiState.value.cleanTypography
         prefetchJob = viewModelScope.launch(Dispatchers.IO) {
             val targets = intArrayOf(centerIdx + 1, centerIdx - 1, centerIdx + 2, centerIdx - 2)
             for (idx in targets) {
-                if (idx in chapters.indices && !chapterContentCache.containsKey(idx)) {
+                if (idx in chapters.indices && !chapterContentCache.containsKey(chapterCacheKey(idx, clean))) {
                     getOrLoadChapterContent(uri, chapters, idx, totalChars)
                 }
             }
-            // 维持轻量缓存窗口（最多 8 章），及时释放较远章节以节省内存
-            if (chapterContentCache.size > 8) {
-                val keysToRemove = chapterContentCache.keys.filter { Math.abs(it - centerIdx) > 3 }
+            // 维持轻量缓存窗口（净化态与原样态各 8 章），及时释放较远章节以节省内存
+            if (chapterContentCache.size > 16) {
+                val keysToRemove = chapterContentCache.keys.filter { Math.abs((it shr 1) - centerIdx) > 3 }
                 for (k in keysToRemove) {
                     chapterContentCache.remove(k)
                 }
@@ -914,21 +929,34 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * 开关智能排版净化
+     *
+     * 只替换正文、不改 screen —— 与字号/主题/字体档一致，菜单保持打开。
+     * 此前复用 goToChapter 重载正文，会把 screen 导航成 Screen.Reader，
+     * 使阅读控制界面被无过渡地直接踢掉。
      */
     fun setCleanTypography(enabled: Boolean) {
         _uiState.update { it.copy(cleanTypography = enabled) }
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.saveCleanTypography(appCtx, enabled)
         }
-        chapterContentCache.clear()
+
         val state = _uiState.value
-        if (state.chapters.isNotEmpty() && state.currentChapterIndex in state.chapters.indices) {
-            goToChapter(state.currentChapterIndex, currentReadingOffset)
+        val uri = state.currentUri ?: return
+        val chapterIndex = state.currentChapterIndex
+        if (state.chapters.isEmpty() || chapterIndex !in state.chapters.indices) return
+
+        viewModelScope.launch {
+            val chapterContent = chapterContentCache[chapterCacheKey(chapterIndex, enabled)]
+                ?: withContext(Dispatchers.IO) {
+                    getOrLoadChapterContent(uri, state.chapters, chapterIndex, state.fullTextLength)
+                }
+            _uiState.update { it.copy(currentChapterContent = chapterContent) }
+            prefetchAdjacentChapters(uri, state.chapters, chapterIndex, state.fullTextLength)
         }
     }
 
     /**
-     * 设置字体类型 (0: 系统黑体, 1: 系统衬线体)
+     * 设置字体类型 (0: 黑体, 1: 宋体/衬线)
      */
     fun setFontType(type: Int) {
         setFontType(FontType.fromValue(type))
@@ -937,6 +965,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun setFontType(type: FontType) {
         _uiState.update { it.copy(fontType = type.value) }
         viewModelScope.launch(Dispatchers.IO) {
+            CjkSerifFont.preload()
             DataStoreManager.saveFontType(appCtx, type.value)
         }
     }
@@ -980,7 +1009,8 @@ fun formatChapterRawText(
     chapters: List<Chapter>,
     chapterIndex: Int,
     startOffset: Int,
-    endOffset: Int
+    endOffset: Int,
+    cleanTypography: Boolean = true
 ): ChapterContent {
     if (chapters.isEmpty() || chapterIndex !in chapters.indices) {
         return ChapterContent(
@@ -998,6 +1028,23 @@ fun formatChapterRawText(
 
     val currentChap = chapters[chapterIndex]
     val chapTitle = currentChap.title.trim()
+
+    // 关闭净化 = 尊重源文件自身排版：行结构、空行与原缩进逐字保留；
+    // 正文坐标与原文坐标同域，故不记录段落映射（ChapterOffsetMapper 退化为恒等）
+    if (!cleanTypography) {
+        return ChapterContent(
+            chapterIndex = chapterIndex,
+            title = currentChap.title,
+            formattedBody = stripChapterTitleHeader(rawText, chapTitle),
+            startCharOffset = startOffset,
+            endCharOffset = endOffset,
+            hasPrevChapter = chapterIndex > 0,
+            prevChapterTitle = if (chapterIndex > 0) chapters[chapterIndex - 1].title else "",
+            hasNextChapter = chapterIndex + 1 < chapters.size,
+            nextChapterTitle = if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].title else ""
+        )
+    }
+
     val sb = StringBuilder(rawText.length + 64)
 
     // 段落起点映射：正文坐标 ↔ 原文坐标的精确换算依据（持久化阅读位置必须落在原文坐标域）
@@ -1055,6 +1102,27 @@ fun formatChapterRawText(
         bodyParagraphStarts = bodyParaList.toIntArray(),
         rawParagraphStarts = rawParaList.toIntArray()
     )
+}
+
+/**
+ * 剥离与章节标题重复的首行及其紧邻空行（标题已由独立标题控件呈现），其余内容原样返回
+ */
+private fun stripChapterTitleHeader(rawText: String, chapTitle: String): String {
+    if (chapTitle.isEmpty()) return rawText
+
+    val firstLineEnd = rawText.indexOf('\n')
+    val firstLine = rawText.substring(0, if (firstLineEnd == -1) rawText.length else firstLineEnd)
+        .trim { it <= ' ' || it == '\u3000' }
+    if (firstLine != chapTitle) return rawText
+
+    var from = if (firstLineEnd == -1) rawText.length else firstLineEnd + 1
+    while (from < rawText.length) {
+        val lineEnd = rawText.indexOf('\n', from)
+        val bound = if (lineEnd == -1) rawText.length else lineEnd
+        if (rawText.substring(from, bound).isNotBlank()) break
+        from = if (lineEnd == -1) rawText.length else lineEnd + 1
+    }
+    return rawText.substring(from)
 }
 
 fun buildChapterContent(

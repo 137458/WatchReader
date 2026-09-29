@@ -101,7 +101,7 @@ fun MenuScreen(
             TapPageArea.DISABLED -> "已关闭"
         }
     }
-    val fontLabel = if (FontType.fromValue(fontType) == FontType.SERIF) "衬线" else "黑体"
+    val fontLabel = if (FontType.fromValue(fontType) == FontType.SERIF) "宋体" else "黑体"
 
     // 底色由 Window decorView 统一承载，此处不再整屏填充（少一层全屏 overdraw）
     Box(modifier = Modifier.fillMaxSize()) {
@@ -247,9 +247,13 @@ fun MenuScreen(
                     HairlineDivider()
                     CycleLine("点按翻页", tapLabel) { onTapPageAreaChange((tapPageArea + 1) % 3) }
                     HairlineDivider()
-                    CycleLine("排版净化", if (cleanTypography) "开启" else "关闭") { onCleanTypographyChange(!cleanTypography) }
+                    CycleLine("排版净化", if (cleanTypography) "开启" else "关闭") {
+                        ReadPerf.mark("tap.cleanTypography", "current=$cleanTypography")
+                        onCleanTypographyChange(!cleanTypography)
+                    }
                     HairlineDivider()
                     CycleLine("字体", fontLabel) {
+                        ReadPerf.mark("tap.fontType", "current=$fontType")
                         onFontTypeChange(if (FontType.fromValue(fontType) == FontType.SERIF) FontType.SANS_SERIF.value else FontType.SERIF.value)
                     }
                 }

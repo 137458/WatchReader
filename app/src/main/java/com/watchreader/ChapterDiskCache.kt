@@ -21,7 +21,11 @@ data class ChapterCacheData(
 )
 
 /**
- * 章节索引磁盘持久化缓存管理器（Version 2 协议）
+ * 章节索引磁盘持久化缓存管理器（Version 3 协议）
+ *
+ * 协议升级特性 (Version 3)：
+ * 1. 章节索引现含超长章节的封顶续节（见 `MAX_CHAPTER_RENDER_CHARS`）；Version 2 旧表不含续节，
+ *    继续沿用会绕过切分，故升版使其整体失效重建。
  *
  * 协议升级特性 (Version 2)：
  * 1. 精确持久化 totalChars: Int，消除大文件二次冷启动时全量流式估算的 CPU 与 I/O 开销。
@@ -33,7 +37,7 @@ object ChapterDiskCache {
     private const val TAG = "ChapterDiskCache"
     private const val CACHE_DIR_NAME = "chapter_index"
     private const val MAGIC_HEADER = 0x57524349 // "WRCI"
-    private const val FORMAT_VERSION = 2
+    private const val FORMAT_VERSION = 3
 
     fun getCacheDir(context: Context): File {
         val dir = File(context.cacheDir, CACHE_DIR_NAME)

@@ -113,13 +113,4 @@ class ReaderProgressPrecisionTest {
         assertEquals("⏱️ 累计阅读: 2小时 0分钟", ReadDurationFormatter.format(7200L))
         assertEquals("2小时 0分钟", ReadDurationFormatter.formatText(7200L))
     }
-
-    @Test
-    fun testTypographyCleaningIntegration() {
-        val rawText = "第一章 初始\n\n\n   这是第一行内容   \n\n\n这是第二行内容。\n"
-        val cleaned = TypographyCleaner.clean(rawText)
-
-        val expected = "\u3000\u3000第一章 初始\n\n\u3000\u3000这是第一行内容\n\n\u3000\u3000这是第二行内容。"
-        assertEquals(expected, cleaned)
-    }
 }

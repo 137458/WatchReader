@@ -79,4 +79,72 @@ class ChapterDetectorTest {
         assertEquals(3, findCurrentChapterIndex(chapters, 4000))
         assertEquals(3, findCurrentChapterIndex(chapters, 9999))
     }
+
+    // ── 超长章节封顶分节 ──
+
+    private fun streamChapters(text: String, maxChapterChars: Int): Pair<List<Chapter>, Int> =
+        detectChaptersFromInputStream(
+            ByteArrayInputStream(text.toByteArray(Charsets.UTF_8)),
+            "UTF-8",
+            maxChapterChars
+        )
+
+    @Test
+    fun testOversizedChapterSplitsIntoLabelledParts() {
+        val text = "第一章 长山\n" + (1..40).joinToString("\n") { "山风掠过城头第${it}遍。" }
+        val (chapters, _) = streamChapters(text, maxChapterChars = 60)
+
+        val parts = chapters.filter { it.title.startsWith("第一章 长山") }
+        assertTrue("超长章节必须被切分，实际只得到 ${chapters.size} 项", parts.size > 1)
+        assertEquals("第一章 长山 · 1/${parts.size}", parts.first().title)
+        assertEquals("第一章 长山 · ${parts.size}/${parts.size}", parts.last().title)
+    }
+
+    @Test
+    fun testSplitBreaksLandOnParagraphStartsAndLeaveNoGap() {
+        val text = "第一章 长山\n" + (1..40).joinToString("\n") { "山风掠过城头第${it}遍。" }
+        val (chapters, totalChars) = streamChapters(text, maxChapterChars = 60)
+        val parts = chapters.filter { it.title.startsWith("第一章 长山") }
+        assertTrue("未切分时本用例为空断言", parts.size > 1)
+
+        for (i in 1 until parts.size) {
+            val breakAt = parts[i].charOffset
+            assertEquals("切点必须落在自然段首字符", '\n', text[breakAt - 1])
+        }
+        assertEquals("切分不得吞掉或重复任何字符", parts.first().charOffset, 0)
+        assertEquals(totalChars, text.length)
+    }
+
+    @Test
+    fun testEveryPartStaysWithinCapOrderOfMagnitude() {
+        val text = "第一章 长山\n" + (1..200).joinToString("\n") { "山风掠过城头第${it}遍。" }
+        val (chapters, totalChars) = streamChapters(text, maxChapterChars = 60)
+        val max = 60
+
+        chapters.forEachIndexed { i, chapter ->
+            val end = chapters.getOrNull(i + 1)?.charOffset ?: totalChars
+            assertTrue(
+                "分节 ${chapter.title} 跨度 ${end - chapter.charOffset} 超出封顶上限",
+                end - chapter.charOffset <= max * 2
+            )
+        }
+    }
+
+    @Test
+    fun testSingleLineChapterStillSplits() {
+        // 整本一行（无任何换行）的退化文本也必须封顶，否则切分形同虚设
+        val text = "第一章 长山\n" + "无换行长句。".repeat(200)
+        val (chapters, _) = streamChapters(text, maxChapterChars = 60)
+        val parts = chapters.filter { it.title.startsWith("第一章 长山") }
+
+        assertTrue("无段落边界时仍须按步长切分，实得 ${parts.size} 节", parts.size > 2)
+    }
+
+    @Test
+    fun testNormalLengthChaptersAreNotSplit() {
+        val text = "第1章 短\n山风吹来。\n第2章 也短\n江水东流。\n"
+        val (chapters, _) = streamChapters(text, maxChapterChars = 60)
+
+        assertEquals(listOf("第1章 短", "第2章 也短"), chapters.map { it.title })
+    }
 }

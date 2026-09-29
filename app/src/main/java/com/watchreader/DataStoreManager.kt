@@ -45,7 +45,7 @@ data class AppInitialConfig(
     val themeMode: Int = 0, // 0: 羊皮纸, 1: 极光黑, 2: 纯黑深红
     val tapPageArea: Int = 0, // 0: 上下翻页, 1: 左右翻页, 2: 关闭点按
     val cleanTypography: Boolean = true,
-    val fontType: Int = 0, // 0: 系统黑体, 1: 系统衬线体
+    val fontType: Int = 0, // 0: 黑体, 1: 宋体/衬线
     val readDurationSec: Long = 0L
 )
 
@@ -65,7 +65,7 @@ object DataStoreManager {
     val KEY_THEME_MODE = intPreferencesKey("theme_mode") // 0: 羊皮纸, 1: 极光黑, 2: 纯黑深红
     val KEY_TAP_PAGE_AREA = intPreferencesKey("tap_page_area") // 0: 上下翻页, 1: 左右翻页, 2: 关闭点按
     val KEY_CLEAN_TYPOGRAPHY = booleanPreferencesKey("clean_typography") // 智能排版净化
-    val KEY_FONT_TYPE = intPreferencesKey("font_type") // 0: 系统黑体, 1: 系统衬线体
+    val KEY_FONT_TYPE = intPreferencesKey("font_type") // 0: 黑体, 1: 宋体/衬线
     val KEY_READ_DURATION_SEC = longPreferencesKey("read_duration_sec") // 累计阅读时长
 
     const val DEFAULT_FONT_SIZE = 14
