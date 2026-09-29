@@ -92,13 +92,6 @@ class AutoScrollEngine(
     }
 
     /**
-     * 切换自动滚屏开关
-     */
-    fun toggle() {
-        if (isRunning) stop() else start()
-    }
-
-    /**
      * 触摸屏幕时临时暂停，并在松手后延时自动恢复
      */
     fun pauseTemporarily(delayMs: Long = 1800L) {

@@ -1,7 +1,6 @@
 package com.watchreader
 
 import android.app.Activity
-import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
@@ -74,7 +73,6 @@ private class ReaderViewHolder(
 /**
  * 阅读页 — 极致单 TextLayout + 永久 5 节点零分配 View 复用池 + 0 GC Choreographer 自动平滑滚屏 + 双轨调光
  */
-@Suppress("UNUSED_PARAMETER")
 @Composable
 fun ReaderScreen(
     chapterContent: ChapterContent?,
@@ -91,8 +89,6 @@ fun ReaderScreen(
     isAutoScrolling: Boolean,
     onAutoScrollToggle: () -> Unit,
     onAutoScrollSpeedChange: (Float) -> Unit,
-    appBrightness: Float,
-    onBrightnessChange: (Float) -> Unit,
     tapPageArea: Int = 0,
     fontType: Int = 0,
     chapters: List<Chapter> = emptyList(),

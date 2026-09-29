@@ -259,8 +259,6 @@ class MainActivity : ComponentActivity() {
                     isAutoScrolling = uiState.isAutoScrolling,
                     onAutoScrollToggle = { viewModel.setAutoScrolling(!uiState.isAutoScrolling) },
                     onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
-                    appBrightness = uiState.appBrightness,
-                    onBrightnessChange = { viewModel.updateAppBrightness(it) },
                     tapPageArea = uiState.tapPageArea,
                     fontType = uiState.fontType,
                     chapters = uiState.chapters,

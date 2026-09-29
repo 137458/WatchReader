@@ -99,18 +99,14 @@ class ReaderProgressPrecisionTest {
         // Zero or negative seconds
         assertEquals("⏱️ 累计阅读: 0小时 0分钟", ReadDurationFormatter.format(0L))
         assertEquals("⏱️ 累计阅读: 0小时 0分钟", ReadDurationFormatter.format(-10L))
-        assertEquals("0小时 0分钟", ReadDurationFormatter.formatText(0L))
 
         // Seconds only
         assertEquals("⏱️ 累计阅读: 0小时 0分钟", ReadDurationFormatter.format(45L))
-        assertEquals("0小时 0分钟", ReadDurationFormatter.formatText(45L))
 
         // Hours, minutes, and seconds
         assertEquals("⏱️ 累计阅读: 1小时 2分钟", ReadDurationFormatter.format(3725L))
-        assertEquals("1小时 2分钟", ReadDurationFormatter.formatText(3725L))
 
         // Exact 2 hours
         assertEquals("⏱️ 累计阅读: 2小时 0分钟", ReadDurationFormatter.format(7200L))
-        assertEquals("2小时 0分钟", ReadDurationFormatter.formatText(7200L))
     }
 }

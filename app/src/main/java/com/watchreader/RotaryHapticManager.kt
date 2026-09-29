@@ -59,18 +59,6 @@ object RotaryHapticManager {
             .build()
     }
 
-    private val fallbackTickEffect: VibrationEffect? by lazy {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                VibrationEffect.createOneShot(12, 200)
-            } catch (_: Throwable) {
-                null
-            }
-        } else {
-            null
-        }
-    }
-
     /**
      * 预初始化 OPPO 官方 Linearmotor 引擎
      */

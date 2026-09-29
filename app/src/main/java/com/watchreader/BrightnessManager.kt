@@ -16,23 +16,29 @@ import android.view.WindowManager
  *    - 2 档 (中): 硬件 0.6f, 纯黑遮罩 0.0f
  *    - 1 档 (弱): 硬件 0.1f (硬件最低), 纯黑遮罩 0.0f
  * 2. 软件极暗无级层 (< 30%):
- *    - 硬件强制锁定在「1 档最低」，同时在 Window 顶层叠加纯黑硬件加速 Alpha 遮罩 (0.0f ~ 0.78f)。
+ *    - 硬件强制锁定在「1 档最低」，同时在 Window 顶层叠加纯黑硬件加速 Alpha 遮罩 (0.0f ~ 0.75f)。
  *    - 彻底突破 OPPO 3 档硬件限制，实现 1% ~ 100% 丝滑无级微光夜读，0 蓝光刺眼，AMOLED 纯黑像素 0 耗电。
  */
 object BrightnessManager {
 
     const val BRIGHTNESS_SYSTEM_DEFAULT = -1.0f
 
-    // 预设快捷档位
-    const val LEVEL_3_STRONG = 1.0f   // 3 档 (强)
-    const val LEVEL_2_MEDIUM = 0.65f  // 2 档 (中)
-    const val LEVEL_1_WEAK = 0.35f    // 1 档 (弱)
-    const val LEVEL_ULTRA_DARK = 0.10f // 🌙 极暗夜读 (1档硬件 + 55% 纯黑遮罩)
+    // 从「系统」档进入自定义档时步进器的起步亮度
+    const val SYSTEM_STEP_BASE = 0.50f
+
+    // 预设快捷档位（应用域亮度值，与硬件档映射域区分）
+    const val LEVEL_3_STRONG = 1.0f    // 3 档 (强)
+    const val LEVEL_2_MEDIUM = 0.65f   // 2 档 (中)
+    const val LEVEL_ULTRA_DARK = 0.10f // 极暗夜读（1 档硬件 + 约 50% 纯黑遮罩）
 
     const val HARDWARE_MIN_THRESHOLD = 0.30f // 低于 30% 启动极暗黑场遮罩
 
+    // 应用域亮度值到硬件档位的分界（applyToWindow 与 formatBrightnessText 共用，防两处脱钩）
+    const val TIER_MEDIUM_BELOW = 0.50f // 低于此值映射硬件 1 档
+    const val TIER_STRONG_BELOW = 0.85f // 低于此值映射硬件 2 档
+
     /**
-     * 计算顶层纯黑 Alpha 遮罩的不透明度 (0.0f ~ 0.78f)
+     * 计算顶层纯黑 Alpha 遮罩的不透明度 (0.0f ~ 0.75f)
      * 当 brightness >= 0.30f 时遮罩为 0 (纯硬件调光)
      * 当 brightness 从 0.30f 下降到 0.01f 时，遮罩从 0.0f 平滑增加到 0.75f
      */
@@ -51,10 +57,10 @@ object BrightnessManager {
 
         val targetHardwareBrightness = when {
             brightness < 0f -> WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            brightness < HARDWARE_MIN_THRESHOLD -> 0.01f // 锁定为 OPPO 硬件 1 档 (最低档)
-            brightness < 0.50f -> 0.35f                  // OPPO 1 档 (弱)
-            brightness < 0.85f -> 0.65f                  // OPPO 2 档 (中)
-            else -> 1.0f                                 // OPPO 3 档 (强)
+            brightness < HARDWARE_MIN_THRESHOLD -> 0.01f               // 锁定为 OPPO 硬件 1 档 (最低档)
+            brightness < TIER_MEDIUM_BELOW -> 0.35f                    // OPPO 1 档 (弱)
+            brightness < TIER_STRONG_BELOW -> 0.65f                    // OPPO 2 档 (中)
+            else -> 1.0f                                               // OPPO 3 档 (强)
         }
 
         if (lp.screenBrightness != targetHardwareBrightness) {
@@ -69,8 +75,8 @@ object BrightnessManager {
     fun formatBrightnessText(brightness: Float): String {
         return when {
             brightness < 0f -> "系统"
-            brightness >= 0.85f -> "3档强"
-            brightness >= 0.50f -> "2档中"
+            brightness >= TIER_STRONG_BELOW -> "3档强"
+            brightness >= TIER_MEDIUM_BELOW -> "2档中"
             brightness >= HARDWARE_MIN_THRESHOLD -> "1档弱"
             else -> {
                 val percent = (brightness * 100).toInt().coerceIn(1, 29)

@@ -36,12 +36,16 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 object ArcSeekMath {
-    const val SCREEN_SIZE = 466f
-    const val RADIUS = 233f
-    const val MIN_RADIUS = 210f
-    const val MAX_RADIUS = 233f
     const val MIN_ANGLE = -60f
     const val MAX_ANGLE = 60f
+
+    // 寻道响应带半径容差：消除边缘触控硬切
+    const val SEEK_RADIUS_INNER = 200f
+    const val SEEK_RADIUS_OUTER = 245f
+
+    // 划入屏幕过深（半径过小）或角度超出容差即取消本次寻道
+    const val SEEK_CANCEL_RADIUS = 165f
+    const val SEEK_CANCEL_ANGLE = 75f
 
     /**
      * 判断触控点是否位于右侧弧形寻道响应带（容差判定，便于手指触达）
@@ -50,8 +54,7 @@ object ArcSeekMath {
         val dx = x - cx
         val dy = y - cy
         val r = sqrt(dx * dx + dy * dy)
-        // 允许内侧适度容差 [200, 245]，消除边缘触控硬切
-        if (r < 200f || r > 245f) return false
+        if (r < SEEK_RADIUS_INNER || r > SEEK_RADIUS_OUTER) return false
         val angleDeg = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
         return angleDeg in MIN_ANGLE..MAX_ANGLE
     }
@@ -275,7 +278,7 @@ class ArcSeekGestureRecognizer {
         if (!isSeeking) return false
 
         // 划入屏幕过深或角度超出范围则取消本次寻道
-        if (r < 165f || angle < -75f || angle > 75f) {
+        if (r < ArcSeekMath.SEEK_CANCEL_RADIUS || angle < -ArcSeekMath.SEEK_CANCEL_ANGLE || angle > ArcSeekMath.SEEK_CANCEL_ANGLE) {
             cancelled = true
         } else {
             cancelled = false

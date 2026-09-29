@@ -141,13 +141,15 @@ fun CurvedSideStatusBar(
     var isCharging by remember {
         mutableStateOf(false)
     }
+    // 广播每分钟触发一次：格式化器缓存复用，避免每次新建
+    val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
     DisposableEffect(context) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 when (intent?.action) {
                     Intent.ACTION_TIME_TICK, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> {
-                        currentTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+                        currentTime = timeFormatter.format(Date())
                     }
                     Intent.ACTION_BATTERY_CHANGED -> {
                         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)

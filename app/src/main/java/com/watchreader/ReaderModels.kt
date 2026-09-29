@@ -3,10 +3,10 @@ package com.watchreader
 /**
  * 主题模式
  */
-enum class ThemeMode(val value: Int, val title: String) {
-    PARCHMENT(0, "📜 主题: 羊皮纸浅色"),
-    DARK(1, "🌌 主题: 极光深色"),
-    RED_NIGHT(2, "🌙 主题: 纯黑深红夜视");
+enum class ThemeMode(val value: Int) {
+    PARCHMENT(0),
+    DARK(1),
+    RED_NIGHT(2);
 
     /** 是否属于深色系（极光黑 / 红光夜视）—— 由主题本身派生，杜绝第二个"深色"状态量 */
     val isDark: Boolean get() = this != PARCHMENT
@@ -19,10 +19,10 @@ enum class ThemeMode(val value: Int, val title: String) {
 /**
  * 点按翻页热区划分模式
  */
-enum class TapPageArea(val value: Int, val title: String) {
-    TOP_BOTTOM(0, "👆 点按: 上下分屏翻页"),
-    LEFT_RIGHT(1, "👉 点按: 左右分屏翻页"),
-    DISABLED(2, "🚫 点按: 关闭点按翻页");
+enum class TapPageArea(val value: Int) {
+    TOP_BOTTOM(0),
+    LEFT_RIGHT(1),
+    DISABLED(2);
 
     companion object {
         fun fromValue(value: Int): TapPageArea = entries.firstOrNull { it.value == value } ?: TOP_BOTTOM
@@ -32,9 +32,9 @@ enum class TapPageArea(val value: Int, val title: String) {
 /**
  * 字体样式
  */
-enum class FontType(val value: Int, val title: String) {
-    SANS_SERIF(0, "🔤 字体: 黑体 (无衬线)"),
-    SERIF(1, "🔤 字体: 宋体 (衬线)");
+enum class FontType(val value: Int) {
+    SANS_SERIF(0),
+    SERIF(1);
 
     companion object {
         fun fromValue(value: Int): FontType = entries.firstOrNull { it.value == value } ?: SANS_SERIF
@@ -113,13 +113,6 @@ object ReadDurationFormatter {
         val hours = safeSec / 3600
         val mins = (safeSec % 3600) / 60
         return "⏱️ 累计阅读: ${hours}小时 ${mins}分钟"
-    }
-
-    fun formatText(durationSec: Long): String {
-        val safeSec = maxOf(0L, durationSec)
-        val hours = safeSec / 3600
-        val mins = (safeSec % 3600) / 60
-        return "${hours}小时 ${mins}分钟"
     }
 }
 

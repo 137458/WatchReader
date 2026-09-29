@@ -35,54 +35,6 @@ val CHAPTER_REGEX = Regex(
 )
 
 /**
- * 高性能零分配前缀过滤章节检测算法
- * @param fullText 完整文本
- * @return 章节列表，按出现顺序排列
- */
-fun detectChapters(fullText: String): List<Chapter> {
-    if (fullText.isEmpty()) return emptyList()
-
-    val chapters = ArrayList<Chapter>(minOf(512, fullText.length / 2500 + 32))
-    var offset = 0
-    val len = fullText.length
-
-    while (offset < len) {
-        val nl = fullText.indexOf('\n', offset)
-        val lineEnd = if (nl == -1) len else nl
-        val lineLen = lineEnd - offset
-
-        // 仅对 2~60 字以内的短行进行候选字符快速预检
-        if (lineLen in 2..60) {
-            var start = offset
-            while (start < lineEnd && fullText[start].isWhitespace()) {
-                start++
-            }
-            if (start < lineEnd) {
-                val firstChar = fullText[start]
-                // 零分配候选首字剪枝：99.9% 普通正文直接跳过，耗时从 1.5s 骤降至 10ms
-                val isCandidate = isChapterCandidateChar(firstChar)
-
-                if (isCandidate) {
-                    val line = fullText.substring(start, lineEnd).trimEnd()
-                    if (line.length in 2..60 && CHAPTER_REGEX.matches(line)) {
-                        chapters.add(Chapter(index = chapters.size, title = line, charOffset = offset))
-                    }
-                }
-            }
-        }
-
-        offset = lineEnd + 1
-    }
-
-    // 若无匹配到任何规范章节（如纯文本记录），生成虚拟分节，确保按段分章极速渲染
-    if (chapters.isEmpty()) {
-        return createVirtualChapters(fullText)
-    }
-
-    return chapters
-}
-
-/**
  * 候选首字快速剪枝预检
  */
 @Suppress("NOTHING_TO_INLINE")
@@ -278,36 +230,6 @@ private fun createVirtualChaptersFromLength(totalChars: Int): List<Chapter> {
         chapters.add(Chapter(index = chapters.size, title = "第 $partIdx 节", charOffset = offset))
         partIdx++
         offset += chunkSize
-    }
-    return chapters
-}
-
-/**
- * 针对无章节标题小说生成虚拟分节（约 3000 字一节，按自然段换行对齐）
- */
-private fun createVirtualChapters(fullText: String): List<Chapter> {
-    val chapters = mutableListOf<Chapter>()
-    val len = fullText.length
-    if (len == 0) return emptyList()
-
-    var offset = 0
-    var partIdx = 1
-    val chunkSize = 3000
-
-    while (offset < len) {
-        val title = "第 $partIdx 节"
-        chapters.add(Chapter(index = chapters.size, title = title, charOffset = offset))
-        partIdx++
-
-        val targetEnd = offset + chunkSize
-        if (targetEnd >= len) break
-
-        val nextNl = fullText.indexOf('\n', targetEnd)
-        offset = if (nextNl in targetEnd until minOf(targetEnd + 600, len)) {
-            nextNl + 1
-        } else {
-            targetEnd
-        }
     }
     return chapters
 }

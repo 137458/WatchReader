@@ -341,13 +341,13 @@ fun tokenizeRsvpText(text: String, startOffset: Int): List<RsvpToken> {
         }
 
         val tokenStart = i
-        val isChinese = c.code in 0x4E00..0x9FA5 || c.code in 0x3400..0x4DBF
+        val isChinese = isCjkIdeograph(c.code)
 
         if (isChinese) {
             var count = 1
             while (tokenStart + count < len && count < 2) {
                 val nextC = text[tokenStart + count]
-                if (nextC.code in 0x4E00..0x9FA5) {
+                if (isCjkIdeograph(nextC.code)) {
                     count++
                 } else break
             }
@@ -393,6 +393,11 @@ fun tokenizeRsvpText(text: String, startOffset: Int): List<RsvpToken> {
     }
 
     return tokens
+}
+
+/** CJK 汉字判定（基本区 + 扩展 A 区），首字与成组续字共用同一集合 */
+private fun isCjkIdeograph(code: Int): Boolean {
+    return code in 0x4E00..0x9FA5 || code in 0x3400..0x4DBF
 }
 
 private fun isPunctuation(c: Char): Boolean {

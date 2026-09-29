@@ -66,4 +66,15 @@ class RsvpTest {
             assertTrue(token.orpIndex in 0 until token.text.length)
         }
     }
+
+    @Test
+    fun testRsvpTokenizerGroupsExtAIdeographsLikeBaseBlock() {
+        // CJK 扩展 A 区汉字（U+3400..U+4DBF）必须与基本区同样参与两字成组：
+        // 首字符判定已含扩展 A，成组续字判定若只查基本区，扩展 A 汉字将永远单字成组
+        val tokens = tokenizeRsvpText("㐀㐁中", 0)
+
+        assertTrue(tokens.isNotEmpty())
+        assertEquals("㐀㐁", tokens[0].text)
+        assertEquals("中", tokens[1].text)
+    }
 }

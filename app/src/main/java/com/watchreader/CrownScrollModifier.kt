@@ -429,16 +429,6 @@ object CrownScrollHelper {
 }
 
 /**
- * 扩展方法：MotionEvent 是否为表冠滚动
- */
-fun MotionEvent.isCrownScrollEvent(): Boolean = CrownScrollHelper.isCrownScrollEvent(this)
-
-/**
- * 扩展方法：获取 MotionEvent 表冠滚动增量
- */
-fun MotionEvent.getCrownScrollDelta(): Float = CrownScrollHelper.extractCrownDelta(this)
-
-/**
  * 为原生 ListView 统一安装表冠滚动管线（线性步进 + 24px 门限齿轮微振 + 301 边界振感）
  *
  * 目录 / 书签 / 选卷三处 ListView 曾各自内联同一段 setOnGenericMotionListener，

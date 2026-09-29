@@ -2,7 +2,6 @@ package com.watchreader
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -216,11 +215,11 @@ fun MenuScreen(
                     SettingLine("亮度", BrightnessManager.formatBrightnessText(appBrightness)) {
                         Stepper(
                             onMinus = {
-                                val current = if (appBrightness < 0f) 0.50f else appBrightness
+                                val current = if (appBrightness < 0f) BrightnessManager.SYSTEM_STEP_BASE else appBrightness
                                 onBrightnessChange((current - 0.05f).coerceIn(0.01f, 1f))
                             },
                             onPlus = {
-                                val current = if (appBrightness < 0f) 0.50f else appBrightness
+                                val current = if (appBrightness < 0f) BrightnessManager.SYSTEM_STEP_BASE else appBrightness
                                 onBrightnessChange((current + 0.05f).coerceIn(0.01f, 1f))
                             }
                         )
@@ -228,10 +227,10 @@ fun MenuScreen(
                     HairlineDivider()
                     // 四档并排最窄处每键仅 ~37dp，必须紧凑内边距才能完整容纳"系统"两字
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        PillButton("系统", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(-1f) }
-                        PillButton("暗", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(0.10f) }
-                        PillButton("中", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(0.65f) }
-                        PillButton("亮", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(1f) }
+                        PillButton("系统", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(BrightnessManager.BRIGHTNESS_SYSTEM_DEFAULT) }
+                        PillButton("暗", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(BrightnessManager.LEVEL_ULTRA_DARK) }
+                        PillButton("中", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(BrightnessManager.LEVEL_2_MEDIUM) }
+                        PillButton("亮", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(BrightnessManager.LEVEL_3_STRONG) }
                     }
                 }
             }
@@ -243,9 +242,9 @@ fun MenuScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     SectionLabel("偏好")
-                    CycleLine("主题", themeLabel) { onThemeModeChange((themeMode + 1) % 3) }
+                    CycleLine("主题", themeLabel) { onThemeModeChange((themeMode + 1) % ThemeMode.entries.size) }
                     HairlineDivider()
-                    CycleLine("点按翻页", tapLabel) { onTapPageAreaChange((tapPageArea + 1) % 3) }
+                    CycleLine("点按翻页", tapLabel) { onTapPageAreaChange((tapPageArea + 1) % TapPageArea.entries.size) }
                     HairlineDivider()
                     CycleLine("排版净化", if (cleanTypography) "开启" else "关闭") {
                         onCleanTypographyChange(!cleanTypography)

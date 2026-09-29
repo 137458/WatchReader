@@ -113,9 +113,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     // Wi-Fi 传书协程监听生命周期托管
     private var wifiCollectJob: Job? = null
 
-    // 活跃阅读时长统计器
+    // 活跃阅读时长统计器（uptimeMillis：间隔计算不受系统时间调整影响）
     private var readingTimerJob: Job? = null
-    private var lastActiveTime = System.currentTimeMillis()
+
+    @Volatile
+    private var lastActiveTime: Long = android.os.SystemClock.uptimeMillis()
 
     /**
      * 初始化：单次 I/O 批量读取 DataStore 配置，按最后活跃页面智能秒开
@@ -895,9 +897,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun handleRotaryScroll(delta: Float): Boolean {
         when (_uiState.value.screen) {
             is Screen.Rsvp -> {
-                val now = System.currentTimeMillis()
-                if (now - lastRotaryTimeMs > 400L) {
-                    rsvpRotaryAccumulator = 0f
+                val now = android.os.SystemClock.uptimeMillis()
+                if (now - lastRotaryTimeMs > 400L) {                    rsvpRotaryAccumulator = 0f
                 }
                 lastRotaryTimeMs = now
 
@@ -935,7 +936,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 标记用户在阅读器中有活跃操作
      */
     fun notifyUserActive() {
-        lastActiveTime = System.currentTimeMillis()
+        lastActiveTime = android.os.SystemClock.uptimeMillis()
     }
 
     /**
@@ -948,7 +949,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 kotlinx.coroutines.delay(10_000L)
                 val state = _uiState.value
                 if (state.screen is Screen.Reader) {
-                    val now = System.currentTimeMillis()
+                    val now = android.os.SystemClock.uptimeMillis()
                     if (now - lastActiveTime <= 60_000L) {
                         val newSec = state.readDurationSec + 10L
                         _uiState.update { it.copy(readDurationSec = newSec) }

@@ -46,6 +46,8 @@ object CjkSerifFont {
     @Synchronized
     private fun ensureResolved() {
         if (attempted) return
+        // 一次性尝试语义：进程内只探测一次。启动期 SELinux 拒读等失败并非瞬态，
+        // 反复重试只会重复 20MB 级字面的开销，故不做退避重试
         attempted = true
 
         val present = ArrayList<String>(CANDIDATES.size)

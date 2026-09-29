@@ -18,11 +18,15 @@ class ChapterDetectorTest {
             这是第三章的正文内容。天地不仁，以万物为刍狗。
         """.trimIndent()
 
-        val chapters = detectChapters(sampleText)
+        val (chapters, totalChars) = detectChaptersFromInputStream(
+            ByteArrayInputStream(sampleText.toByteArray(Charsets.UTF_8)),
+            "UTF-8"
+        )
         assertEquals(3, chapters.size)
         assertEquals("第1章 初入江湖", chapters[0].title)
         assertEquals("第2章 绝处逢生", chapters[1].title)
         assertEquals("第3章 大道争锋", chapters[2].title)
+        assertEquals(sampleText.length, totalChars)
     }
 
     @Test
