@@ -64,6 +64,7 @@ data class ReaderUiState(
     val isWifiServerRunning: Boolean = false,
     val wifiIpAddress: String? = null,
     val wifiPort: Int = 8888,
+    val wifiToken: String? = null,
     val wifiUploadedCount: Int = 0,
     val isTransferring: Boolean = false,
     val transferProgress: Float = 0f,
@@ -244,19 +245,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 val fullLen: Int
 
                 if (format == BookFormat.EPUB) {
+                    // 解析结果由 EpubParser.metadataCache 会话级缓存（URI+大小为键），
+                    // 章节索引磁盘缓存对 EPUB 无消费方，读写皆是死 I/O
                     val epubMeta = withContext(Dispatchers.IO) {
-                        val fileSize = getFileSize(appCtx, uri)
-                        val cacheKey = "${uri}_${fileSize}"
-                        val cachedChapters = chapterIndexCache[cacheKey] ?: ChapterDiskCache.load(appCtx, cacheKey)?.chapters
-                        if (cachedChapters != null) {
-                            chapterIndexCache[cacheKey] = cachedChapters
-                        }
-                        val meta = EpubParser.parseEpub(appCtx, uri)
-                        if (cachedChapters == null) {
-                            ChapterDiskCache.save(appCtx, cacheKey, meta.chapters, meta.totalChars)
-                            chapterIndexCache[cacheKey] = meta.chapters
-                        }
-                        meta
+                        EpubParser.parseEpub(appCtx, uri)
                     }
                     fileName = epubMeta.title
                     chapters = epubMeta.chapters
@@ -664,17 +656,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
             )
         }
-        val started = wifiServer?.start() ?: false
-        val ip = wifiServer?.getLocalIpAddress()
-        val port = wifiServer?.activePort ?: 8888
-        _uiState.update {
-            it.copy(
-                screen = Screen.WifiTransfer,
-                isWifiServerRunning = started,
-                wifiIpAddress = ip,
-                wifiPort = port,
-                wifiUploadedCount = 0
-            )
+        // 先切页，再后台绑定：ServerSocket bind（最多尝试 6 个端口）与网卡枚举是阻塞 IO，
+        // 从 onClick 主线程直调存在 ANR 风险
+        _uiState.update { it.copy(screen = Screen.WifiTransfer, wifiIpAddress = null, wifiToken = null, wifiUploadedCount = 0) }
+        viewModelScope.launch {
+            val server = wifiServer ?: return@launch
+            val started = withContext(Dispatchers.IO) { server.start() }
+            val ip = withContext(Dispatchers.IO) { server.getLocalIpAddress() }
+            _uiState.update {
+                it.copy(
+                    isWifiServerRunning = started,
+                    wifiIpAddress = ip,
+                    wifiPort = server.activePort,
+                    wifiToken = server.accessToken
+                )
+            }
         }
         wifiCollectJob?.cancel()
         wifiCollectJob = viewModelScope.launch {
@@ -713,6 +709,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     isTransferring = false,
                     transferProgress = 0f,
                     transferFileName = "",
+                    wifiToken = null,
                     bookshelf = shelf
                 )
             }

@@ -124,6 +124,12 @@ fun ReaderScreen(
     val latestChapterCount = remember { mutableStateOf(chapters.size) }
     latestChapterIndex.value = currentChapterIndex
     latestChapterCount.value = chapters.size
+    // 手势闭包在只执行一次的 factory 中按值捕获会固化首帧参数（自动滚屏点按暂停失效、
+    // 热区切换不生效的根因），与章节数同以状态持有，事件期读取最新值
+    val latestIsAutoScrolling = remember { mutableStateOf(isAutoScrolling) }
+    val latestTapPageArea = remember { mutableStateOf(tapPageArea) }
+    latestIsAutoScrolling.value = isAutoScrolling
+    latestTapPageArea.value = tapPageArea
 
     val scrollDebounceHandler = remember { Handler(Looper.getMainLooper()) }
     val resetScrollingRunnable = remember {
@@ -139,13 +145,22 @@ fun ReaderScreen(
         }
     }
 
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    var activeAutoEngine by remember { mutableStateOf<AutoScrollEngine?>(null) }
+    var activeScrollView by remember { mutableStateOf<ScrollView?>(null) }
+
     DisposableEffect(Unit) {
         onDispose {
             scrollDebounceHandler.removeCallbacksAndMessages(null)
             onCharOffsetChange(currentReadingOffset)
             onFlushReadingPosition()
+            // 组合销毁必须停掉 Choreographer 帧循环与表冠惯性：引擎 doFrame 自续
+            // postFrameCallback 且 release 无其他调用方，否则带滚屏返回书架后逐帧空转
+            activeAutoEngine?.stop()
+            activeScrollView?.let { CrownScrollHelper.abortFling(it) }
         }
     }
+
     val resetInactivityKeepScreenOn = remember(window, isAutoScrolling) {
         val timeoutMs = 5 * 60 * 1000L // 5 分钟无交互超时
         val timeoutRunnable = Runnable {
@@ -163,9 +178,6 @@ fun ReaderScreen(
         }
         trigger
     }
-
-    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
-    var activeAutoEngine by remember { mutableStateOf<AutoScrollEngine?>(null) }
 
     // 智能后台/息屏能效冻结：切到后台或息屏时立即挂起 Choreographer 循环，返回前台自动恢复
     DisposableEffect(lifecycleOwner, isAutoScrolling) {
@@ -351,6 +363,7 @@ fun ReaderScreen(
                 )
                 autoEngine.speedPxPerSec = autoScrollSpeed
                 activeAutoEngine = autoEngine
+                activeScrollView = scrollView
 
                 val holder = ReaderViewHolder(
                     scrollView = scrollView,
@@ -380,7 +393,7 @@ fun ReaderScreen(
                         if (isScrolling) return true
 
                         // 若正在自动滚屏，单击任意位置暂停
-                        if (isAutoScrolling) {
+                        if (latestIsAutoScrolling.value) {
                             onAutoScrollToggle()
                             return true
                         }
@@ -389,7 +402,7 @@ fun ReaderScreen(
                         val h = scrollView.height.toFloat()
                         if (w <= 0 || h <= 0) return true
 
-                        val action = TapPageHelper.resolveTapAction(e.x, e.y, w, h, tapPageArea)
+                        val action = TapPageHelper.resolveTapAction(e.x, e.y, w, h, latestTapPageArea.value)
                         val scrollDistance = TapPageHelper.calculateScrollDistance(h, density)
 
                         when (action) {
@@ -402,7 +415,7 @@ fun ReaderScreen(
                                 RotaryHapticManager.performScrollTick(ctx, scrollView)
                             }
                             TapAction.SHOW_MENU -> {
-                                if (tapPageArea == TapPageArea.DISABLED.value) {
+                                if (latestTapPageArea.value == TapPageArea.DISABLED.value) {
                                     onAutoScrollToggle()
                                 } else {
                                     onLongPress()
@@ -510,7 +523,7 @@ fun ReaderScreen(
                 scrollView.post {
                     scrollView.requestFocus()
                     safeRestoreScrollPosition(scrollView, holder, chapterContent, initialCharOffset)
-                    if (isAutoScrolling) {
+                    if (latestIsAutoScrolling.value) {
                         autoEngine.start()
                     }
                 }

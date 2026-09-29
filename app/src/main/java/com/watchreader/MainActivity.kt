@@ -401,6 +401,7 @@ class MainActivity : ComponentActivity() {
                 is Screen.WifiTransfer -> WifiTransferScreen(
                     ipAddress = uiState.wifiIpAddress,
                     port = uiState.wifiPort,
+                    accessToken = uiState.wifiToken,
                     uploadedCount = uiState.wifiUploadedCount,
                     isServerRunning = uiState.isWifiServerRunning,
                     isTransferring = uiState.isTransferring,

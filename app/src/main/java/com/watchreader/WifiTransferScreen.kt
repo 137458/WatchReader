@@ -54,6 +54,7 @@ import kotlinx.coroutines.withContext
 fun WifiTransferScreen(
     ipAddress: String?,
     port: Int = 8888,
+    accessToken: String? = null,
     uploadedCount: Int,
     isServerRunning: Boolean,
     isTransferring: Boolean = false,
@@ -188,7 +189,12 @@ fun WifiTransferScreen(
                 verticalArrangement = Arrangement.Center
             ) {
                 if (serverReady) {
-                    QrCodePanel(ipAddress = ipAddress!!, port = port, uploadedCount = uploadedCount)
+                    QrCodePanel(
+                        ipAddress = ipAddress!!,
+                        port = port,
+                        accessToken = accessToken,
+                        uploadedCount = uploadedCount
+                    )
                 } else {
                     OfflinePanel()
                 }
@@ -234,16 +240,25 @@ fun WifiTransferScreen(
 private fun QrCodePanel(
     ipAddress: String,
     port: Int,
+    accessToken: String?,
     uploadedCount: Int
 ) {
     val primaryColor = MaterialTheme.colorScheme.primary
-    val outlineColor = MaterialTheme.colorScheme.outline
     val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
 
+    // 二维码载荷携带访问令牌：网页与全部接口调用均凭 token 鉴权，
+    // 防止同网段未授权设备或网页直接访问传书服务
+    val pageUrl = buildString {
+        append("http://").append(ipAddress).append(':').append(port)
+        if (!accessToken.isNullOrEmpty()) {
+            append("/?token=").append(accessToken)
+        }
+    }
+
     // 二维码编码移出主线程：组合首帧零阻塞，生成期间以同尺寸占位保持布局稳定
-    val qrBitmap by produceState<Bitmap?>(initialValue = null, ipAddress, port) {
+    val qrBitmap by produceState<Bitmap?>(initialValue = null, pageUrl) {
         value = withContext(Dispatchers.Default) {
-            QrCodeGenerator.generateQrCodeBitmap("http://$ipAddress:$port", 260)
+            QrCodeGenerator.generateQrCodeBitmap(pageUrl, 260)
         }
     }
     val qrImage = remember(qrBitmap) { qrBitmap?.asImageBitmap() }
@@ -293,7 +308,7 @@ private fun QrCodePanel(
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "http://$ipAddress:$port",
+            text = pageUrl,
             style = TextStyle(
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,

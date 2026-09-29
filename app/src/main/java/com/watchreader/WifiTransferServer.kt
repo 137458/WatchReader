@@ -6,10 +6,12 @@ import android.net.wifi.WifiManager
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.*
 import java.net.Inet4Address
@@ -19,6 +21,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
 import java.net.URLEncoder
+import java.security.MessageDigest
 
 /**
  * 传书进度数据模型
@@ -50,7 +53,47 @@ class WifiTransferServer(
     private val TAG = "WifiTransferServer"
     private var serverSocket: ServerSocket? = null
     private var isRunning = false
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private var scope = CoroutineScope(Dispatchers.IO)
+
+    /** 本次服务会话的访问令牌：二维码 URL 携带，所有请求校验，杜绝同网段未授权访问 */
+    private val sessionToken = generateToken()
+
+    /** 对外暴露当前会话令牌（拼入二维码 URL） */
+    val accessToken: String get() = sessionToken
+
+    companion object {
+        /** 生成 12 位十六进制会话令牌 */
+        internal fun generateToken(): String =
+            java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12)
+
+        internal fun parseQueryParams(rawPath: String): Map<String, String> {
+            val map = mutableMapOf<String, String>()
+            val qIdx = rawPath.indexOf('?')
+            if (qIdx >= 0 && qIdx + 1 < rawPath.length) {
+                val queryStr = rawPath.substring(qIdx + 1)
+                for (p in queryStr.split("&")) {
+                    val kv = p.split("=")
+                    if (kv.size == 2 && kv[0].isNotEmpty()) {
+                        try {
+                            map[kv[0].lowercase()] = URLDecoder.decode(kv[1], "UTF-8")
+                        } catch (_: Exception) {
+                            map[kv[0].lowercase()] = kv[1]
+                        }
+                    }
+                }
+            }
+            return map
+        }
+
+        /** 恒时比较令牌：空值/不一致一律拒绝，空串也视作未提供 */
+        internal fun tokenMatches(presented: String?, expected: String): Boolean {
+            if (presented.isNullOrEmpty()) return false
+            return MessageDigest.isEqual(
+                presented.toByteArray(Charsets.UTF_8),
+                expected.toByteArray(Charsets.UTF_8)
+            )
+        }
+    }
 
     var activePort: Int = preferredPort
         private set
@@ -148,7 +191,12 @@ class WifiTransferServer(
             serverSocket?.close()
         } catch (_: Exception) {}
         serverSocket = null
+        // 取消全部在途协程（监听循环、上传写入、延时重置），重建 scope 供下次 start 使用；
+        // 此前 stop 后在途上传仍会继续写完整个文件并回调无人收集的 StateFlow
+        scope.cancel()
+        scope = CoroutineScope(Dispatchers.IO)
         _transferProgress.value = TransferProgress()
+        _uploadedCount.value = 0
         Log.i(TAG, "Wi-Fi transfer server stopped")
     }
 
@@ -189,6 +237,13 @@ class WifiTransferServer(
 
             val method = parts[0].uppercase()
             val rawPath = parts[1]
+
+            // 访问令牌校验：二维码 URL 与网页 JS 均携带 token，未授权请求一律拒绝，
+            // 杜绝同网段任意设备/网页静默读架、删书、上传
+            if (!tokenMatches(parseQueryParams(rawPath)["token"], sessionToken)) {
+                sendResponse(output, 401, "application/json", """{"status":"error","message":"未授权：请通过手表二维码重新进入传书页"}""")
+                return
+            }
 
             when {
                 method == "GET" && (rawPath == "/" || rawPath.startsWith("/?")) -> {
@@ -241,36 +296,14 @@ class WifiTransferServer(
         return baos.toString("UTF-8")
     }
 
-    private fun parseQueryParams(rawPath: String): Map<String, String> {
-        val map = mutableMapOf<String, String>()
-        val qIdx = rawPath.indexOf('?')
-        if (qIdx >= 0 && qIdx + 1 < rawPath.length) {
-            val queryStr = rawPath.substring(qIdx + 1)
-            for (p in queryStr.split("&")) {
-                val kv = p.split("=")
-                if (kv.size == 2 && kv[0].isNotEmpty()) {
-                    try {
-                        map[kv[0].lowercase()] = URLDecoder.decode(kv[1], "UTF-8")
-                    } catch (_: Exception) {
-                        map[kv[0].lowercase()] = kv[1]
-                    }
-                }
-            }
-        }
-        return map
-    }
-
     private fun handleFileUpload(rawPath: String, headers: List<String>, input: InputStream, output: OutputStream) {
-        var contentType = ""
         var contentLength = -1L
         val params = parseQueryParams(rawPath)
         var queryFileName = params["filename"] ?: params["name"] ?: ""
 
         for (h in headers) {
             val lower = h.lowercase()
-            if (lower.startsWith("content-type:")) {
-                contentType = h.substring(13).trim()
-            } else if (lower.startsWith("content-length:")) {
+            if (lower.startsWith("content-length:")) {
                 contentLength = h.substring(15).trim().toLongOrNull() ?: -1L
             } else if (lower.startsWith("x-filename:")) {
                 try {
@@ -284,16 +317,9 @@ class WifiTransferServer(
             return
         }
 
-        if (contentType.contains("multipart/form-data")) {
-            val boundaryMatch = Regex("""boundary=(?:["']?)([^"';\s]+)""").find(contentType)
-            val boundary = boundaryMatch?.groupValues?.get(1)
-            if (boundary != null) {
-                parseMultipartUpload(boundary, input, contentLength, output)
-                return
-            }
-        }
-
-        sendResponse(output, 400, "application/json", """{"status":"error","message":"Invalid Content-Type or missing filename"}""")
+        // multipart 表单分支已移除：原实现从不扫描 boundary，会把分隔符与 part 头原样写进书籍文件
+        // 产出损坏内容。手表端统一使用网页内置的 X-Filename 直存协议，标准 multipart 客户端明确报错
+        sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持内置网页直传（缺少 filename 参数）"}""")
     }
 
     private fun saveDirectStreamUpload(
@@ -321,34 +347,43 @@ class WifiTransferServer(
 
             val savedFile = File(booksDir, cleanName)
             var totalRead = 0L
-            FileOutputStream(savedFile).use { fos ->
-                val buf = ByteArray(32768)
-                var read: Int
-                var lastMilestone = 0
+            try {
+                FileOutputStream(savedFile).use { fos ->
+                    val buf = ByteArray(32768)
+                    var read: Int
+                    var lastMilestone = 0
 
-                while (input.read(buf).also { read = it } != -1) {
-                    fos.write(buf, 0, read)
-                    totalRead += read
+                    while (input.read(buf).also { read = it } != -1) {
+                        fos.write(buf, 0, read)
+                        totalRead += read
 
-                    val p = if (contentLength > 0) (totalRead.toFloat() / contentLength).coerceIn(0.05f, 0.98f) else 0.5f
-                    _transferProgress.value = TransferProgress(
-                        isTransferring = true,
-                        fileName = cleanName,
-                        progress = p,
-                        bytesRead = totalRead,
-                        totalBytes = contentLength
-                    )
+                        val p = if (contentLength > 0) (totalRead.toFloat() / contentLength).coerceIn(0.05f, 0.98f) else 0.5f
+                        _transferProgress.value = TransferProgress(
+                            isTransferring = true,
+                            fileName = cleanName,
+                            progress = p,
+                            bytesRead = totalRead,
+                            totalBytes = contentLength
+                        )
 
-                    val milestone = (p * 4).toInt()
-                    if (milestone > lastMilestone) {
-                        lastMilestone = milestone
-                        RotaryHapticManager.performScrollTick(context, null)
-                    }
+                        val milestone = (p * 4).toInt()
+                        if (milestone > lastMilestone) {
+                            lastMilestone = milestone
+                            RotaryHapticManager.performScrollTick(context, null)
+                        }
 
-                    if (contentLength > 0 && totalRead >= contentLength) {
-                        break
+                        if (contentLength > 0 && totalRead >= contentLength) {
+                            break
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                // 异常路径必须清理半成品：否则残缺文件会被 /api/books 当正常书籍展示
+                Log.e(TAG, "Error streaming upload: $cleanName", e)
+                try { savedFile.delete() } catch (_: Exception) {}
+                _transferProgress.value = TransferProgress(isTransferring = false)
+                sendResponse(output, 500, "application/json", """{"status":"error","message":"传输中断，已取消保存"}""")
+                return
             }
 
             if (contentLength > 0 && totalRead < contentLength) {
@@ -361,83 +396,6 @@ class WifiTransferServer(
             onFileSuccessfullySaved(savedFile, cleanName, output)
         } catch (e: Exception) {
             Log.e(TAG, "Error in saveDirectStreamUpload", e)
-            _transferProgress.value = TransferProgress(isTransferring = false)
-            sendResponse(output, 500, "application/json", """{"status":"error","message":"${e.localizedMessage}"}""")
-        }
-    }
-
-    private fun parseMultipartUpload(
-        boundary: String,
-        input: InputStream,
-        contentLength: Long,
-        output: OutputStream
-    ) {
-        try {
-            val delimiter = "--$boundary".toByteArray(Charsets.UTF_8)
-            var savedFile: File? = null
-            var originalFileName = ""
-
-            val partHeader = readHeader(input)
-            val fnMatch = Regex("""filename=(?:["']?)([^"';\r\n]+)""").find(partHeader)
-            if (fnMatch != null) {
-                var rawName = fnMatch.groupValues[1]
-                try {
-                    rawName = URLDecoder.decode(rawName, "UTF-8")
-                } catch (_: Exception) {}
-                originalFileName = File(rawName).name
-                if (BookTextConverter.isSupportedFileName(originalFileName)) {
-                    savedFile = File(booksDir, originalFileName)
-                }
-            }
-
-            if (savedFile != null) {
-                _transferProgress.value = TransferProgress(
-                    isTransferring = true,
-                    fileName = originalFileName,
-                    progress = 0.1f,
-                    bytesRead = 0,
-                    totalBytes = contentLength
-                )
-                RotaryHapticManager.performScrollTick(context, null)
-
-                FileOutputStream(savedFile).use { fos ->
-                    val buf = ByteArray(32768)
-                    var read: Int
-                    var totalRead = 0L
-                    var lastMilestone = 0
-
-                    while (input.read(buf).also { read = it } != -1) {
-                        fos.write(buf, 0, read)
-                        totalRead += read
-
-                        val p = if (contentLength > 0) (totalRead.toFloat() / contentLength).coerceIn(0.1f, 0.98f) else 0.5f
-                        _transferProgress.value = TransferProgress(
-                            isTransferring = true,
-                            fileName = originalFileName,
-                            progress = p,
-                            bytesRead = totalRead,
-                            totalBytes = contentLength
-                        )
-
-                        val milestone = (p * 4).toInt()
-                        if (milestone > lastMilestone) {
-                            lastMilestone = milestone
-                            RotaryHapticManager.performScrollTick(context, null)
-                        }
-
-                        if (contentLength > 0 && totalRead >= contentLength - delimiter.size - 32) {
-                            break
-                        }
-                    }
-                }
-
-                onFileSuccessfullySaved(savedFile, originalFileName, output)
-            } else {
-                _transferProgress.value = TransferProgress(isTransferring = false)
-                sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持 .txt / .epub / .mobi / .azw3 / .fb2 / .html 格式文件"}""")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in parseMultipartUpload", e)
             _transferProgress.value = TransferProgress(isTransferring = false)
             sendResponse(output, 500, "application/json", """{"status":"error","message":"${e.localizedMessage}"}""")
         }
@@ -459,7 +417,8 @@ class WifiTransferServer(
             DataStoreManager.updateBookInShelf(context, uri, 0, file.length().toInt(), "新导入")
             onBookUploaded?.invoke(bookItem)
         }
-        _uploadedCount.value += 1
+        // 并发上传完成时避免读-改-写竞态丢计数
+        _uploadedCount.update { it + 1 }
 
         // 设置 100% 状态
         _transferProgress.value = TransferProgress(
@@ -472,8 +431,8 @@ class WifiTransferServer(
 
         RotaryHapticManager.performSuccessFeedback(context)
 
-        val responseJson = """{"status":"ok","fileName":"$fileName"}"""
-        sendResponse(output, 200, "application/json", responseJson)
+        val escapedName = fileName.replace("\\", "\\\\").replace("\"", "\\\"")
+        sendResponse(output, 200, "application/json", """{"status":"ok","fileName":"$escapedName"}""")
 
         // 1.2 秒后平滑恢复常驻就绪视图
         scope.launch {
@@ -564,14 +523,13 @@ class WifiTransferServer(
             200 -> "OK"
             204 -> "No Content"
             400 -> "Bad Request"
+            401 -> "Unauthorized"
             404 -> "Not Found"
             else -> "Internal Server Error"
         }
         val header = "HTTP/1.1 $statusCode $statusText\r\n" +
                 "Content-Type: $contentType; charset=utf-8\r\n" +
                 "Content-Length: ${bytes.size}\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
                 "Connection: close\r\n\r\n"
         output.write(header.toByteArray(Charsets.UTF_8))
         output.write(bytes)
@@ -637,6 +595,13 @@ class WifiTransferServer(
                 </div>
 
                 <script>
+                    // 访问令牌：从进入 URL 的 query 中取得，所有接口调用统一附带，
+                    // 手表端逐请求校验，防止同网段未授权访问
+                    const TOKEN = new URLSearchParams(location.search).get('token') || '';
+                    function withToken(url) {
+                        return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
+                    }
+
                     const dropZone = document.getElementById('dropZone');
                     const fileInput = document.getElementById('fileInput');
                     const uploadBtn = document.getElementById('uploadBtn');
@@ -689,7 +654,7 @@ class WifiTransferServer(
 
                             await new Promise((resolve) => {
                                 const xhr = new XMLHttpRequest();
-                                const uploadUrl = '/upload?filename=' + encodeURIComponent(file.name);
+                                const uploadUrl = withToken('/upload?filename=' + encodeURIComponent(file.name));
                                 xhr.open('POST', uploadUrl, true);
                                 xhr.setRequestHeader('Content-Type', 'application/octet-stream');
                                 xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
@@ -732,7 +697,7 @@ class WifiTransferServer(
                         const shelfList = document.getElementById('shelfList');
                         const shelfLoading = document.getElementById('shelfLoading');
                         try {
-                            const res = await fetch('/api/books');
+                            const res = await fetch(withToken('/api/books'));
                             const books = await res.json();
                             shelfLoading.style.display = 'none';
                             shelfList.innerHTML = '';
@@ -748,7 +713,7 @@ class WifiTransferServer(
                                     <div class="file-header">
                                         <span class="file-name">${'$'}{b.name}</span>
                                         <div style="display:flex;gap:6px;">
-                                            <a class="down-btn" href="/api/download?name=${'$'}{encodeURIComponent(b.name)}" download>导出</a>
+                                            <a class="down-btn" href="${'$'}{withToken('/api/download?name=' + encodeURIComponent(b.name))}" download>导出</a>
                                             <button class="del-btn" onclick="deleteBook('${'$'}{encodeURIComponent(b.name)}')">删除</button>
                                         </div>
                                     </div>
@@ -765,7 +730,7 @@ class WifiTransferServer(
                         const name = decodeURIComponent(encodedName);
                         if (!confirm('确定要从手表中删除《' + name + '》吗？')) return;
                         try {
-                            const res = await fetch('/api/books/delete?name=' + encodedName, { method: 'POST' });
+                            const res = await fetch(withToken('/api/books/delete?name=' + encodedName), { method: 'POST' });
                             if (res.ok) {
                                 loadShelf();
                             } else {

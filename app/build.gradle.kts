@@ -81,9 +81,6 @@ dependencies {
     // DocumentFile
     implementation("androidx.documentfile:documentfile:1.0.1")
 
-    // Wear Compose
-    implementation("androidx.wear.compose:compose-foundation:1.3.1")
-
     // Preferences DataStore — 线程安全且异步协程响应式配置持久化
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
