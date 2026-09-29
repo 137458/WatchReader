@@ -100,11 +100,23 @@ object EpubParser {
      * 智能净化书名（去除 .epub, .txt 等常见文件后缀）
      */
     fun cleanBookTitle(rawTitle: String): String {
-        return rawTitle
-            .removeSuffix(".epub").removeSuffix(".EPUB")
-            .removeSuffix(".txt").removeSuffix(".TXT")
-            .removeSuffix(".md").removeSuffix(".MD")
-            .trim()
+        var title = rawTitle.trim()
+        val suffixes = listOf(
+            ".epub", ".mobi", ".azw3", ".azw", ".prc", ".fb2",
+            ".html", ".htm", ".xhtml", ".txt", ".md", ".log"
+        )
+        // 反复剥除以覆盖叠加后缀（如「书名.fb2.txt」）
+        var changed = true
+        while (changed) {
+            changed = false
+            for (suffix in suffixes) {
+                if (title.length > suffix.length && title.endsWith(suffix, ignoreCase = true)) {
+                    title = title.dropLast(suffix.length)
+                    changed = true
+                }
+            }
+        }
+        return title.trim()
     }
 
     /**

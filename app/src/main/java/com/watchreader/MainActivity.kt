@@ -772,7 +772,9 @@ private fun BookshelfBookRow(
     enterOrder: Int
 ) {
     val colors = MaterialTheme.colorScheme
-    val isEpub = book.uriString.endsWith(".epub", ignoreCase = true) || book.title.endsWith(".epub", ignoreCase = true)
+    val formatBadge = remember(book.uriString, book.title) {
+        BookTextConverter.formatBadgeOf(book.uriString.ifEmpty { book.title })
+    }
     // 书名清洗含正则替换：随书名 remember，避免父级每次重组（搜索逐键 / 时长 tick）逐行重算
     val displayTitle = remember(book.title) { EpubParser.cleanBookTitle(book.title) }
 
@@ -791,8 +793,8 @@ private fun BookshelfBookRow(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextBadge(
-                    text = if (isEpub) "EPUB" else "TXT",
-                    color = if (isEpub) colors.primary else colors.secondary
+                    text = formatBadge,
+                    color = if (formatBadge == "TXT") colors.secondary else colors.primary
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(

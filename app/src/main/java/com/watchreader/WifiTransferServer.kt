@@ -304,8 +304,8 @@ class WifiTransferServer(
     ) {
         try {
             val cleanName = File(fileName).name
-            if (!cleanName.endsWith(".txt", ignoreCase = true) && !cleanName.endsWith(".epub", ignoreCase = true)) {
-                sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持 .txt 和 .epub 格式"}""")
+            if (!BookTextConverter.isSupportedFileName(cleanName)) {
+                sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持 .txt / .epub / .mobi / .azw3 / .fb2 / .html 格式"}""")
                 return
             }
 
@@ -385,7 +385,7 @@ class WifiTransferServer(
                     rawName = URLDecoder.decode(rawName, "UTF-8")
                 } catch (_: Exception) {}
                 originalFileName = File(rawName).name
-                if (originalFileName.endsWith(".txt", ignoreCase = true) || originalFileName.endsWith(".epub", ignoreCase = true)) {
+                if (BookTextConverter.isSupportedFileName(originalFileName)) {
                     savedFile = File(booksDir, originalFileName)
                 }
             }
@@ -434,7 +434,7 @@ class WifiTransferServer(
                 onFileSuccessfullySaved(savedFile, originalFileName, output)
             } else {
                 _transferProgress.value = TransferProgress(isTransferring = false)
-                sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持 .txt 和 .epub 格式文件"}""")
+                sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持 .txt / .epub / .mobi / .azw3 / .fb2 / .html 格式文件"}""")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error in parseMultipartUpload", e)
@@ -483,10 +483,7 @@ class WifiTransferServer(
     }
 
     private fun handleGetBooks(output: OutputStream) {
-        val files = booksDir.listFiles()?.filter {
-            val n = it.name.lowercase()
-            n.endsWith(".txt") || n.endsWith(".epub")
-        }?.sortedByDescending { it.lastModified() } ?: emptyList()
+        val files = booksDir.listFiles()?.filter { BookTextConverter.isSupportedFileName(it.name) }?.sortedByDescending { it.lastModified() } ?: emptyList()
 
         val jsonArray = files.joinToString(prefix = "[", postfix = "]") { f ->
             val escapedName = f.name.replace("\\", "\\\\").replace("\"", "\\\"")
@@ -511,10 +508,12 @@ class WifiTransferServer(
         }
 
         try {
-            val contentType = if (cleanName.endsWith(".epub", ignoreCase = true)) {
-                "application/epub+zip"
-            } else {
-                "text/plain; charset=utf-8"
+            val contentType = when (BookFormat.fromExtension(File(cleanName).extension)) {
+                BookFormat.EPUB -> "application/epub+zip"
+                BookFormat.MOBI -> "application/x-mobipocket-ebook"
+                BookFormat.FB2 -> "text/xml; charset=utf-8"
+                BookFormat.HTML -> "text/html; charset=utf-8"
+                else -> "text/plain; charset=utf-8"
             }
             val encodedFilename = try {
                 URLEncoder.encode(cleanName, "UTF-8").replace("+", "%20")
@@ -620,12 +619,12 @@ class WifiTransferServer(
             <body>
                 <div class="card">
                     <div class="title">WatchReader 腕上无线传书</div>
-                    <div class="desc">支持将本地 TXT 与 EPUB 小说直接无线推送到手表书架</div>
+                    <div class="desc">支持将本地 TXT / EPUB / MOBI / FB2 / HTML 小说直接无线推送到手表书架</div>
                     <div class="drop-zone" id="dropZone">
                         <div class="drop-text">点击或拖拽小说文件到此处</div>
-                        <div class="drop-sub">支持 .txt、.epub 格式（自动排版）</div>
+                        <div class="drop-sub">支持 .txt、.epub、.mobi、.azw3、.fb2、.html 格式（自动排版）</div>
                     </div>
-                    <input type="file" id="fileInput" multiple accept=".txt,.epub">
+                    <input type="file" id="fileInput" multiple accept=".txt,.md,.epub,.mobi,.azw3,.azw,.prc,.fb2,.html,.htm">
                     <button class="btn" id="uploadBtn" disabled>开始传输到手表</button>
                     <ul class="file-list" id="fileList"></ul>
                 </div>
@@ -656,7 +655,7 @@ class WifiTransferServer(
 
                     function handleFiles(files) {
                         for (let f of files) {
-                            if (f.name.endsWith('.txt') || f.name.endsWith('.epub') || f.name.endsWith('.TXT') || f.name.endsWith('.EPUB')) {
+                            if (/\.(txt|md|epub|mobi|azw3|azw|prc|fb2|html|htm)$/i.test(f.name)) {
                                 selectedFiles.push(f);
                                 const li = document.createElement('li');
                                 li.className = 'file-item';

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
@@ -87,6 +88,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     @Volatile
     private var currentEncoding: String = "UTF-8"
+
+    // 转换类格式（MOBI/FB2/HTML）的派生读取源：转换产物文本缓存与其格式。
+    // 章节索引与正文一律从缓存文件读取，书架/进度仍持久化原始 URI
+    @Volatile
+    private var convertedFormat: BookFormat? = null
+    @Volatile
+    private var convertedReadUri: Uri? = null
 
     // 全局章节索引内存缓存（URI+大小为 Key，二次打开 0.00ms 秒开）
     private val chapterIndexCache = ConcurrentHashMap<String, List<Chapter>>()
@@ -227,15 +235,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             try {
-                val isEpub = withContext(Dispatchers.IO) {
-                    EpubParser.isEpubFile(appCtx, uri)
+                val format = withContext(Dispatchers.IO) {
+                    BookTextConverter.resolveFormat(appCtx, uri)
                 }
 
                 val fileName: String
                 val chapters: List<Chapter>
                 val fullLen: Int
 
-                if (isEpub) {
+                if (format == BookFormat.EPUB) {
                     val epubMeta = withContext(Dispatchers.IO) {
                         val fileSize = getFileSize(appCtx, uri)
                         val cacheKey = "${uri}_${fileSize}"
@@ -256,43 +264,24 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     fileName = getFileName(appCtx, uri)
                     val (scannedChapters, scannedLen) = withContext(Dispatchers.IO) {
-                        currentEncoding = detectFileEncoding(appCtx, uri)
-                        val fileSize = getFileSize(appCtx, uri)
-                        val cacheKey = "${uri}_${fileSize}"
-                        var detected = chapterIndexCache[cacheKey]
-                        var cachedTotalChars = 0
-                        if (detected == null) {
-                            val cachedData = ChapterDiskCache.load(appCtx, cacheKey)
-                            if (cachedData != null) {
-                                detected = cachedData.chapters
-                                cachedTotalChars = cachedData.totalChars
-                            }
-                        }
-
-                        val totalChars: Int
-                        if (detected == null) {
-                            // 首次分析：纯流式解析，峰值内存恒定 < 64KB，彻底消除大文件堆内存分配
-                            val (scanned, scannedChars) = detectChaptersStream(appCtx, uri, currentEncoding)
-                            if (scanned.isEmpty() && scannedChars == 0) {
-                                throw IllegalStateException("文件为空或无法读取")
-                            }
-                            totalChars = scannedChars
-                            ChapterDiskCache.save(appCtx, cacheKey, scanned, scannedChars)
-                            chapterIndexCache[cacheKey] = scanned
-                            detected = scanned
+                        convertedFormat = null
+                        convertedReadUri = null
+                        var readUri = uri
+                        val encoding: String
+                        if (format == BookFormat.TXT) {
+                            encoding = detectFileEncoding(appCtx, uri)
                         } else {
-                            chapterIndexCache[cacheKey] = detected
-                            totalChars = if (cachedTotalChars > 0) {
-                                cachedTotalChars
-                            } else {
-                                val lastChap = detected.lastOrNull()
-                                val estimated = (fileSize / (if (currentEncoding.startsWith("UTF-16")) 2 else 1)).toInt()
-                                if (lastChap != null) {
-                                    maxOf(estimated, lastChap.charOffset + 3000)
-                                } else estimated
-                            }
+                            // 转换类格式先流式生成 UTF-8 文本缓存，随后全部读取走缓存文件
+                            val cacheFile = BookTextConverter.convertToCacheFile(appCtx, uri, format)
+                            convertedFormat = format
+                            convertedReadUri = Uri.fromFile(cacheFile)
+                            readUri = convertedReadUri!!
+                            encoding = "UTF-8"
                         }
-                        detected to totalChars
+                        currentEncoding = encoding
+
+                        val fileSize = getFileSize(appCtx, uri)
+                        scanChapterIndex(readUri, "${uri}_${fileSize}", encoding, fileSize)
                     }
                     chapters = scannedChapters
                     fullLen = scannedLen
@@ -355,6 +344,52 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * 流式装载章节索引（TXT 与转换类格式共用）：优先内存/磁盘缓存，未命中则
+     * 以恒定 < 64KB 峰值内存单趟流式扫描。[readUri] 为实际读取源；
+     * [fileSizeHint] 供磁盘缓存缺失总长时估算，章节索引键保持书架原始 URI 域稳定
+     */
+    private fun scanChapterIndex(
+        readUri: Uri,
+        cacheKey: String,
+        encoding: String,
+        fileSizeHint: Long
+    ): Pair<List<Chapter>, Int> {
+        var detected = chapterIndexCache[cacheKey]
+        var cachedTotalChars = 0
+        if (detected == null) {
+            val cachedData = ChapterDiskCache.load(appCtx, cacheKey)
+            if (cachedData != null) {
+                detected = cachedData.chapters
+                cachedTotalChars = cachedData.totalChars
+            }
+        }
+
+        val totalChars: Int
+        if (detected == null) {
+            val (scanned, scannedChars) = detectChaptersStream(appCtx, readUri, encoding)
+            if (scanned.isEmpty() && scannedChars == 0) {
+                throw IllegalStateException("文件为空或无法读取")
+            }
+            totalChars = scannedChars
+            ChapterDiskCache.save(appCtx, cacheKey, scanned, scannedChars)
+            chapterIndexCache[cacheKey] = scanned
+            detected = scanned
+        } else {
+            chapterIndexCache[cacheKey] = detected
+            totalChars = if (cachedTotalChars > 0) {
+                cachedTotalChars
+            } else {
+                val lastChap = detected.lastOrNull()
+                val estimated = (fileSizeHint / (if (encoding.startsWith("UTF-16")) 2 else 1)).toInt()
+                if (lastChap != null) {
+                    maxOf(estimated, lastChap.charOffset + 3000)
+                } else estimated
+            }
+        }
+        return detected to totalChars
+    }
+
+    /**
      * 极速跳转至指定章节（优先读取预排版缓存，未命中则流式按需分块加载）
      */
     fun goToChapter(chapterIndex: Int, targetCharOffset: Int = -1) {
@@ -406,18 +441,53 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             return ChapterContent(0, "", "", 0, 0, false, "", false, "")
         }
 
-        val formatted = if (EpubParser.isEpubFile(appCtx, uri)) {
-            EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters, clean)
-        } else {
-            val startOffset = chapters[chapterIndex].charOffset.coerceIn(0, totalChars)
-            val endOffset = endOffsetOf(chapters, chapterIndex, totalChars).coerceIn(startOffset, totalChars)
-
-            val rawChunk = readChapterChunkFromUri(appCtx, uri, currentEncoding, startOffset, endOffset)
-            formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset, clean)
+        val formatted = when {
+            convertedFormat != null -> loadChunkContent(uri, chapters, chapterIndex, totalChars)
+            EpubParser.isEpubFile(appCtx, uri) -> EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters, clean)
+            else -> loadChunkContent(uri, chapters, chapterIndex, totalChars)
         }
 
         chapterContentCache[chapterCacheKey(chapterIndex, clean)] = formatted
         return formatted
+    }
+
+    /** TXT 与转换类格式共用的分块正文装载：从读取源取原文切片后按章节排版 */
+    private fun loadChunkContent(
+        originalUri: Uri,
+        chapters: List<Chapter>,
+        chapterIndex: Int,
+        totalChars: Int
+    ): ChapterContent {
+        val clean = _uiState.value.cleanTypography
+        val readUri = if (convertedFormat != null) resolveConvertedReadUri(originalUri) else originalUri
+        val startOffset = chapters[chapterIndex].charOffset.coerceIn(0, totalChars)
+        val endOffset = endOffsetOf(chapters, chapterIndex, totalChars).coerceIn(startOffset, totalChars)
+
+        val rawChunk = readChapterChunkFromUri(appCtx, readUri, currentEncoding, startOffset, endOffset)
+        return formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset, clean)
+    }
+
+    /**
+     * 解析转换类格式的实际读取源。文本缓存可能被系统清理：确定性转换保证
+     * 字符偏移域不变，重转换后进度、书签与章节索引依旧有效
+     */
+    private fun resolveConvertedReadUri(originalUri: Uri): Uri {
+        val cached = convertedReadUri
+        if (cached != null) {
+            val path = cached.path
+            if (path != null) {
+                val f = File(path)
+                if (f.exists() && f.length() > 0) return cached
+            }
+        }
+        val format = convertedFormat ?: return cached ?: originalUri
+        return try {
+            val fresh = Uri.fromFile(BookTextConverter.convertToCacheFile(appCtx, originalUri, format))
+            convertedReadUri = fresh
+            fresh
+        } catch (_: Exception) {
+            cached ?: originalUri
+        }
     }
 
     private fun endOffsetOf(chapters: List<Chapter>, chapterIndex: Int, totalChars: Int): Int =
