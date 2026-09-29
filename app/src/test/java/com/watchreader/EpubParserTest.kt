@@ -1,6 +1,7 @@
 package com.watchreader
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -311,5 +312,37 @@ class EpubParserTest {
         assertEquals(2, meta.chapters.size)
         assertEquals("第一节 偶遇", meta.chapters[0].title)
         assertEquals("第二节 告别", meta.chapters[1].title)
+    }
+
+    @Test
+    fun testRawModePreservesExtractedLineStructure() {
+        val html = "<html><body>" +
+            "<h1>第一章 启程</h1>" +
+            "<p>　　全角缩进段落。</p>" +
+            "<p>  半角缩进段落。</p>" +
+            "\n\n\n" +
+            "<p>空行后的尾段。</p>" +
+            "</body></html>"
+
+        val raw = EpubParser.extractFormattedTextFromHtml(html, cleanTypography = false)
+        assertTrue("行首全角缩进必须原样保留", raw.contains("\n　　全角缩进段落。"))
+        assertTrue("行首半角缩进必须原样保留", raw.contains("\n  半角缩进段落。"))
+        assertTrue("连续空行必须原样保留，不得坍缩为段落分隔", raw.contains("\n\n\n"))
+        assertTrue(raw.contains("空行后的尾段。"))
+
+        // 对照：净化态仍压缩空行并统一补标准全角缩进
+        val clean = EpubParser.extractFormattedTextFromHtml(html)
+        assertFalse("净化态必须压缩连续空行", clean.contains("\n\n\n"))
+        assertTrue("净化态仍统一补全角缩进", clean.contains("\u3000\u3000半角缩进段落。"))
+    }
+
+    @Test
+    fun testRawModeNormalizesCarriageReturns() {
+        val html = "<html><body><p>第一行</p>\r\n<p>第二行</p>\r<p>第三行</p></body></html>"
+        val raw = EpubParser.extractFormattedTextFromHtml(html, cleanTypography = false)
+        assertFalse("原样态不得残留 CR 控制符", raw.contains('\r'))
+        assertTrue(raw.contains("第一行"))
+        assertTrue(raw.contains("第二行"))
+        assertTrue(raw.contains("第三行"))
     }
 }

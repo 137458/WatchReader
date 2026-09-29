@@ -131,7 +131,7 @@ object ReadDurationFormatter {
  * 跨章节定位与 DataStore 保存值全部失真。
  *
  * 映射模型：段落 i 的正文起点 bodyParaStarts[i] 对应原文 rawParaStarts[i]；
- * 段内前 2 个字符为全角缩进（映射回段首原文位置），其后与原文逐字符 1:1。
+ * 段内前 indentChars 个字符为格式化时补入的缩进（映射回段首原文位置），其后与原文逐字符 1:1。
  * 空映射数组时退化为恒等映射（正文坐标 = 原文坐标）。
  */
 object ChapterOffsetMapper {
@@ -142,7 +142,8 @@ object ChapterOffsetMapper {
         bodyParaStarts: IntArray,
         rawParaStarts: IntArray,
         bodyLength: Int,
-        rawLength: Int
+        rawLength: Int,
+        indentChars: Int = 2
     ): Int {
         val safeBody = bodyIndex.coerceIn(0, bodyLength)
         // 空映射数组退化为恒等映射（EPUB 等未提供映射的路径，正文坐标即原文坐标）
@@ -168,8 +169,8 @@ object ChapterOffsetMapper {
         }
 
         val inPara = safeBody - bodyParaStarts[found]
-        // 段内前 2 字符为全角缩进，映射回段首原文位置；其后逐字符 1:1
-        val raw = rawParaStarts[found] + maxOf(0, inPara - 2)
+        // 段内前 indentChars 字符为补入缩进，映射回段首原文位置；其后逐字符 1:1
+        val raw = rawParaStarts[found] + maxOf(0, inPara - indentChars)
         val upper = if (found < rawParaStarts.lastIndex) rawParaStarts[found + 1] - 1 else rawLength
         return raw.coerceIn(0, minOf(rawLength, upper))
     }
@@ -179,7 +180,8 @@ object ChapterOffsetMapper {
         rawIndex: Int,
         bodyParaStarts: IntArray,
         rawParaStarts: IntArray,
-        bodyLength: Int
+        bodyLength: Int,
+        indentChars: Int = 2
     ): Int {
         // 入参为原文坐标域，不做正文长度预钳制（结果统一收敛到 [0, bodyLength]）
         val safeRaw = rawIndex
@@ -204,9 +206,9 @@ object ChapterOffsetMapper {
         }
 
         val inRaw = safeRaw - rawParaStarts[found]
-        // 段落正文内容区终点（不含段落间换行）；原文行尾空白/空行吸附到段末字符
-        val contentEnd = if (found < bodyParaStarts.lastIndex) bodyParaStarts[found + 1] - 2 else bodyLength
-        val body = bodyParaStarts[found] + 2 + inRaw
+        // 段落正文内容区终点（不含段落间换行与补入缩进）；原文行尾空白/空行吸附到段末字符
+        val contentEnd = if (found < bodyParaStarts.lastIndex) bodyParaStarts[found + 1] - indentChars else bodyLength
+        val body = bodyParaStarts[found] + indentChars + inRaw
         return body.coerceIn(bodyParaStarts[found], (contentEnd - 1).coerceAtLeast(bodyParaStarts[found]))
             .coerceIn(0, bodyLength)
     }

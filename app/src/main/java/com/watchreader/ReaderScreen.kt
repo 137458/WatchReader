@@ -140,9 +140,7 @@ fun ReaderScreen(
     }
 
     DisposableEffect(Unit) {
-        ReadPerf.startFrameWatch()
         onDispose {
-            ReadPerf.stopFrameWatch()
             scrollDebounceHandler.removeCallbacksAndMessages(null)
             onCharOffsetChange(currentReadingOffset)
             onFlushReadingPosition()
@@ -538,7 +536,8 @@ fun ReaderScreen(
                                 content.bodyParagraphStarts,
                                 content.rawParagraphStarts,
                                 content.formattedBody.length,
-                                rawLength = content.endCharOffset - content.startCharOffset
+                                rawLength = content.endCharOffset - content.startCharOffset,
+                                indentChars = content.paragraphIndentChars
                             )
                         } else {
                             val bodyHeight = maxOf(1, holder.bodyTv.height)
@@ -751,16 +750,14 @@ private fun applyChapterStyles(
 ) {
     if (holder.appliedFontSize != fontSize) {
         holder.appliedFontSize = fontSize
-        ReadPerf.trace("perf.sizeTitle") { holder.titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSize + 2).toFloat()) }
-        ReadPerf.trace("perf.sizeBody") { holder.bodyTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat()) }
+        holder.titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSize + 2).toFloat())
+        holder.bodyTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat())
     }
 
     val bodyTypeface = bodyTypefaceFor(fontType)
     if (holder.appliedBodyTypeface !== bodyTypeface) {
         holder.appliedBodyTypeface = bodyTypeface
-        ReadPerf.trace("perf.typeface", extra = { "face=${bodyTypeface.javaClass.simpleName}" }) {
-            holder.bodyTv.typeface = bodyTypeface
-        }
+        holder.bodyTv.typeface = bodyTypeface
     }
 
     if (holder.appliedTitleColor != titleColor) {
@@ -771,7 +768,7 @@ private fun applyChapterStyles(
 
     if (holder.appliedBodyColor != textColor) {
         holder.appliedBodyColor = textColor
-        ReadPerf.trace("perf.colorBody") { holder.bodyTv.setTextColor(textColor) }
+        holder.bodyTv.setTextColor(textColor)
     }
 
     if (holder.appliedMetaColor != onSurfaceVariantColor) {
@@ -821,9 +818,7 @@ private fun bindChapterData(
     holder.titleTv.text = content.title
 
     // 3. 章节正文（单 TextLayout 一体排版；样式经逐项下发，避免同帧重复整章排版）
-    ReadPerf.trace("perf.setTextBody", extra = { "chars=${content.formattedBody.length}" }) {
-        holder.bodyTv.text = content.formattedBody
-    }
+    holder.bodyTv.text = content.formattedBody
 
     // 4. 下一章 / 全书完
     if (content.hasNextChapter) {
@@ -862,7 +857,8 @@ private fun restoreScrollPosition(
             initialCharOffset - content.startCharOffset,
             content.bodyParagraphStarts,
             content.rawParagraphStarts,
-            content.formattedBody.length
+            content.formattedBody.length,
+            indentChars = content.paragraphIndentChars
         )
         val line = layout.getLineForOffset(charOffsetInBody)
         val lineTop = layout.getLineTop(line)

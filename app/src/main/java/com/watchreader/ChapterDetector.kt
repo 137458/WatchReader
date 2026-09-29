@@ -182,8 +182,9 @@ fun detectChaptersFromInputStream(
                     }
                     lineCharCount++
                     currentCharOffset++
-                    // 整段无换行的退化文本按步长强切，保证封顶始终成立
-                    if (maxChapterChars > 0 && currentCharOffset - segmentStart >= maxChapterChars * 2) {
+                    // 单行自身每满一个封顶步长强切一次（只切真正的超长行，
+                    // 短行文本仍由换行分支吸附到段首，避免切进句中）
+                    if (maxChapterChars > 0 && lineCharCount % maxChapterChars == 0) {
                         breakOffsets.add(segmentStart + maxChapterChars)
                         segmentStart += maxChapterChars
                     }

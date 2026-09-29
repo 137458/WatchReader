@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
@@ -34,7 +35,9 @@ data class ChapterContent(
     // 正文内各段落起始索引（与 rawParagraphStarts 一一对应），空数组表示未提供映射（按正文坐标=原文坐标处理）
     val bodyParagraphStarts: IntArray = IntArray(0),
     // 原文切片内各段落首字符索引
-    val rawParagraphStarts: IntArray = IntArray(0)
+    val rawParagraphStarts: IntArray = IntArray(0),
+    // 格式化时为每个段落补入的缩进字符数（净化态=2 全角空格，原样态=0 逐字符 1:1），供坐标换算扣除
+    val paragraphIndentChars: Int = 2
 )
 
 /**
@@ -91,6 +94,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     // 前后相邻章节预排版内容缓存池（翻章 0.00ms 绝对秒开）
     private val chapterContentCache = ConcurrentHashMap<Int, ChapterContent>()
     private var prefetchJob: Job? = null
+    private var cleanTypographyJob: Job? = null
 
     // 异步防抖持久化 Job
     private var savePositionJob: Job? = null
@@ -396,31 +400,20 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         totalChars: Int
     ): ChapterContent {
         val clean = _uiState.value.cleanTypography
-        chapterContentCache[chapterCacheKey(chapterIndex, clean)]?.let {
-            ReadPerf.mark("perf.cacheHit", "chapter=$chapterIndex clean=$clean")
-            return it
-        }
+        chapterContentCache[chapterCacheKey(chapterIndex, clean)]?.let { return it }
 
         if (chapters.isEmpty() || chapterIndex !in chapters.indices) {
             return ChapterContent(0, "", "", 0, 0, false, "", false, "")
         }
 
-        val isEpub = EpubParser.isEpubFile(appCtx, uri)
-        val startChar = chapters[chapterIndex].charOffset
-        val formatted = ReadPerf.trace(
-            "perf.loadChapter",
-            extra = { "epub=$isEpub clean=$clean chars=${endOffsetOf(chapters, chapterIndex, totalChars) - startChar} skipFrom=$startChar" }
-        ) {
-            if (isEpub) {
-                EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters, clean)
-            } else {
-                val currentChap = chapters[chapterIndex]
-                val startOffset = currentChap.charOffset.coerceIn(0, totalChars)
-                val endOffset = (if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else totalChars).coerceIn(startOffset, totalChars)
+        val formatted = if (EpubParser.isEpubFile(appCtx, uri)) {
+            EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters, clean)
+        } else {
+            val startOffset = chapters[chapterIndex].charOffset.coerceIn(0, totalChars)
+            val endOffset = endOffsetOf(chapters, chapterIndex, totalChars).coerceIn(startOffset, totalChars)
 
-                val rawChunk = readChapterChunkFromUri(appCtx, uri, currentEncoding, startOffset, endOffset)
-                formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset, clean)
-            }
+            val rawChunk = readChapterChunkFromUri(appCtx, uri, currentEncoding, startOffset, endOffset)
+            formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset, clean)
         }
 
         chapterContentCache[chapterCacheKey(chapterIndex, clean)] = formatted
@@ -945,13 +938,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val chapterIndex = state.currentChapterIndex
         if (state.chapters.isEmpty() || chapterIndex !in state.chapters.indices) return
 
-        viewModelScope.launch {
+        // 快速连点时取消上一次切换：只有最新排版态的正文允许落回 UI，避免旧协程晚归覆盖
+        cleanTypographyJob?.cancel()
+        cleanTypographyJob = viewModelScope.launch {
             val chapterContent = chapterContentCache[chapterCacheKey(chapterIndex, enabled)]
                 ?: withContext(Dispatchers.IO) {
                     getOrLoadChapterContent(uri, state.chapters, chapterIndex, state.fullTextLength)
                 }
-            _uiState.update { it.copy(currentChapterContent = chapterContent) }
-            prefetchAdjacentChapters(uri, state.chapters, chapterIndex, state.fullTextLength)
+            if (isActive && _uiState.value.cleanTypography == enabled) {
+                _uiState.update { it.copy(currentChapterContent = chapterContent) }
+                prefetchAdjacentChapters(uri, state.chapters, chapterIndex, state.fullTextLength)
+            }
         }
     }
 
@@ -1029,19 +1026,26 @@ fun formatChapterRawText(
     val currentChap = chapters[chapterIndex]
     val chapTitle = currentChap.title.trim()
 
-    // 关闭净化 = 尊重源文件自身排版：行结构、空行与原缩进逐字保留；
-    // 正文坐标与原文坐标同域，故不记录段落映射（ChapterOffsetMapper 退化为恒等）
+    // 关闭净化 = 尊重源文件自身排版：行结构、空行与原缩进逐字保留。
+    // 剥除标题首行使正文坐标整体前移 headerLen，故记录单点常量偏移映射
+    // （bodyParagraphStarts=[0] → rawParagraphStarts=[headerLen]，无补入缩进按 1:1 换算），
+    // 未剥除时正文与原文切片同域，ChapterOffsetMapper 退化为恒等
     if (!cleanTypography) {
+        val body = stripChapterTitleHeader(rawText, chapTitle)
+        val headerLen = rawText.length - body.length
         return ChapterContent(
             chapterIndex = chapterIndex,
             title = currentChap.title,
-            formattedBody = stripChapterTitleHeader(rawText, chapTitle),
+            formattedBody = body,
             startCharOffset = startOffset,
             endCharOffset = endOffset,
             hasPrevChapter = chapterIndex > 0,
             prevChapterTitle = if (chapterIndex > 0) chapters[chapterIndex - 1].title else "",
             hasNextChapter = chapterIndex + 1 < chapters.size,
-            nextChapterTitle = if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].title else ""
+            nextChapterTitle = if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].title else "",
+            bodyParagraphStarts = if (headerLen > 0) intArrayOf(0) else IntArray(0),
+            rawParagraphStarts = if (headerLen > 0) intArrayOf(headerLen) else IntArray(0),
+            paragraphIndentChars = 0
         )
     }
 
@@ -1123,31 +1127,4 @@ private fun stripChapterTitleHeader(rawText: String, chapTitle: String): String 
         from = if (lineEnd == -1) rawText.length else lineEnd + 1
     }
     return rawText.substring(from)
-}
-
-fun buildChapterContent(
-    fullText: String,
-    chapters: List<Chapter>,
-    chapterIndex: Int
-): ChapterContent {
-    if (chapters.isEmpty() || fullText.isEmpty() || chapterIndex !in chapters.indices) {
-        return ChapterContent(
-            chapterIndex = 0,
-            title = "",
-            formattedBody = fullText,
-            startCharOffset = 0,
-            endCharOffset = fullText.length,
-            hasPrevChapter = false,
-            prevChapterTitle = "",
-            hasNextChapter = false,
-            nextChapterTitle = ""
-        )
-    }
-
-    val currentChap = chapters[chapterIndex]
-    val startOffset = currentChap.charOffset.coerceIn(0, fullText.length)
-    val endOffset = (if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else fullText.length).coerceIn(startOffset, fullText.length)
-    val rawSlice = if (startOffset < endOffset) fullText.substring(startOffset, endOffset) else ""
-
-    return formatChapterRawText(rawSlice, chapters, chapterIndex, startOffset, endOffset)
 }

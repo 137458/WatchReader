@@ -116,7 +116,7 @@ class ChapterDetectorTest {
     }
 
     @Test
-    fun testEveryPartStaysWithinCapOrderOfMagnitude() {
+    fun testParagraphSnappedSpansBoundedByCapPlusOneParagraph() {
         val text = "第一章 长山\n" + (1..200).joinToString("\n") { "山风掠过城头第${it}遍。" }
         val (chapters, totalChars) = streamChapters(text, maxChapterChars = 60)
         val max = 60
@@ -124,10 +124,24 @@ class ChapterDetectorTest {
         chapters.forEachIndexed { i, chapter ->
             val end = chapters.getOrNull(i + 1)?.charOffset ?: totalChars
             assertTrue(
-                "分节 ${chapter.title} 跨度 ${end - chapter.charOffset} 超出封顶上限",
-                end - chapter.charOffset <= max * 2
+                "分节 ${chapter.title} 跨度 ${end - chapter.charOffset} 超过 封顶+一个自然段（切点吸附段首的固有上界）",
+                end - chapter.charOffset <= max + 12
             )
         }
+    }
+
+    @Test
+    fun testSingleLongLineIsCutAtCap() {
+        // 介于封顶与 2×封顶之间的无换行单行必须在封顶处强切，
+        // 而不是留到行尾才由换行分支切出近 2×封顶的分节
+        val longLine = "无换行长句。".repeat(19) // 114 字，介于 60 与 120 之间
+        val text = "第一章 长山\n" + longLine + "\n" + "收尾一行。"
+        val (chapters, totalChars) = streamChapters(text, maxChapterChars = 60)
+
+        // 长行首字符在偏移 7，末字符在偏移 120：切点必须落在长行内部
+        val cutInsideLongLine = chapters.any { it.charOffset in 8..120 }
+        assertTrue("超长单行必须在封顶处被强切，实得切点 ${chapters.map { it.charOffset }}", cutInsideLongLine)
+        assertEquals(totalChars, text.length)
     }
 
     @Test

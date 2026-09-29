@@ -19,7 +19,6 @@ HSPLcom/watchreader/ReaderViewModel;->init()V
 HSPLcom/watchreader/ReaderViewModel;->loadFile(Landroid/net/Uri;I)V
 HSPLcom/watchreader/ReaderViewModel;->goToChapter(II)V
 HSPLcom/watchreader/ReaderViewModel;->updateCharOffset(I)V
-HSPLcom/watchreader/ReaderViewModel;->buildChapterContent(Ljava/lang/String;Ljava/util/List;I)Lcom/watchreader/ChapterContent;
 Lcom/watchreader/ReaderViewModel;
 Lcom/watchreader/ReaderUiState;
 Lcom/watchreader/ChapterContent;

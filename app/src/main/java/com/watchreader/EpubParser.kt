@@ -832,23 +832,21 @@ object EpubParser {
         // 6. 解码 HTML 实体
         content = decodeHtmlEntities(content)
 
-        // 7. 中文段落排版（净化态剥离各类缩进后统一补标准全角双空格；原样态保留源文件缩进）
+        // 7. 中文段落排版。净化态：剥离行尾空白与各类缩进、压缩连续空行，统一补标准全角双空格；
+        //    原样态：保留提取文本的行结构（换行、空行与源缩进）逐字呈现，仅归一化换行符
+        if (!cleanTypography) {
+            return content.replace("\r\n", "\n").replace('\r', '\n')
+        }
+
         val sb = java.lang.StringBuilder(content.length + 64)
         val lines = content.split('\n')
         for (rawLine in lines) {
-            val line = if (cleanTypography) {
-                rawLine.trim { it <= ' ' || it == '\u3000' }
-            } else {
-                rawLine.trim()
-            }
+            val line = rawLine.trim { it <= ' ' || it == '\u3000' }
             if (line.isNotEmpty()) {
                 if (sb.isNotEmpty()) {
                     sb.append("\n\n")
                 }
-                if (cleanTypography) {
-                    sb.append("\u3000\u3000")
-                }
-                sb.append(line)
+                sb.append("\u3000\u3000").append(line)
             }
         }
 

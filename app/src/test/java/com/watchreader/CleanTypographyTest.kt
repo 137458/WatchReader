@@ -1,5 +1,6 @@
 package com.watchreader
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -83,25 +84,6 @@ class CleanTypographyTest {
     }
 
     @Test
-    fun rawModeDegradesToIdentityOffsetMapping() {
-        val unprefixed = content(raw, clean = false)
-        assertTrue(
-            "原样模式下正文坐标即原文坐标，不应记录段落映射",
-            unprefixed.bodyParagraphStarts.isEmpty() && unprefixed.rawParagraphStarts.isEmpty()
-        )
-        assertEquals(
-            12,
-            ChapterOffsetMapper.bodyToRaw(
-                12,
-                unprefixed.bodyParagraphStarts,
-                unprefixed.rawParagraphStarts,
-                unprefixed.formattedBody.length,
-                rawLength = raw.length
-            )
-        )
-    }
-
-    @Test
     fun cleanModeRecordsParagraphMappingForPositionRestore() {
         val mapped = content(raw, clean = true)
         assertEquals(3, mapped.bodyParagraphStarts.size)
@@ -109,6 +91,54 @@ class CleanTypographyTest {
         // 净化态正文坐标含缩进，必须换算回原文坐标域
         assertTrue(
             ChapterOffsetMapper.bodyToRaw(0, mapped.bodyParagraphStarts, mapped.rawParagraphStarts, mapped.formattedBody.length, rawLength = raw.length) > 0
+        )
+    }
+
+    @Test
+    fun rawModeStrippedTitleRecordsConstantShiftMapping() {
+        val result = content(raw, clean = false)
+        // 标题行 + 紧邻空行被剥除（"第一章 归雪\n\n" 共 8 字符），正文整体前移
+        assertArrayEquals(intArrayOf(0), result.bodyParagraphStarts)
+        assertArrayEquals(intArrayOf(8), result.rawParagraphStarts)
+        assertEquals("原样态无补入缩进，映射按 1:1 换算", 0, result.paragraphIndentChars)
+
+        // 正文坐标 i ↔ 原文坐标 8+i 必须逐字符精确互逆（否则进度保存/恢复漂移一个标题行宽）
+        val probe = 5
+        assertEquals(
+            8 + probe,
+            ChapterOffsetMapper.bodyToRaw(
+                probe, result.bodyParagraphStarts, result.rawParagraphStarts,
+                result.formattedBody.length, rawLength = raw.length,
+                indentChars = result.paragraphIndentChars
+            )
+        )
+        assertEquals(
+            probe,
+            ChapterOffsetMapper.rawToBody(
+                8 + probe, result.bodyParagraphStarts, result.rawParagraphStarts,
+                result.formattedBody.length, indentChars = result.paragraphIndentChars
+            )
+        )
+    }
+
+    @Test
+    fun rawModeWithoutDuplicatedTitleKeepsBodyVerbatimAndIdentity() {
+        val body = "序章内容与标题不同行。\n\n　　缩进段落。"
+        val result = content(body, clean = false)
+        assertEquals("未剥除标题时正文必须逐字等于原切片", body, result.formattedBody)
+        assertTrue(
+            "无剥除时保持恒等映射",
+            result.bodyParagraphStarts.isEmpty() && result.rawParagraphStarts.isEmpty()
+        )
+        assertEquals(
+            12,
+            ChapterOffsetMapper.bodyToRaw(
+                12,
+                result.bodyParagraphStarts,
+                result.rawParagraphStarts,
+                result.formattedBody.length,
+                rawLength = result.endCharOffset - result.startCharOffset
+            )
         )
     }
 }
