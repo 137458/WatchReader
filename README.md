@@ -121,12 +121,3 @@ MOBI / FB2 / HTML 在首次打开时单趟流式转换为 UTF-8 文本缓存（�
 ```
 
 编译产物路径：`app/build/outputs/apk/release/app-release.apk`。
-
-### 相关文档
-
-| 文档 | 内容 |
-| :--- | :--- |
-| [AGENTS.md](AGENTS.md) | 构建约束入口与项目硬约束 |
-| [CONTEXT.md](CONTEXT.md) | 领域约束、关键决策摘要与屏幕规格 |
-| [docs/adr/](docs/adr/) | 架构决策记录（ADR-001 ~ 012）全文 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本更新日志 |
