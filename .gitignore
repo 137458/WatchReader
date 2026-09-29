@@ -47,3 +47,5 @@ decompiled_*/
 # Internal process docs, planning & research reports
 docs/
 CONTEXT.md
+AGENTS.md
+.zcodeignore
