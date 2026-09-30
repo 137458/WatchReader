@@ -26,7 +26,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -75,16 +74,11 @@ fun MenuScreen(
     val colors = MaterialTheme.colorScheme
     val scrollState = rememberScrollState()
 
-    // 表冠滚动目标注册：Activity 顶层管线直接寻址菜单滚动（正向线性步进 + 齿轮微振），
-    // 替代依赖原生焦点存活的 1dp 隐形锚点
+    // 表冠滚动目标注册：Activity 顶层管线直接寻址菜单滚动（正向线性步进 + 齿轮微振）
     val context = LocalContext.current
-    DisposableEffect(scrollState) {
-        val target = CrownScrollTarget { delta ->
-            CrownScrollHelper.dispatchScroll(delta, scrollState, context)
-            true
-        }
-        CrownScrollTargetRegistry.activate(target)
-        onDispose { CrownScrollTargetRegistry.deactivate(target) }
+    rememberCrownScrollTarget(scrollState) { delta ->
+        CrownScrollHelper.dispatchScroll(delta, scrollState, context)
+        true
     }
     val themeLabel = remember(themeMode) {
         when (ThemeMode.fromValue(themeMode)) {

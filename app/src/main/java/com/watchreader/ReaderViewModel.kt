@@ -17,7 +17,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.abs
 
 /**
  * 单章正文内容模型（轻量化渲染单元）
@@ -119,10 +118,16 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     @Volatile
     private var lastActiveTime: Long = android.os.SystemClock.uptimeMillis()
 
+    @Volatile
+    private var initialized = false
+
     /**
      * 初始化：单次 I/O 批量读取 DataStore 配置，按最后活跃页面智能秒开
+     * （Activity 重建会再次触发 onCreate，重入直接返回，避免整本书重载）
      */
     fun init() {
+        if (initialized) return
+        initialized = true
         // 中文宋体面是 20MB 级字面，启动即后台预热，避免首次切换字体时主线程同步加载
         viewModelScope.launch(Dispatchers.IO) { CjkSerifFont.preload() }
         viewModelScope.launch {
@@ -214,13 +219,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * 刷新书架列表
+     * 携最新阅读偏移返回阅读页：菜单各入口（上一章/下一章/加书签/开滚屏/返回）的
+     * 统一出口。偏移取 VM 内的最新值，UI 层不再跨层读取 volatile 字段
      */
-    fun refreshBookshelf() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val shelf = DataStoreManager.loadBookShelf(appCtx)
-            _uiState.update { it.copy(bookshelf = shelf) }
-        }
+    fun returnToReader() {
+        _uiState.update { it.copy(screen = Screen.Reader(currentReadingOffset, it.currentChapterIndex)) }
     }
 
     /**
@@ -796,19 +799,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun handleBack(): Boolean {
         return when (_uiState.value.screen) {
-            is Screen.Menu -> {
-                val state = _uiState.value
-                navigateTo(Screen.Reader(currentReadingOffset, state.currentChapterIndex))
-                true
-            }
-            is Screen.ChapterList -> {
-                val state = _uiState.value
-                navigateTo(Screen.Reader(currentReadingOffset, state.currentChapterIndex))
-                true
-            }
-            is Screen.Rsvp -> {
-                val state = _uiState.value
-                navigateTo(Screen.Reader(currentReadingOffset, state.currentChapterIndex))
+            is Screen.Menu, is Screen.ChapterList, is Screen.Rsvp -> {
+                returnToReader()
                 true
             }
             is Screen.WifiTransfer -> {
@@ -816,24 +808,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 true
             }
             is Screen.Reader -> {
-                flushReadingPosition()
-                prefetchJob?.cancel()
-                chapterContentCache.clear()
-                viewModelScope.launch(Dispatchers.IO) {
-                    DataStoreManager.saveLastScreen(appCtx, "home")
-                    val shelf = DataStoreManager.loadBookShelf(appCtx)
-                    _uiState.update {
-                        it.copy(
-                            currentUri = null,
-                            fileName = "",
-                            chapters = emptyList(),
-                            currentChapterIndex = 0,
-                            currentChapterContent = null,
-                            bookshelf = shelf,
-                            screen = Screen.Home
-                        )
-                    }
-                }
+                closeBookInternal()
                 true
             }
             is Screen.Loading -> {
@@ -864,7 +839,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 关闭当前书籍返回主页
      */
-    fun closeBook() {
+    fun closeBook() = closeBookInternal()
+
+    /** 关书统一路径：落盘进度 + 取消预热 + 清空章节缓存 + 复位到书架 */
+    private fun closeBookInternal() {
         flushReadingPosition()
         prefetchJob?.cancel()
         chapterContentCache.clear()
@@ -887,9 +865,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun getCurrentReadingOffset(): Int = currentReadingOffset
 
-    private var rsvpRotaryAccumulator = 0f
-    private var lastRotaryTimeMs = 0L
-    private var lastStepTimeMs = 0L
+    // RSVP 表冠调速阻尼器（算法见 RsvpRotaryDamper，测试覆盖 RsvpRotaryDamperTest）
+    private val rsvpDamper = RsvpRotaryDamper()
 
     /**
      * 响应硬件物理表冠旋转（强阻尼 + 防抖滤波 + 10字/分稳健步进）
@@ -898,21 +875,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         when (_uiState.value.screen) {
             is Screen.Rsvp -> {
                 val now = android.os.SystemClock.uptimeMillis()
-                if (now - lastRotaryTimeMs > 400L) {                    rsvpRotaryAccumulator = 0f
-                }
-                lastRotaryTimeMs = now
-
-                rsvpRotaryAccumulator += delta
-
-                // 强阻尼累加门限：较大幅度的物理转动才计为一格有效步进
-                val threshold = if (abs(delta) < 5f) 2.5f else 75f
-                
-                if (abs(rsvpRotaryAccumulator) >= threshold && (now - lastStepTimeMs >= 75L)) {
-                    val direction = if (rsvpRotaryAccumulator > 0) 1 else -1
-                    rsvpRotaryAccumulator = 0f
-                    lastStepTimeMs = now
-
-                    val step = direction * 10f // 每格稳健微调 10 字/分
+                val step = rsvpDamper.onDelta(delta, now)
+                if (step != 0f) {
                     val current = _uiState.value.rsvpSpeed
                     val newSpeed = (current + step).coerceIn(100f, 900f)
                     if (newSpeed != current) {
@@ -1064,135 +1028,4 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
-}
-
-/**
- * 组装单个章节的正文排版与上下文信息（零中间切片、零 split 数组分配，极速单 pass 扫描）
- */
-fun formatChapterRawText(
-    rawText: String,
-    chapters: List<Chapter>,
-    chapterIndex: Int,
-    startOffset: Int,
-    endOffset: Int,
-    cleanTypography: Boolean = true
-): ChapterContent {
-    if (chapters.isEmpty() || chapterIndex !in chapters.indices) {
-        return ChapterContent(
-            chapterIndex = 0,
-            title = "",
-            formattedBody = rawText,
-            startCharOffset = 0,
-            endCharOffset = rawText.length,
-            hasPrevChapter = false,
-            prevChapterTitle = "",
-            hasNextChapter = false,
-            nextChapterTitle = ""
-        )
-    }
-
-    val currentChap = chapters[chapterIndex]
-    val chapTitle = currentChap.title.trim()
-
-    // 关闭净化 = 尊重源文件自身排版：行结构、空行与原缩进逐字保留。
-    // 剥除标题首行使正文坐标整体前移 headerLen，故记录单点常量偏移映射
-    // （bodyParagraphStarts=[0] → rawParagraphStarts=[headerLen]，无补入缩进按 1:1 换算），
-    // 未剥除时正文与原文切片同域，ChapterOffsetMapper 退化为恒等
-    if (!cleanTypography) {
-        val body = stripChapterTitleHeader(rawText, chapTitle)
-        val headerLen = rawText.length - body.length
-        return ChapterContent(
-            chapterIndex = chapterIndex,
-            title = currentChap.title,
-            formattedBody = body,
-            startCharOffset = startOffset,
-            endCharOffset = endOffset,
-            hasPrevChapter = chapterIndex > 0,
-            prevChapterTitle = if (chapterIndex > 0) chapters[chapterIndex - 1].title else "",
-            hasNextChapter = chapterIndex + 1 < chapters.size,
-            nextChapterTitle = if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].title else "",
-            bodyParagraphStarts = if (headerLen > 0) intArrayOf(0) else IntArray(0),
-            rawParagraphStarts = if (headerLen > 0) intArrayOf(headerLen) else IntArray(0),
-            paragraphIndentChars = 0
-        )
-    }
-
-    val sb = StringBuilder(rawText.length + 64)
-
-    // 段落起点映射：正文坐标 ↔ 原文坐标的精确换算依据（持久化阅读位置必须落在原文坐标域）
-    val bodyParaList = ArrayList<Int>(32)
-    val rawParaList = ArrayList<Int>(32)
-
-    var lineStart = 0
-    val textLen = rawText.length
-    while (lineStart < textLen) {
-        var lineEnd = rawText.indexOf('\n', lineStart)
-        if (lineEnd == -1) {
-            lineEnd = textLen
-        }
-
-        var s = lineStart
-        while (s < lineEnd && rawText[s].isWhitespace()) {
-            s++
-        }
-        var e = lineEnd
-        while (e > s && rawText[e - 1].isWhitespace()) {
-            e--
-        }
-
-        if (s < e) {
-            val lineLen = e - s
-            val isTitleMatch = sb.isEmpty() && lineLen == chapTitle.length && rawText.regionMatches(s, chapTitle, 0, lineLen)
-            if (!isTitleMatch) {
-                if (sb.isNotEmpty()) {
-                    sb.append("\n\n")
-                }
-                bodyParaList.add(sb.length)
-                rawParaList.add(s)
-                sb.append("\u3000\u3000").append(rawText, s, e)
-            }
-        }
-
-        lineStart = lineEnd + 1
-    }
-
-    val hasPrev = chapterIndex > 0
-    val prevTitle = if (hasPrev) chapters[chapterIndex - 1].title else ""
-    val hasNext = chapterIndex + 1 < chapters.size
-    val nextTitle = if (hasNext) chapters[chapterIndex + 1].title else ""
-
-    return ChapterContent(
-        chapterIndex = chapterIndex,
-        title = currentChap.title,
-        formattedBody = sb.toString(),
-        startCharOffset = startOffset,
-        endCharOffset = endOffset,
-        hasPrevChapter = hasPrev,
-        prevChapterTitle = prevTitle,
-        hasNextChapter = hasNext,
-        nextChapterTitle = nextTitle,
-        bodyParagraphStarts = bodyParaList.toIntArray(),
-        rawParagraphStarts = rawParaList.toIntArray()
-    )
-}
-
-/**
- * 剥离与章节标题重复的首行及其紧邻空行（标题已由独立标题控件呈现），其余内容原样返回
- */
-private fun stripChapterTitleHeader(rawText: String, chapTitle: String): String {
-    if (chapTitle.isEmpty()) return rawText
-
-    val firstLineEnd = rawText.indexOf('\n')
-    val firstLine = rawText.substring(0, if (firstLineEnd == -1) rawText.length else firstLineEnd)
-        .trim { it <= ' ' || it == '\u3000' }
-    if (firstLine != chapTitle) return rawText
-
-    var from = if (firstLineEnd == -1) rawText.length else firstLineEnd + 1
-    while (from < rawText.length) {
-        val lineEnd = rawText.indexOf('\n', from)
-        val bound = if (lineEnd == -1) rawText.length else lineEnd
-        if (rawText.substring(from, bound).isNotBlank()) break
-        from = if (lineEnd == -1) rawText.length else lineEnd + 1
-    }
-    return rawText.substring(from)
 }

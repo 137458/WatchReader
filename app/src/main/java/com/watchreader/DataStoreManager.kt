@@ -16,7 +16,6 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -161,12 +160,6 @@ object DataStoreManager {
         }
     }
 
-    // ── 字号设置 ──
-    fun getFontSizeFlow(context: Context): Flow<Int> =
-        getSafePreferencesFlow(context).map { prefs ->
-            prefs[KEY_FONT_SIZE] ?: DEFAULT_FONT_SIZE
-        }
-
     suspend fun saveFontSize(context: Context, size: Int) {
         context.dataStore.edit { prefs ->
             prefs[KEY_FONT_SIZE] = size
@@ -176,23 +169,11 @@ object DataStoreManager {
     // ── 深色模式不再单独存储：深色只是主题（themeMode）的一种取值，
     //    读写一律走 saveThemeMode / loadInitialConfig，避免两套状态各说各话 ──
 
-    // ── 自动滚屏速度设置 ──
-    fun getAutoScrollSpeedFlow(context: Context): Flow<Float> =
-        getSafePreferencesFlow(context).map { prefs ->
-            prefs[KEY_AUTO_SCROLL_SPEED] ?: DEFAULT_AUTO_SCROLL_SPEED
-        }
-
     suspend fun saveAutoScrollSpeed(context: Context, speed: Float) {
         context.dataStore.edit { prefs ->
             prefs[KEY_AUTO_SCROLL_SPEED] = speed.coerceIn(10f, 200f)
         }
     }
-
-    // ── 独立亮度设置 ──
-    fun getAppBrightnessFlow(context: Context): Flow<Float> =
-        getSafePreferencesFlow(context).map { prefs ->
-            prefs[KEY_APP_BRIGHTNESS] ?: DEFAULT_BRIGHTNESS
-        }
 
     suspend fun saveAppBrightness(context: Context, brightness: Float) {
         context.dataStore.edit { prefs ->
@@ -215,41 +196,16 @@ object DataStoreManager {
             prefs[KEY_LAST_SCREEN] = "reader"
 
             // 单次原子事务同步更新书架记录，消除二次磁盘 I/O 写入
-            val currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]).toMutableList()
-            val existingIdx = currentList.indexOfFirst { it.uriString == uriStr }
-            val title = if (existingIdx >= 0) currentList[existingIdx].title else getFileName(context, uri)
-            val total = if (totalChars > 0) totalChars else (if (existingIdx >= 0) currentList[existingIdx].totalChars else 0)
-            val chapter = if (chapterTitle.isNotEmpty()) chapterTitle else (if (existingIdx >= 0) currentList[existingIdx].lastChapterTitle else "")
-
-            val isPinned = if (existingIdx >= 0) currentList[existingIdx].isPinned else false
-
-            val updatedItem = BookItem(
-                uriString = uriStr,
-                title = title,
+            val merged = mergeBookEntry(
+                currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]),
+                uriStr = uriStr,
                 charOffset = charOffset,
-                totalChars = total,
-                lastChapterTitle = chapter,
-                lastReadTime = System.currentTimeMillis(),
-                isPinned = isPinned
+                totalChars = totalChars,
+                chapterTitle = chapterTitle,
+                fallbackTitle = { getFileName(context, uri) },
+                nowMs = System.currentTimeMillis()
             )
-
-            if (existingIdx >= 0) {
-                currentList[existingIdx] = updatedItem
-            } else {
-                currentList.add(0, updatedItem)
-            }
-            prefs[KEY_BOOK_SHELF] = serializeBookShelf(currentList)
-        }
-    }
-
-    suspend fun loadReadingPosition(context: Context): Pair<Uri, Int>? {
-        val prefs = getSafePreferencesFlow(context).first()
-        val uriStr = prefs[KEY_LAST_URI] ?: return null
-        val offset = prefs[KEY_LAST_CHAR_OFFSET] ?: 0
-        return try {
-            Uri.parse(uriStr) to offset
-        } catch (_: Exception) {
-            null
+            prefs[KEY_BOOK_SHELF] = serializeBookShelf(merged)
         }
     }
 
@@ -262,11 +218,6 @@ object DataStoreManager {
     }
 
     // ── 书架管理 ──
-    fun getBookShelfFlow(context: Context): Flow<List<BookItem>> =
-        getSafePreferencesFlow(context).map { prefs ->
-            parseBookShelf(prefs[KEY_BOOK_SHELF])
-        }
-
     suspend fun loadBookShelf(context: Context): List<BookItem> {
         val prefs = getSafePreferencesFlow(context).first()
         return parseBookShelf(prefs[KEY_BOOK_SHELF])
@@ -282,31 +233,17 @@ object DataStoreManager {
         val uriStr = uri.toString()
         var resultList: List<BookItem> = emptyList()
         context.dataStore.edit { prefs ->
-            val currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]).toMutableList()
-            val existingIdx = currentList.indexOfFirst { it.uriString == uriStr }
-            val title = if (existingIdx >= 0) currentList[existingIdx].title else getFileName(context, uri)
-            val total = if (totalChars > 0) totalChars else (if (existingIdx >= 0) currentList[existingIdx].totalChars else 0)
-            val chapter = if (chapterTitle.isNotEmpty()) chapterTitle else (if (existingIdx >= 0) currentList[existingIdx].lastChapterTitle else "")
-            val isPinned = if (existingIdx >= 0) currentList[existingIdx].isPinned else false
-
-            val updatedItem = BookItem(
-                uriString = uriStr,
-                title = title,
+            val merged = mergeBookEntry(
+                currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]),
+                uriStr = uriStr,
                 charOffset = charOffset,
-                totalChars = total,
-                lastChapterTitle = chapter,
-                lastReadTime = System.currentTimeMillis(),
-                isPinned = isPinned
+                totalChars = totalChars,
+                chapterTitle = chapterTitle,
+                fallbackTitle = { getFileName(context, uri) },
+                nowMs = System.currentTimeMillis()
             )
-
-            if (existingIdx >= 0) {
-                currentList[existingIdx] = updatedItem
-            } else {
-                currentList.add(0, updatedItem)
-            }
-
-            prefs[KEY_BOOK_SHELF] = serializeBookShelf(currentList)
-            resultList = currentList.sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
+            prefs[KEY_BOOK_SHELF] = serializeBookShelf(merged)
+            resultList = merged.sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
         }
         return resultList
     }
@@ -470,6 +407,42 @@ object DataStoreManager {
         } catch (_: Exception) {}
         return list.sortedByDescending { it.time }
     }
+}
+
+/**
+ * 书架条目合并核心（纯函数）：saveReadingPosition 与 updateBookInShelf 的共享实现。
+ *
+ * 语义：已有条目原位更新并保留标题/置顶/旧总长等字段，新条目插入首位。
+ * fallbackTitle 惰性求值——仅新条目触发（ContentResolver 查询有 IO 成本，
+ * 已有条目的每次进度保存都不应付出该成本）。
+ */
+internal fun mergeBookEntry(
+    currentList: List<BookItem>,
+    uriStr: String,
+    charOffset: Int,
+    totalChars: Int,
+    chapterTitle: String,
+    fallbackTitle: () -> String,
+    nowMs: Long
+): MutableList<BookItem> {
+    val list = currentList.toMutableList()
+    val existingIdx = list.indexOfFirst { it.uriString == uriStr }
+    val existing = if (existingIdx >= 0) list[existingIdx] else null
+    val updated = BookItem(
+        uriString = uriStr,
+        title = existing?.title ?: fallbackTitle(),
+        charOffset = charOffset,
+        totalChars = if (totalChars > 0) totalChars else existing?.totalChars ?: 0,
+        lastChapterTitle = chapterTitle.ifEmpty { existing?.lastChapterTitle ?: "" },
+        lastReadTime = nowMs,
+        isPinned = existing?.isPinned ?: false
+    )
+    if (existingIdx >= 0) {
+        list[existingIdx] = updated
+    } else {
+        list.add(0, updated)
+    }
+    return list
 }
 
 /**

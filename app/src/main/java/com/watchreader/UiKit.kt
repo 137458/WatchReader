@@ -33,6 +33,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -85,18 +86,12 @@ object WatchMotion {
 }
 
 /**
- * 统一低透明度令牌：发丝描边 / 分隔线 / 进度轨 / 强调描边在三类主题下的共享 alpha。
- * 收敛此前散落各页的 0.14 / 0.16 / 0.18 / 0.25 / 0.45 硬编码，保证同一语义同一观感。
+ * 统一低透明度令牌：强调描边 / 轻量衬底在三类主题下的共享 alpha。
+ * 分隔线与进度轨已升级为 outlineVariant 预混弱档角色（不再运行时叠透明度）。
  */
 object WatchAlpha {
     /** 卡片发丝描边 */
     const val HAIRLINE = 0.16f
-
-    /** 发丝分隔线 */
-    const val DIVIDER = 0.14f
-
-    /** 进度轨底槽 */
-    const val TRACK = 0.25f
 
     /** 主色强调描边（outline 胶囊 / 角标徽章） */
     const val ACCENT_BORDER = 0.45f
@@ -144,6 +139,20 @@ fun rememberTickHaptic(): () -> Unit {
 }
 
 /**
+ * 表冠滚动目标注册：Activity 顶层管线直接寻址页面滚动（正向线性步进 + 齿轮微振），
+ * 替代依赖原生焦点存活的 1dp 隐形锚点——后者在焦点迁移后会使表冠事件丢失。
+ * [key] 变化时重新注册（如滚动状态对象更换）；离开组合自动注销。
+ */
+@Composable
+fun rememberCrownScrollTarget(key: Any?, onDelta: (Float) -> Boolean) {
+    DisposableEffect(key) {
+        val target = CrownScrollTarget(onDelta)
+        CrownScrollTargetRegistry.activate(target)
+        onDispose { CrownScrollTargetRegistry.deactivate(target) }
+    }
+}
+
+/**
  * 发丝描边卡片：surface + 1dp 低透明度轮廓描边，构成腕上卡片层次基元
  * （直绘 clip+底色+描边，不用 M3 OutlinedCard：卡片页每卡省去 Surface 阴影语义
  * 与 BorderStroke 一套机器，书架 / 菜单这类多卡页面的组合开销显著更低）
@@ -153,7 +162,7 @@ fun SurfaceCard(
     modifier: Modifier = Modifier,
     shape: Shape = WatchShapes.Card,
     containerColor: Color = MaterialTheme.colorScheme.surface,
-    borderColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = WatchAlpha.HAIRLINE),
+    borderColor: Color = MaterialTheme.colorScheme.outlineVariant,
     borderWidth: Dp = 1.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -247,13 +256,13 @@ fun SectionLabel(
     )
 }
 
-/** 发丝分隔线（基于原生 Divider，统一低透明度轮廓色） */
+/** 发丝分隔线（基于原生 Divider，outlineVariant 预混弱档，三主题免调） */
 @Composable
 fun HairlineDivider(modifier: Modifier = Modifier) {
     Divider(
         modifier = modifier,
         thickness = 1.dp,
-        color = MaterialTheme.colorScheme.outline.copy(alpha = WatchAlpha.DIVIDER)
+        color = MaterialTheme.colorScheme.outlineVariant
     )
 }
 
@@ -265,7 +274,7 @@ fun HairlineDivider(modifier: Modifier = Modifier) {
 fun ProgressTrack(
     progress: Float,
     modifier: Modifier = Modifier,
-    trackColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = WatchAlpha.TRACK),
+    trackColor: Color = MaterialTheme.colorScheme.outlineVariant,
     fillColor: Color = MaterialTheme.colorScheme.primary,
     height: Dp = 4.dp
 ) {

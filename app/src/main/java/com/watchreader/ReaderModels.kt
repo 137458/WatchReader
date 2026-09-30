@@ -1,5 +1,7 @@
 package com.watchreader
 
+import kotlin.math.abs
+
 /**
  * 主题模式
  */
@@ -113,6 +115,48 @@ object ReadDurationFormatter {
         val hours = safeSec / 3600
         val mins = (safeSec % 3600) / 60
         return "⏱️ 累计阅读: ${hours}小时 ${mins}分钟"
+    }
+}
+
+/**
+ * RSVP 表冠调速阻尼器（纯算法，时钟由调用方注入以便测试）
+ *
+ * 强阻尼滤波三要素（与硬件表冠页 CrownScrollHelper 同思路，[ADR-007]）：
+ * 1. 空闲复位：[resetIdleMs] 内无旋转则清空累加器，一次拨动视作独立手势；
+ * 2. 门限分档：小幅刻度（|delta| < [coarseDeltaBoundary]）累计 [fineStepThreshold] 计一步，
+ *    快速甩动单次 [coarseStepThreshold] 即计一步；
+ * 3. 时间窗节流：两步之间至少间隔 [minStepIntervalMs]，连转不爆冲。
+ */
+class RsvpRotaryDamper(
+    private val resetIdleMs: Long = 400L,
+    private val fineStepThreshold: Float = 2.5f,
+    private val coarseStepThreshold: Float = 75f,
+    private val coarseDeltaBoundary: Float = 5f,
+    private val minStepIntervalMs: Long = 75L
+) {
+    private var accumulator = 0f
+    private var lastRotaryTimeMs = 0L
+    private var lastStepTimeMs = 0L
+
+    /**
+     * 喂入一次表冠增量
+     * @return 本步速度变化量（字/分，含方向），未达步进门限时返回 0
+     */
+    fun onDelta(delta: Float, nowMs: Long, stepPerTick: Float = 10f): Float {
+        if (nowMs - lastRotaryTimeMs > resetIdleMs) {
+            accumulator = 0f
+        }
+        lastRotaryTimeMs = nowMs
+        accumulator += delta
+
+        val threshold = if (abs(delta) < coarseDeltaBoundary) fineStepThreshold else coarseStepThreshold
+        if (abs(accumulator) >= threshold && nowMs - lastStepTimeMs >= minStepIntervalMs) {
+            val direction = if (accumulator > 0) 1 else -1
+            accumulator = 0f
+            lastStepTimeMs = nowMs
+            return direction * stepPerTick
+        }
+        return 0f
     }
 }
 

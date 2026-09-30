@@ -637,7 +637,8 @@ private class BookmarkListAdapter(
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
         val context = parent.context
         val bm = bookmarks[position]
-        val activeColor = colorScheme.primary.toArgb()
+        // 书签标题用 tertiary 书签琥珀：与目录条目（primary）在色彩语义上分离
+        val activeColor = colorScheme.tertiary.toArgb()
         val surfaceVariantColor = colorScheme.surfaceVariant.toArgb()
         val onSurfaceColor = colorScheme.onSurface.toArgb()
         val normalColor = colorScheme.onSurfaceVariant.toArgb()

@@ -22,7 +22,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -74,13 +73,9 @@ fun WifiTransferScreen(
     }
 
     // 表冠空转反馈：页面无滚动内容，按系统 app 惯例每档给出齿轮微振，杜绝表冠完全无响应
-    DisposableEffect(Unit) {
-        val target = CrownScrollTarget { delta ->
-            CrownScrollHelper.dispatchIdleTick(delta, null)
-            true
-        }
-        CrownScrollTargetRegistry.activate(target)
-        onDispose { CrownScrollTargetRegistry.deactivate(target) }
+    rememberCrownScrollTarget(Unit) { delta ->
+        CrownScrollHelper.dispatchIdleTick(delta, null)
+        true
     }
 
     // 细致平滑进度过渡
@@ -281,7 +276,7 @@ private fun QrCodePanel(
             modifier = Modifier
                 .size(86.dp)
                 .clip(RoundedCornerShape(9.dp))
-                .background(Color.White)
+                .background(WatchFixed.QrPanelBackground)
                 .padding(4.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -292,7 +287,7 @@ private fun QrCodePanel(
                     modifier = Modifier.fillMaxSize()
                 )
             } else {
-                LoadingIndicator(size = 16.dp, strokeWidth = 2.dp, color = Color(0xFF444444))
+                LoadingIndicator(size = 16.dp, strokeWidth = 2.dp, color = WatchFixed.QrPanelInk)
             }
         }
     }
