@@ -208,6 +208,76 @@ object DataStoreManager {
         }
     }
 
+    // ── 备份与恢复（单文件 JSON 全量快照，键域见 BackupPayload） ──
+
+    /** 导出全部数据：书架 + 书签 + 阅读统计 + 显示偏好 */
+    suspend fun exportBackupJson(context: Context): String {
+        val prefs = getSafePreferencesFlow(context).first()
+        val shelf = parseBookShelf(prefs[KEY_BOOK_SHELF])
+        val bookmarks = shelf.associate { it.uriString to loadBookmarks(context, it.uriString) }
+            .filterValues { it.isNotEmpty() }
+        return BackupCodec.encode(
+            BackupPayload(
+                shelf = shelf,
+                bookmarks = bookmarks,
+                totalReadSec = prefs[KEY_READ_DURATION_SEC] ?: 0L,
+                readDays = parseReadDays(prefs[KEY_READ_DAYS_JSON]),
+                fontSize = prefs[KEY_FONT_SIZE] ?: DEFAULT_FONT_SIZE,
+                themeMode = prefs[KEY_THEME_MODE] ?: (if (prefs[KEY_DARK_MODE] == true) 1 else 0),
+                autoScrollSpeed = prefs[KEY_AUTO_SCROLL_SPEED] ?: DEFAULT_AUTO_SCROLL_SPEED,
+                appBrightness = prefs[KEY_APP_BRIGHTNESS] ?: DEFAULT_BRIGHTNESS,
+                tapPageArea = prefs[KEY_TAP_PAGE_AREA] ?: 0,
+                cleanTypography = prefs[KEY_CLEAN_TYPOGRAPHY] ?: true,
+                fontType = prefs[KEY_FONT_TYPE] ?: 0,
+                lineSpacing = prefs[KEY_LINE_SPACING] ?: LineSpacingMode.STANDARD.value,
+                letterSpacing = prefs[KEY_LETTER_SPACING] ?: LetterSpacingMode.STANDARD.value,
+                readGoalMinutes = prefs[KEY_READ_GOAL_MINUTES] ?: 0
+            ),
+            System.currentTimeMillis()
+        )
+    }
+
+    /**
+     * 从备份恢复全部数据
+     * @return 恢复的书籍数；JSON 非法 / 类型或版本不符返回 -1（不写入任何键）
+     */
+    suspend fun restoreBackup(context: Context, json: String): Int {
+        val payload = BackupCodec.decode(json) ?: return -1
+        context.dataStore.edit { prefs ->
+            prefs[KEY_BOOK_SHELF] = serializeBookShelf(payload.shelf)
+            prefs[KEY_READ_DURATION_SEC] = payload.totalReadSec
+            prefs[KEY_READ_DAYS_JSON] = serializeReadDays(payload.readDays)
+            prefs[KEY_FONT_SIZE] = payload.fontSize
+            prefs[KEY_THEME_MODE] = payload.themeMode
+            prefs[KEY_DARK_MODE] = payload.themeMode != 0
+            prefs[KEY_AUTO_SCROLL_SPEED] = payload.autoScrollSpeed
+            prefs[KEY_APP_BRIGHTNESS] = payload.appBrightness
+            prefs[KEY_TAP_PAGE_AREA] = payload.tapPageArea
+            prefs[KEY_CLEAN_TYPOGRAPHY] = payload.cleanTypography
+            prefs[KEY_FONT_TYPE] = payload.fontType
+            prefs[KEY_LINE_SPACING] = payload.lineSpacing
+            prefs[KEY_LETTER_SPACING] = payload.letterSpacing
+            prefs[KEY_READ_GOAL_MINUTES] = payload.readGoalMinutes
+            // 当前阅读位置若指向备份中不存在的书，一并清除避免恢复后跳进未知书
+            val shelfUris = payload.shelf.map { it.uriString }.toSet()
+            val lastUri = prefs[KEY_LAST_URI]
+            if (lastUri != null && lastUri !in shelfUris) {
+                prefs.remove(KEY_LAST_URI)
+                prefs.remove(KEY_LAST_CHAR_OFFSET)
+                prefs[KEY_LAST_SCREEN] = "home"
+            }
+        }
+        // 书签键按书逐本写回（动态键域，单书单事务）
+        payload.bookmarks.forEach { (uri, list) ->
+            if (list.isNotEmpty()) {
+                context.dataStore.edit { prefs ->
+                    prefs[getBookmarkKey(uri)] = serializeBookmarks(list)
+                }
+            }
+        }
+        return payload.shelf.size
+    }
+
     // ── 每日阅读时长 JSON 编解码（internal 供单测） ──
     internal fun serializeReadDays(days: Map<String, Long>): String {
         val obj = JSONObject()
@@ -450,7 +520,7 @@ object DataStoreManager {
         return resultList
     }
 
-    private fun serializeBookmarks(list: List<Bookmark>): String {
+    internal fun serializeBookmarks(list: List<Bookmark>): String {
         val array = JSONArray()
         for (item in list) {
             val obj = JSONObject().apply {
@@ -466,7 +536,7 @@ object DataStoreManager {
         return array.toString()
     }
 
-    private fun parseBookmarks(jsonStr: String?): List<Bookmark> {
+    internal fun parseBookmarks(jsonStr: String?): List<Bookmark> {
         if (jsonStr.isNullOrEmpty()) return emptyList()
         val list = mutableListOf<Bookmark>()
         try {

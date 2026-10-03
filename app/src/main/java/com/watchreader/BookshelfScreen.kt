@@ -60,7 +60,11 @@ fun BookshelfScreen(
     onOpenWifiTransfer: () -> Unit = {},
     onFontSizeChange: (Int) -> Unit,
     onToggleDarkMode: () -> Unit,
-    errorMessage: String? = null
+    errorMessage: String? = null,
+    infoMessage: String? = null,
+    onInfoMessageShown: () -> Unit = {},
+    onBackup: () -> Unit = {},
+    onRestore: () -> Unit = {}
 ) {
     val colors = MaterialTheme.colorScheme
     // 过滤排序随书架/搜索词缓存：输入搜索、删除确认等重组不再反复全表扫描排序
@@ -79,6 +83,14 @@ fun BookshelfScreen(
         if (pendingDeleteUri != null) {
             delay(3200L)
             pendingDeleteUri = null
+        }
+    }
+
+    // 备份/恢复结果信息条：3.5s 自动消退
+    LaunchedEffect(infoMessage) {
+        if (infoMessage != null) {
+            delay(3500L)
+            onInfoMessageShown()
         }
     }
 
@@ -222,6 +234,20 @@ fun BookshelfScreen(
             )
         }
 
+        AnimatedVisibility(
+            visible = !infoMessage.isNullOrBlank(),
+            enter = fadeIn(tween(WatchMotion.DUR_FADE)) + expandVertically(),
+            exit = fadeOut(tween(WatchMotion.DUR_FADE_OUT)) + shrinkVertically()
+        ) {
+            Text(
+                text = infoMessage.orEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.labelSmall,
+                // 成功类信息用格式绿，与错误红区分
+                color = colors.secondary
+            )
+        }
+
         OutlinedTextField(
             value = searchQuery,
             onValueChange = onSearchChange,
@@ -343,6 +369,17 @@ fun BookshelfScreen(
                     horizontalPadding = 0.dp
                 ) { onToggleDarkMode() }
             }
+        }
+
+        // ── 备份与恢复 ──
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .staggeredEnter(7 + filteredBooks.size.coerceAtMost(6)),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            PillButton("备份", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onBackup)
+            PillButton("恢复", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onRestore)
         }
         }
     }

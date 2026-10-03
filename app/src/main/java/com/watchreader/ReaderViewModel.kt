@@ -80,7 +80,8 @@ data class ReaderUiState(
     val lineSpacing: Int = LineSpacingMode.STANDARD.value,
     val letterSpacing: Int = LetterSpacingMode.STANDARD.value,
     val isSearching: Boolean = false,
-    val searchResults: List<SearchHit> = emptyList()
+    val searchResults: List<SearchHit> = emptyList(),
+    val infoMessage: String? = null
 )
 
 /**
@@ -1061,6 +1062,61 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.saveLetterSpacing(appCtx, safe)
         }
+    }
+
+    // ── 书架备份与恢复 ──
+
+    /** 生成备份 JSON（调用方负责写入 SAF 目标文件） */
+    suspend fun exportBackup(): String = withContext(Dispatchers.IO) {
+        DataStoreManager.exportBackupJson(appCtx)
+    }
+
+    /**
+     * 从备份 JSON 恢复：成功后重载全部配置与书架到当前状态
+     * @return 是否恢复成功
+     */
+    suspend fun restoreBackup(json: String): Boolean {
+        val count = withContext(Dispatchers.IO) { DataStoreManager.restoreBackup(appCtx, json) }
+        if (count < 0) return false
+        val config = withContext(Dispatchers.IO) { DataStoreManager.loadInitialConfig(appCtx) }
+        _uiState.update {
+            it.copy(
+                fontSize = config.fontSize,
+                autoScrollSpeed = config.autoScrollSpeed,
+                appBrightness = config.appBrightness,
+                bookshelf = config.bookshelf,
+                themeMode = config.themeMode,
+                tapPageArea = config.tapPageArea,
+                cleanTypography = config.cleanTypography,
+                fontType = config.fontType,
+                readDurationSec = config.readDurationSec,
+                readDays = config.readDays,
+                readGoalMinutes = config.readGoalMinutes,
+                readGoalCelebrated = config.readGoalCelebrated,
+                infoMessage = "已恢复 ${count} 本书与全部设置"
+            )
+        }
+        return true
+    }
+
+    /** 备份导出结果提示（导出本身不改变状态，无需重载） */
+    fun notifyBackupExported(success: Boolean) {
+        _uiState.update {
+            if (success) {
+                it.copy(infoMessage = "备份已导出")
+            } else {
+                it.copy(errorMessage = "备份导出失败：无法写入所选文件")
+            }
+        }
+    }
+
+    fun notifyBackupRestoreFailed() {
+        _uiState.update { it.copy(errorMessage = "恢复失败：不是有效的备份文件") }
+    }
+
+    /** 信息条自动消失 */
+    fun clearInfoMessage() {
+        _uiState.update { it.copy(infoMessage = null) }
     }
 
     /**

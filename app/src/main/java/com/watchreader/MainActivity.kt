@@ -58,6 +58,42 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // 备份导出（SAF 建文件）与恢复（SAF 选文件）
+    private val exportBackupLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri: Uri? ->
+        if (uri == null) return@registerForActivityResult
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val json = viewModel.exportBackup()
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(json.toByteArray(Charsets.UTF_8))
+                    out.flush()
+                } ?: throw IllegalStateException("无法写入所选文件")
+                viewModel.notifyBackupExported(true)
+            } catch (_: Exception) {
+                viewModel.notifyBackupExported(false)
+            }
+        }
+    }
+
+    private val importBackupLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri == null) return@registerForActivityResult
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val json = contentResolver.openInputStream(uri)
+                    ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
+                if (!viewModel.restoreBackup(json)) {
+                    viewModel.notifyBackupRestoreFailed()
+                }
+            } catch (_: Exception) {
+                viewModel.notifyBackupRestoreFailed()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -271,7 +307,17 @@ class MainActivity : ComponentActivity() {
                     onOpenWifiTransfer = { viewModel.openWifiTransfer() },
                     onFontSizeChange = { viewModel.updateFontSize(it) },
                     onToggleDarkMode = { viewModel.toggleDarkMode() },
-                    errorMessage = uiState.errorMessage
+                    errorMessage = uiState.errorMessage,
+                    infoMessage = uiState.infoMessage,
+                    onInfoMessageShown = { viewModel.clearInfoMessage() },
+                    onBackup = {
+                        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.US)
+                            .format(java.util.Date())
+                        exportBackupLauncher.launch("watchreader_backup_$stamp.json")
+                    },
+                    onRestore = {
+                        importBackupLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
+                    }
                 )
 
                 is Screen.Loading -> LoadingScreen()
