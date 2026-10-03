@@ -101,4 +101,44 @@ class ShelfMergeTest {
         assertEquals(6000, merged[0].totalChars)
         assertEquals(30, merged[0].charOffset)
     }
+
+    @Test
+    fun testFinishFlagSetOnceAndNeverReverted() {
+        // 进度贴近结尾（距尾 < 800 字符）→ 置位 finished
+        val finished = mergeBookEntry(
+            currentList = emptyList(),
+            uriStr = "content://a",
+            charOffset = 9500,
+            totalChars = 10000,
+            chapterTitle = "终章",
+            fallbackTitle = { "b.epub" },
+            nowMs = 1L
+        )[0]
+        assertTrue(finished.finished)
+
+        // 之后进度回退（重读开头）不回退 finished 标记
+        val stillFinished = mergeBookEntry(
+            currentList = listOf(finished),
+            uriStr = "content://a",
+            charOffset = 100,
+            totalChars = 10000,
+            chapterTitle = "第一章",
+            fallbackTitle = { "不应触发" },
+            nowMs = 2L
+        )[0]
+        assertTrue(stillFinished.finished)
+        assertEquals(100, stillFinished.charOffset)
+
+        // 未近结尾的正常进度不置位
+        val reading = mergeBookEntry(
+            currentList = emptyList(),
+            uriStr = "content://b",
+            charOffset = 100,
+            totalChars = 10000,
+            chapterTitle = "",
+            fallbackTitle = { "c.txt" },
+            nowMs = 3L
+        )[0]
+        assertFalse(reading.finished)
+    }
 }

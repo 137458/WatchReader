@@ -321,7 +321,11 @@ class MainActivity : ComponentActivity() {
                     onCleanTypographyChange = { viewModel.setCleanTypography(it) },
                     fontType = uiState.fontType,
                     onFontTypeChange = { viewModel.setFontType(it) },
-                    readDurationSec = uiState.readDurationSec
+                    readDurationSec = uiState.readDurationSec,
+                    readDays = uiState.readDays,
+                    readGoalMinutes = uiState.readGoalMinutes,
+                    finishedCount = uiState.bookshelf.count { it.finished },
+                    onReadGoalChange = { viewModel.setReadGoalMinutes(it) }
                 )
 
                 is Screen.ChapterList -> ChapterListScreen(

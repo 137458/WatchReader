@@ -20,7 +20,9 @@ data class BookItem(
     val totalChars: Int,
     val lastChapterTitle: String,
     val lastReadTime: Long,
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+    // 进度贴近全书结尾后置位，一次性置位不回退（阅读统计「读完本数」数据源）
+    val finished: Boolean = false
 ) {
     val progressPercent: Int
         get() = if (totalChars > 0) ((charOffset.toFloat() / totalChars) * 100).toInt().coerceIn(0, 100) else 0

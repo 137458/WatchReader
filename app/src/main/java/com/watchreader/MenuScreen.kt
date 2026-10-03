@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -68,7 +69,11 @@ fun MenuScreen(
     onCleanTypographyChange: (Boolean) -> Unit = {},
     fontType: Int = 0,
     onFontTypeChange: (Int) -> Unit = {},
-    readDurationSec: Long = 0L
+    readDurationSec: Long = 0L,
+    readDays: Map<String, Long> = emptyMap(),
+    readGoalMinutes: Int = 0,
+    finishedCount: Int = 0,
+    onReadGoalChange: (Int) -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
     val colors = MaterialTheme.colorScheme
@@ -250,11 +255,50 @@ fun MenuScreen(
                 }
             }
 
+            // ── 统计分区 ──
+            SurfaceCard(modifier = Modifier.fillMaxWidth().staggeredEnter(7)) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SectionLabel("统计")
+                    WeekBars(readDays)
+                    AnimatedValue(weekSummaryLabel(readDays, finishedCount)) { summary ->
+                        Text(
+                            text = summary,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.onSurfaceVariant
+                        )
+                    }
+                    HairlineDivider()
+                    val goalLabel = if (readGoalMinutes <= 0) "关闭" else "$readGoalMinutes 分钟"
+                    CycleLine("每日目标", goalLabel) {
+                        val options = ReadingStats.GOAL_OPTIONS_MINUTES
+                        val nextIdx = (options.indexOf(readGoalMinutes) + 1).mod(options.size)
+                        onReadGoalChange(options[nextIdx])
+                    }
+                    if (readGoalMinutes > 0) {
+                        val todayMinutes = todayMinutesOf(readDays)
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            ProgressTrack(
+                                progress = (todayMinutes.toFloat() / readGoalMinutes).coerceIn(0f, 1f),
+                                height = 3.dp
+                            )
+                            Text(
+                                text = "今日 $todayMinutes / $readGoalMinutes 分钟",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
             // ── 底部主导航 ──
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .staggeredEnter(7),
+                    .staggeredEnter(8),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 PillButton("书架", Modifier.weight(1f), verticalPadding = 12.dp, onClick = onHome)
@@ -348,8 +392,7 @@ private fun StepperKey(symbol: String, colors: androidx.compose.material3.ColorS
 }
 
 @Composable
-private fun CycleLine(label: String, value: String, onClick: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
+private fun CycleLine(label: String, value: String, onClick: () -> Unit) {    val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier
@@ -368,4 +411,55 @@ private fun CycleLine(label: String, value: String, onClick: () -> Unit) {
             Text("›", color = colors.onSurfaceVariant.copy(alpha = 0.45f), fontSize = 13.sp)
         }
     }
+}
+
+/**
+ * 周阅读条形图：周一至周日 7 根迷你柱，今日高亮，仅随 readDays 变化重算
+ */
+@Composable
+private fun WeekBars(days: Map<String, Long>) {
+    val colors = MaterialTheme.colorScheme
+    val today = remember { java.time.LocalDate.now() }
+    val bars = remember(days, today) { ReadingStats.weekBars(today, days) }
+    val maxMinutes = bars.maxOf { it.minutes }.coerceAtLeast(1)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
+        bars.forEach { bar ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                val barHeight = if (bar.minutes <= 0) 3.dp
+                else (4f + 24f * bar.minutes / maxMinutes).dp
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(barHeight)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(if (bar.isToday) colors.primary else colors.primary.copy(alpha = 0.32f))
+                )
+                Text(
+                    text = bar.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (bar.isToday) colors.primary else colors.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** 今日已读分钟数 */
+private fun todayMinutesOf(days: Map<String, Long>): Int =
+    ((days[ReadingStats.dateKeyOf(System.currentTimeMillis())] ?: 0L) / 60L).toInt()
+
+/** 周摘要文案：本周分钟数 + 读完本数（无完读时省略后半句） */
+private fun weekSummaryLabel(days: Map<String, Long>, finishedCount: Int): String {
+    val weekMinutes = ReadingStats.weekBars(java.time.LocalDate.now(), days).sumOf { it.minutes }
+    val sb = StringBuilder("本周 ").append(weekMinutes).append(" 分钟")
+    if (finishedCount > 0) sb.append(" · 已读完 ").append(finishedCount).append(" 本")
+    return sb.toString()
 }

@@ -73,7 +73,10 @@ data class ReaderUiState(
     val tapPageArea: Int = 0,
     val cleanTypography: Boolean = true,
     val fontType: Int = 0,
-    val readDurationSec: Long = 0L
+    val readDurationSec: Long = 0L,
+    val readDays: Map<String, Long> = emptyMap(),
+    val readGoalMinutes: Int = 0,
+    val readGoalCelebrated: String = ""
 )
 
 /**
@@ -147,6 +150,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         cleanTypography = config.cleanTypography,
                         fontType = config.fontType,
                         readDurationSec = config.readDurationSec,
+                        readDays = config.readDays,
+                        readGoalMinutes = config.readGoalMinutes,
+                        readGoalCelebrated = config.readGoalCelebrated,
                         screen = Screen.Loading,
                         isLoading = true,
                         currentUri = config.lastUri
@@ -166,6 +172,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         cleanTypography = config.cleanTypography,
                         fontType = config.fontType,
                         readDurationSec = config.readDurationSec,
+                        readDays = config.readDays,
+                        readGoalMinutes = config.readGoalMinutes,
+                        readGoalCelebrated = config.readGoalCelebrated,
                         screen = Screen.Home,
                         isLoading = false,
                         currentUri = null
@@ -905,6 +914,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * 启动阅读时长后台统计循环
+     * 每 10s 结算一次：总时长与当日秒数同事务落盘；每日目标首次达成时轻振庆祝
      */
     private fun startReadingTimer() {
         readingTimerJob?.cancel()
@@ -915,12 +925,38 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 if (state.screen is Screen.Reader) {
                     val now = android.os.SystemClock.uptimeMillis()
                     if (now - lastActiveTime <= 60_000L) {
+                        val todayKey = ReadingStats.dateKeyOf(System.currentTimeMillis())
+                        DataStoreManager.addReadingSeconds(appCtx, 10L, todayKey)
+
                         val newSec = state.readDurationSec + 10L
-                        _uiState.update { it.copy(readDurationSec = newSec) }
-                        DataStoreManager.saveReadDurationSec(appCtx, newSec)
+                        val newDays = ReadingStats.addSeconds(state.readDays, todayKey, 10L)
+                        var celebrated = state.readGoalCelebrated
+                        if (ReadingStats.shouldCelebrate(newDays[todayKey] ?: 0L, state.readGoalMinutes, celebrated, todayKey)) {
+                            RotaryHapticManager.performSuccessFeedback(appCtx)
+                            DataStoreManager.saveReadGoalCelebrated(appCtx, todayKey)
+                            celebrated = todayKey
+                        }
+                        _uiState.update {
+                            it.copy(
+                                readDurationSec = newSec,
+                                readDays = newDays,
+                                readGoalCelebrated = celebrated
+                            )
+                        }
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * 设置每日阅读目标（分钟档位见 ReadingStats.GOAL_OPTIONS_MINUTES，0 = 关闭）
+     */
+    fun setReadGoalMinutes(minutes: Int) {
+        val safe = if (ReadingStats.GOAL_OPTIONS_MINUTES.contains(minutes)) minutes else 0
+        _uiState.update { it.copy(readGoalMinutes = safe) }
+        viewModelScope.launch(Dispatchers.IO) {
+            DataStoreManager.setReadGoalMinutes(appCtx, safe)
         }
     }
 

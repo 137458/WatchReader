@@ -45,7 +45,10 @@ data class AppInitialConfig(
     val tapPageArea: Int = 0, // 0: 上下翻页, 1: 左右翻页, 2: 关闭点按
     val cleanTypography: Boolean = true,
     val fontType: Int = 0, // 0: 黑体, 1: 宋体/衬线
-    val readDurationSec: Long = 0L
+    val readDurationSec: Long = 0L,
+    val readDays: Map<String, Long> = emptyMap(), // 每日阅读秒数（本地日期键）
+    val readGoalMinutes: Int = 0, // 每日目标分钟，0=关闭
+    val readGoalCelebrated: String = "" // 最近庆祝的日期键
 )
 
 /**
@@ -66,6 +69,9 @@ object DataStoreManager {
     val KEY_CLEAN_TYPOGRAPHY = booleanPreferencesKey("clean_typography") // 智能排版净化
     val KEY_FONT_TYPE = intPreferencesKey("font_type") // 0: 黑体, 1: 宋体/衬线
     val KEY_READ_DURATION_SEC = longPreferencesKey("read_duration_sec") // 累计阅读时长
+    val KEY_READ_DAYS_JSON = stringPreferencesKey("read_days_json") // 每日阅读秒数 {"yyyy-MM-dd":sec}
+    val KEY_READ_GOAL_MINUTES = intPreferencesKey("read_goal_minutes") // 每日阅读目标（分钟），0=关闭
+    val KEY_READ_GOAL_CELEBRATED = stringPreferencesKey("read_goal_celebrated") // 最近一次目标达成庆祝的日期键
 
     const val DEFAULT_FONT_SIZE = 14
     const val DEFAULT_AUTO_SCROLL_SPEED = 45f // 默认 45 像素/秒 (约 2~3 行/秒)
@@ -105,6 +111,9 @@ object DataStoreManager {
         val cleanTypography = prefs[KEY_CLEAN_TYPOGRAPHY] ?: true
         val fontType = prefs[KEY_FONT_TYPE] ?: 0
         val readDurationSec = prefs[KEY_READ_DURATION_SEC] ?: 0L
+        val readDays = parseReadDays(prefs[KEY_READ_DAYS_JSON])
+        val readGoalMinutes = prefs[KEY_READ_GOAL_MINUTES] ?: 0
+        val readGoalCelebrated = prefs[KEY_READ_GOAL_CELEBRATED] ?: ""
 
         return AppInitialConfig(
             fontSize = fontSize,
@@ -118,7 +127,10 @@ object DataStoreManager {
             tapPageArea = tapPageArea,
             cleanTypography = cleanTypography,
             fontType = fontType,
-            readDurationSec = readDurationSec
+            readDurationSec = readDurationSec,
+            readDays = readDays,
+            readGoalMinutes = readGoalMinutes,
+            readGoalCelebrated = readGoalCelebrated
         )
     }
 
@@ -151,6 +163,52 @@ object DataStoreManager {
         context.dataStore.edit { prefs ->
             prefs[KEY_READ_DURATION_SEC] = seconds
         }
+    }
+
+    /**
+     * 单事务累积一次阅读计时：总时长与当日秒数同事务落盘，并裁剪 30 天前历史
+     */
+    suspend fun addReadingSeconds(context: Context, seconds: Long, todayKey: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_READ_DURATION_SEC] = (prefs[KEY_READ_DURATION_SEC] ?: 0L) + seconds
+            val days = ReadingStats.addSeconds(parseReadDays(prefs[KEY_READ_DAYS_JSON]), todayKey, seconds)
+            prefs[KEY_READ_DAYS_JSON] = serializeReadDays(ReadingStats.pruneDays(days))
+        }
+    }
+
+    suspend fun setReadGoalMinutes(context: Context, minutes: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_READ_GOAL_MINUTES] = if (ReadingStats.GOAL_OPTIONS_MINUTES.contains(minutes)) minutes else 0
+        }
+    }
+
+    suspend fun saveReadGoalCelebrated(context: Context, dateKey: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_READ_GOAL_CELEBRATED] = dateKey
+        }
+    }
+
+    // ── 每日阅读时长 JSON 编解码（internal 供单测） ──
+    internal fun serializeReadDays(days: Map<String, Long>): String {
+        val obj = JSONObject()
+        for ((key, sec) in days) {
+            obj.put(key, sec)
+        }
+        return obj.toString()
+    }
+
+    internal fun parseReadDays(jsonStr: String?): Map<String, Long> {
+        if (jsonStr.isNullOrEmpty()) return emptyMap()
+        val map = mutableMapOf<String, Long>()
+        try {
+            val obj = JSONObject(jsonStr)
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                map[key] = obj.optLong(key, 0L)
+            }
+        } catch (_: Exception) {}
+        return map
     }
 
     /** 保存最后活跃页面 */
@@ -286,6 +344,7 @@ object DataStoreManager {
                 put("chapter", item.lastChapterTitle)
                 put("time", item.lastReadTime)
                 put("pinned", item.isPinned)
+                put("finished", item.finished)
             }
             array.put(obj)
         }
@@ -307,7 +366,8 @@ object DataStoreManager {
                         totalChars = obj.optInt("total", 0),
                         lastChapterTitle = obj.optString("chapter", ""),
                         lastReadTime = obj.optLong("time", 0L),
-                        isPinned = obj.optBoolean("pinned", false)
+                        isPinned = obj.optBoolean("pinned", false),
+                        finished = obj.optBoolean("finished", false)
                     )
                 )
             }
@@ -428,14 +488,17 @@ internal fun mergeBookEntry(
     val list = currentList.toMutableList()
     val existingIdx = list.indexOfFirst { it.uriString == uriStr }
     val existing = if (existingIdx >= 0) list[existingIdx] else null
+    // 完读一次性置位不回退：本次进度贴近结尾，或既有条目已标记
+    val resolvedTotal = if (totalChars > 0) totalChars else existing?.totalChars ?: 0
     val updated = BookItem(
         uriString = uriStr,
         title = existing?.title ?: fallbackTitle(),
         charOffset = charOffset,
-        totalChars = if (totalChars > 0) totalChars else existing?.totalChars ?: 0,
+        totalChars = resolvedTotal,
         lastChapterTitle = chapterTitle.ifEmpty { existing?.lastChapterTitle ?: "" },
         lastReadTime = nowMs,
-        isPinned = existing?.isPinned ?: false
+        isPinned = existing?.isPinned ?: false,
+        finished = (existing?.finished ?: false) || ReadingStats.isFinished(charOffset, resolvedTotal)
     )
     if (existingIdx >= 0) {
         list[existingIdx] = updated
