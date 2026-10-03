@@ -48,7 +48,7 @@ private class ChapterCardViewHolder(
  * 原生 ListView 背景守卫：View.setBackgroundColor 每次调用都会新建 ColorDrawable 并失效重绘，
  * 而 AndroidView 的 update 在每次父级重组都会执行 —— 仅在颜色真正变化时才设置
  */
-private fun applyListViewBg(view: View, color: Int) {
+internal fun applyListViewBg(view: View, color: Int) {
     val current = (view.background as? android.graphics.drawable.ColorDrawable)?.color
     if (current != color) {
         view.setBackgroundColor(color)

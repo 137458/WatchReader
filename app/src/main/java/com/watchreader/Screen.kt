@@ -10,5 +10,6 @@ sealed class Screen {
     object ChapterList : Screen()
     object Menu : Screen()
     object Rsvp : Screen()
+    object Search : Screen()
     object WifiTransfer : Screen()
 }

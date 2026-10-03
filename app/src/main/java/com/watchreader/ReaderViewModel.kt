@@ -78,7 +78,9 @@ data class ReaderUiState(
     val readGoalMinutes: Int = 0,
     val readGoalCelebrated: String = "",
     val lineSpacing: Int = LineSpacingMode.STANDARD.value,
-    val letterSpacing: Int = LetterSpacingMode.STANDARD.value
+    val letterSpacing: Int = LetterSpacingMode.STANDARD.value,
+    val isSearching: Boolean = false,
+    val searchResults: List<SearchHit> = emptyList()
 )
 
 /**
@@ -108,6 +110,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val chapterContentCache = ConcurrentHashMap<Int, ChapterContent>()
     private var prefetchJob: Job? = null
     private var cleanTypographyJob: Job? = null
+    private var searchJob: Job? = null
 
     // 异步防抖持久化 Job
     private var savePositionJob: Job? = null
@@ -246,12 +249,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun loadFile(uri: Uri, initialOffset: Int = 0) {
         viewModelScope.launch {
+            searchJob?.cancel()
             _uiState.update {
                 it.copy(
                     isLoading = true,
                     screen = Screen.Loading,
                     currentUri = uri,
-                    errorMessage = null
+                    errorMessage = null,
+                    isSearching = false,
+                    searchResults = emptyList()
                 )
             }
 
@@ -468,9 +474,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         originalUri: Uri,
         chapters: List<Chapter>,
         chapterIndex: Int,
-        totalChars: Int
+        totalChars: Int,
+        clean: Boolean = _uiState.value.cleanTypography
     ): ChapterContent {
-        val clean = _uiState.value.cleanTypography
         val readUri = if (convertedFormat != null) resolveConvertedReadUri(originalUri) else originalUri
         val startOffset = chapters[chapterIndex].charOffset.coerceIn(0, totalChars)
         val endOffset = endOffsetOf(chapters, chapterIndex, totalChars).coerceIn(startOffset, totalChars)
@@ -536,6 +542,72 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
+    }
+
+    /**
+     * 搜索用单章装载：固定净化关闭态（正文 = 原文切片后缀，坐标可直接换算），
+     * 且绕过章节内容缓存——全书扫描不得污染 16 章预热窗口
+     */
+    private suspend fun loadChapterContentForSearch(
+        uri: Uri,
+        chapters: List<Chapter>,
+        chapterIndex: Int
+    ): ChapterContent = withContext(Dispatchers.IO) {
+        val totalChars = _uiState.value.fullTextLength
+        when {
+            convertedFormat != null -> loadChunkContent(uri, chapters, chapterIndex, totalChars, clean = false)
+            EpubParser.isEpubFile(appCtx, uri) -> EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters, false)
+            else -> loadChunkContent(uri, chapters, chapterIndex, totalChars, clean = false)
+        }
+    }
+
+    /**
+     * 书内全文搜索：逐章后台扫描（TXT/转换类/EPUB 统一走净化关闭态正文），
+     * 命中即增量上报，全书命中总数受 BookSearchEngine.MAX_RESULTS 封顶
+     */
+    fun searchInBook(query: String) {
+        val state = _uiState.value
+        val uri = state.currentUri ?: return
+        val chapters = state.chapters
+        val q = query.trim()
+        if (chapters.isEmpty() || q.isEmpty()) return
+
+        searchJob?.cancel()
+        _uiState.update { it.copy(isSearching = true, searchResults = emptyList()) }
+        searchJob = viewModelScope.launch {
+            val hits = mutableListOf<SearchHit>()
+            try {
+                withContext(Dispatchers.IO) {
+                    for ((idx, chapter) in chapters.withIndex()) {
+                        if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
+                        val content = loadChapterContentForSearch(uri, chapters, idx)
+                        if (content.formattedBody.isNotEmpty()) {
+                            hits += BookSearchEngine.findMatches(
+                                body = content.formattedBody,
+                                query = q,
+                                bodyStartInRaw = content.rawParagraphStarts.firstOrNull() ?: 0,
+                                baseCharOffset = content.startCharOffset,
+                                chapterIndex = idx,
+                                chapterTitle = chapter.title,
+                                maxHits = BookSearchEngine.MAX_RESULTS - hits.size
+                            )
+                            _uiState.update { it.copy(searchResults = hits.toList()) }
+                        } else if (idx % 20 == 0) {
+                            _uiState.update { it.copy(searchResults = hits.toList()) }
+                        }
+                    }
+                }
+            } finally {
+                if (isActive) {
+                    _uiState.update { it.copy(isSearching = false, searchResults = hits.toList()) }
+                }
+            }
+        }
+    }
+
+    /** 跳转至搜索命中位置（章节 + 全书原始字符偏移精准定位） */
+    fun jumpToSearchHit(hit: SearchHit) {
+        goToChapter(hit.chapterIndex, hit.charOffset)
     }
 
     /**
@@ -814,7 +886,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun handleBack(): Boolean {
         return when (_uiState.value.screen) {
-            is Screen.Menu, is Screen.ChapterList, is Screen.Rsvp -> {
+            is Screen.Menu, is Screen.ChapterList, is Screen.Rsvp, is Screen.Search -> {
                 returnToReader()
                 true
             }
@@ -856,10 +928,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun closeBook() = closeBookInternal()
 
-    /** 关书统一路径：落盘进度 + 取消预热 + 清空章节缓存 + 复位到书架 */
+    /** 关书统一路径：落盘进度 + 取消预热/搜索 + 清空章节缓存 + 复位到书架 */
     private fun closeBookInternal() {
         flushReadingPosition()
         prefetchJob?.cancel()
+        searchJob?.cancel()
         chapterContentCache.clear()
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.saveLastScreen(appCtx, "home")
@@ -872,7 +945,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     currentChapterIndex = 0,
                     currentChapterContent = null,
                     bookshelf = shelf,
-                    screen = Screen.Home
+                    screen = Screen.Home,
+                    isSearching = false,
+                    searchResults = emptyList()
                 )
             }
         }

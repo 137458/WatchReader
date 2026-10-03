@@ -188,7 +188,7 @@ class MainActivity : ComponentActivity() {
         // 返回时排版、滚动位置、表冠管线与自动滚屏引擎原样保留。
         val readerAlive = uiState.currentUri != null && (
             screen is Screen.Reader || screen is Screen.Menu ||
-                screen is Screen.ChapterList || screen is Screen.Rsvp
+                screen is Screen.ChapterList || screen is Screen.Rsvp || screen is Screen.Search
             )
 
         // 离开阅读页后屏幕状态不再携带阅读定位参数，故保留最后一次的阅读参数：
@@ -311,6 +311,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onOpenRsvp = { viewModel.openRsvp() },
                     onChapterListClick = { viewModel.navigateTo(Screen.ChapterList) },
+                    onOpenSearch = { viewModel.navigateTo(Screen.Search) },
                     onBack = { viewModel.returnToReader() },
                     onHome = { viewModel.closeBook() },
                     themeMode = uiState.themeMode,
@@ -357,6 +358,15 @@ class MainActivity : ComponentActivity() {
                     },
                     onNextChapter = { viewModel.goToNextChapter() },
                     onSpeedChange = { viewModel.updateRsvpSpeed(it) },
+                    onBack = { viewModel.handleBack() }
+                )
+
+                is Screen.Search -> SearchScreen(
+                    chapters = uiState.chapters,
+                    searchResults = uiState.searchResults,
+                    isSearching = uiState.isSearching,
+                    onSearch = { viewModel.searchInBook(it) },
+                    onHitClick = { viewModel.jumpToSearchHit(it) },
                     onBack = { viewModel.handleBack() }
                 )
 

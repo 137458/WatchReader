@@ -188,6 +188,92 @@ class RsvpRotaryDamper(
 }
 
 /**
+ * 全文搜索单条命中：全局原始字符偏移可直接用于 goToChapter 精准定位
+ */
+data class SearchHit(
+    val chapterIndex: Int,
+    val chapterTitle: String,
+    val charOffset: Int,
+    val snippet: String
+)
+
+/**
+ * 书内全文搜索引擎（纯函数）：大小写不敏感逐位匹配 + 居中上下文摘要
+ *
+ * 坐标换算约定：命中的正文坐标 idx 属于「本章原文切片」坐标域——
+ * 全局偏移 = baseCharOffset + bodyStartInRaw + idx。排版净化关闭态的正文
+ * 是原文切片去掉标题首行后的后缀（bodyStartInRaw = 被剥除的首行长度），
+ * EPUB 路径无映射数组（bodyStartInRaw = 0），同一公式统一两种来源。
+ */
+object BookSearchEngine {
+
+    /** 全书命中总数上限：防止超长书结果爆炸拖垮列表与内存 */
+    const val MAX_RESULTS = 200
+
+    private const val CONTEXT_BEFORE = 14
+    private const val CONTEXT_AFTER = 30
+
+    /**
+     * 在单章正文中查找全部命中（大小写不敏感，命中按出现顺序排列）
+     * @param maxHits 本次最多返回的命中数（全书扫描时递减传入以截断总量）
+     */
+    fun findMatches(
+        body: String,
+        query: String,
+        bodyStartInRaw: Int,
+        baseCharOffset: Int,
+        chapterIndex: Int,
+        chapterTitle: String,
+        maxHits: Int = MAX_RESULTS
+    ): List<SearchHit> {
+        val q = query.trim()
+        if (q.isEmpty() || body.isEmpty() || maxHits <= 0) return emptyList()
+        val hits = ArrayList<SearchHit>()
+        var from = 0
+        while (hits.size < maxHits) {
+            val idx = indexOfIgnoreCase(body, q, from)
+            if (idx < 0) break
+            hits.add(
+                SearchHit(
+                    chapterIndex = chapterIndex,
+                    chapterTitle = chapterTitle,
+                    charOffset = baseCharOffset + bodyStartInRaw + idx,
+                    snippet = buildSnippet(body, idx, idx + q.length)
+                )
+            )
+            from = idx + q.length
+        }
+        return hits
+    }
+
+    /** 大小写不敏感的子串查找（regionMatches 逐位比较，不做整串小写副本） */
+    fun indexOfIgnoreCase(text: String, pattern: String, from: Int = 0): Int {
+        if (pattern.isEmpty()) return -1
+        val lastStart = text.length - pattern.length
+        var i = maxOf(from, 0)
+        while (i <= lastStart) {
+            if (text.regionMatches(i, pattern, 0, pattern.length, ignoreCase = true)) return i
+            i++
+        }
+        return -1
+    }
+
+    /** 居中上下文摘要：命中前后各取若干字符，换行折叠为空格，非贴边补省略号 */
+    private fun buildSnippet(body: String, start: Int, end: Int): String {
+        val s = maxOf(0, start - CONTEXT_BEFORE)
+        val e = minOf(body.length, end + CONTEXT_AFTER)
+        val sb = StringBuilder(e - s + 2)
+        if (s > 0) sb.append('…')
+        for (i in s until e) {
+            val c = body[i]
+            sb.append(if (c == '\n' || c == '\r') ' ' else c)
+        }
+        if (e < body.length) sb.append('…')
+        return sb.toString().trim()
+    }
+}
+
+/**
  * 章节偏移精确映射引擎：正文排版坐标 ↔ 原文切片坐标
  *
  * 背景约束：formattedBody 为每段追加了全角缩进并重排换行，正文字符索引

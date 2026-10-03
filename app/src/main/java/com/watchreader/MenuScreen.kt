@@ -59,6 +59,7 @@ fun MenuScreen(
     onAddBookmark: () -> Unit,
     onOpenRsvp: () -> Unit,
     onChapterListClick: () -> Unit,
+    onOpenSearch: () -> Unit = {},
     onBack: () -> Unit,
     onHome: () -> Unit,
     themeMode: Int = 0,
@@ -156,15 +157,17 @@ fun MenuScreen(
             }
 
             // ── 快捷操作 ──
+            // 四键收紧内边距：圆屏最窄弦宽下并排四枚胶囊与「显示」分区同规则，防整排溢出
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .staggeredEnter(3),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                PillButton("书签", Modifier.weight(1f), onClick = onAddBookmark)
-                PillButton("速读", Modifier.weight(1f), onClick = onOpenRsvp)
-                PillButton("目录", Modifier.weight(1f), onClick = onChapterListClick)
+                PillButton("书签", Modifier.weight(1f), verticalPadding = 10.dp, horizontalPadding = 4.dp, onClick = onAddBookmark)
+                PillButton("速读", Modifier.weight(1f), verticalPadding = 10.dp, horizontalPadding = 4.dp, onClick = onOpenRsvp)
+                PillButton("目录", Modifier.weight(1f), verticalPadding = 10.dp, horizontalPadding = 4.dp, onClick = onChapterListClick)
+                PillButton("搜索", Modifier.weight(1f), verticalPadding = 10.dp, horizontalPadding = 4.dp, onClick = onOpenSearch)
             }
 
             // ── 滚动分区 ──
