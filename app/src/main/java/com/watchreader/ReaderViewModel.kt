@@ -76,7 +76,9 @@ data class ReaderUiState(
     val readDurationSec: Long = 0L,
     val readDays: Map<String, Long> = emptyMap(),
     val readGoalMinutes: Int = 0,
-    val readGoalCelebrated: String = ""
+    val readGoalCelebrated: String = "",
+    val lineSpacing: Int = LineSpacingMode.STANDARD.value,
+    val letterSpacing: Int = LetterSpacingMode.STANDARD.value
 )
 
 /**
@@ -153,6 +155,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         readDays = config.readDays,
                         readGoalMinutes = config.readGoalMinutes,
                         readGoalCelebrated = config.readGoalCelebrated,
+                        lineSpacing = config.lineSpacing,
+                        letterSpacing = config.letterSpacing,
                         screen = Screen.Loading,
                         isLoading = true,
                         currentUri = config.lastUri
@@ -175,6 +179,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         readDays = config.readDays,
                         readGoalMinutes = config.readGoalMinutes,
                         readGoalCelebrated = config.readGoalCelebrated,
+                        lineSpacing = config.lineSpacing,
+                        letterSpacing = config.letterSpacing,
                         screen = Screen.Home,
                         isLoading = false,
                         currentUri = null
@@ -957,6 +963,28 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(readGoalMinutes = safe) }
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.setReadGoalMinutes(appCtx, safe)
+        }
+    }
+
+    /**
+     * 设置正文行距档位（LineSpacingMode，仅改排版参数，不触发章节重格式化）
+     */
+    fun setLineSpacing(mode: Int) {
+        val safe = LineSpacingMode.fromValue(mode).value
+        _uiState.update { it.copy(lineSpacing = safe) }
+        viewModelScope.launch(Dispatchers.IO) {
+            DataStoreManager.saveLineSpacing(appCtx, safe)
+        }
+    }
+
+    /**
+     * 设置正文字距档位（LetterSpacingMode，仅改排版参数，不触发章节重格式化）
+     */
+    fun setLetterSpacing(mode: Int) {
+        val safe = LetterSpacingMode.fromValue(mode).value
+        _uiState.update { it.copy(letterSpacing = safe) }
+        viewModelScope.launch(Dispatchers.IO) {
+            DataStoreManager.saveLetterSpacing(appCtx, safe)
         }
     }
 

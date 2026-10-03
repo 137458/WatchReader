@@ -44,6 +44,33 @@ enum class FontType(val value: Int) {
 }
 
 /**
+ * 正文行距档位（TextView lineSpacingMultiplier；STANDARD = 历史默认 1.45）
+ */
+enum class LineSpacingMode(val value: Int, val label: String, val multiplier: Float) {
+    COMPACT(0, "紧凑", 1.25f),
+    STANDARD(1, "标准", 1.45f),
+    RELAXED(2, "宽松", 1.7f),
+    LOOSE(3, "疏朗", 1.95f);
+
+    companion object {
+        fun fromValue(value: Int): LineSpacingMode = entries.firstOrNull { it.value == value } ?: STANDARD
+    }
+}
+
+/**
+ * 正文字距档位（TextView letterSpacing，em；STANDARD = 历史默认 0）
+ */
+enum class LetterSpacingMode(val value: Int, val label: String, val em: Float) {
+    STANDARD(0, "标准", 0f),
+    RELAXED(1, "宽松", 0.03f),
+    LOOSE(2, "疏朗", 0.06f);
+
+    companion object {
+        fun fromValue(value: Int): LetterSpacingMode = entries.firstOrNull { it.value == value } ?: STANDARD
+    }
+}
+
+/**
  * 单击点按动作
  */
 enum class TapAction {

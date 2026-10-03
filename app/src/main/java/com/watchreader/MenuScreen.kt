@@ -73,7 +73,11 @@ fun MenuScreen(
     readDays: Map<String, Long> = emptyMap(),
     readGoalMinutes: Int = 0,
     finishedCount: Int = 0,
-    onReadGoalChange: (Int) -> Unit = {}
+    onReadGoalChange: (Int) -> Unit = {},
+    lineSpacing: Int = LineSpacingMode.STANDARD.value,
+    letterSpacing: Int = LetterSpacingMode.STANDARD.value,
+    onLineSpacingChange: (Int) -> Unit = {},
+    onLetterSpacingChange: (Int) -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
     val colors = MaterialTheme.colorScheme
@@ -251,6 +255,14 @@ fun MenuScreen(
                     HairlineDivider()
                     CycleLine("字体", fontLabel) {
                         onFontTypeChange(if (FontType.fromValue(fontType) == FontType.SERIF) FontType.SANS_SERIF.value else FontType.SERIF.value)
+                    }
+                    HairlineDivider()
+                    CycleLine("行距", LineSpacingMode.fromValue(lineSpacing).label) {
+                        onLineSpacingChange((lineSpacing + 1) % LineSpacingMode.entries.size)
+                    }
+                    HairlineDivider()
+                    CycleLine("字距", LetterSpacingMode.fromValue(letterSpacing).label) {
+                        onLetterSpacingChange((letterSpacing + 1) % LetterSpacingMode.entries.size)
                     }
                 }
             }

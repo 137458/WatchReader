@@ -68,6 +68,8 @@ private class ReaderViewHolder(
     var appliedTitleColor: Int = Int.MIN_VALUE
     var appliedBodyColor: Int = Int.MIN_VALUE
     var appliedMetaColor: Int = Int.MIN_VALUE
+    var appliedLineSpacing: Int = Int.MIN_VALUE
+    var appliedLetterSpacing: Int = Int.MIN_VALUE
 }
 
 /**
@@ -91,6 +93,8 @@ fun ReaderScreen(
     onAutoScrollSpeedChange: (Float) -> Unit,
     tapPageArea: Int = 0,
     fontType: Int = 0,
+    lineSpacing: Int = LineSpacingMode.STANDARD.value,
+    letterSpacing: Int = LetterSpacingMode.STANDARD.value,
     chapters: List<Chapter> = emptyList(),
     currentChapterIndex: Int = 0,
     onSeekChapter: (Int) -> Unit = {},
@@ -299,7 +303,7 @@ fun ReaderScreen(
                     tag = "body"
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat())
                     setTextColor(textColor)
-                    setLineSpacing(0f, 1.45f)
+                    setLineSpacing(0f, LineSpacingMode.STANDARD.multiplier)
                     setPadding(0, 0, 0, (12 * density).toInt())
                     if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
                         justificationMode = android.graphics.text.LineBreaker.JUSTIFICATION_MODE_INTER_WORD
@@ -513,7 +517,7 @@ fun ReaderScreen(
                 }
 
                 // 首次绑定数据
-                bindChapterData(holder, chapterContent, fontSize, fontType, textColor, titleColor, onSurfaceVariantColor)
+                bindChapterData(holder, chapterContent, fontSize, fontType, lineSpacing, letterSpacing, textColor, titleColor, onSurfaceVariantColor)
 
                 // 首次布局完成后精准恢复阅读位置并请求焦点
                 scrollView.post {
@@ -610,7 +614,7 @@ fun ReaderScreen(
                 val currentChapterIdx = chapterContent?.chapterIndex
 
                 if (lastChapterIndex != currentChapterIdx || holder.currentContent != chapterContent) {
-                    bindChapterData(holder, chapterContent, fontSize, fontType, textColor, titleColor, onSurfaceVariantColor)
+                    bindChapterData(holder, chapterContent, fontSize, fontType, lineSpacing, letterSpacing, textColor, titleColor, onSurfaceVariantColor)
                     // 同一章内仅换排版（净化开关只替换正文、不跳页）时，实时偏移仍落在本章区间内，
                     // 以它为准才不会把阅读位置弹回本章最初打开的地方
                     val liveOffset = currentReadingOffset
@@ -625,9 +629,10 @@ fun ReaderScreen(
                 } else if (holder.appliedFontSize != fontSize ||
                     holder.appliedBodyTypeface !== bodyTypefaceFor(fontType) ||
                     holder.appliedTitleColor != titleColor || holder.appliedBodyColor != textColor ||
-                    holder.appliedMetaColor != onSurfaceVariantColor
+                    holder.appliedMetaColor != onSurfaceVariantColor ||
+                    holder.appliedLineSpacing != lineSpacing || holder.appliedLetterSpacing != letterSpacing
                 ) {
-                    applyChapterStyles(holder, fontSize, fontType, textColor, titleColor, onSurfaceVariantColor)
+                    applyChapterStyles(holder, fontSize, fontType, lineSpacing, letterSpacing, textColor, titleColor, onSurfaceVariantColor)
                 }
             }
         )
@@ -753,6 +758,8 @@ private fun applyChapterStyles(
     holder: ReaderViewHolder,
     fontSize: Int,
     fontType: Int,
+    lineSpacing: Int,
+    letterSpacing: Int,
     textColor: Int,
     titleColor: Int,
     onSurfaceVariantColor: Int
@@ -785,6 +792,16 @@ private fun applyChapterStyles(
         holder.prevTv.setTextColor(onSurfaceVariantColor)
         holder.endTv.setTextColor(onSurfaceVariantColor)
     }
+
+    if (holder.appliedLineSpacing != lineSpacing) {
+        holder.appliedLineSpacing = lineSpacing
+        holder.bodyTv.setLineSpacing(0f, LineSpacingMode.fromValue(lineSpacing).multiplier)
+    }
+
+    if (holder.appliedLetterSpacing != letterSpacing) {
+        holder.appliedLetterSpacing = letterSpacing
+        holder.bodyTv.letterSpacing = LetterSpacingMode.fromValue(letterSpacing).em
+    }
 }
 
 /**
@@ -795,6 +812,8 @@ private fun bindChapterData(
     content: ChapterContent?,
     fontSize: Int,
     fontType: Int,
+    lineSpacing: Int,
+    letterSpacing: Int,
     textColor: Int,
     titleColor: Int,
     onSurfaceVariantColor: Int
@@ -839,7 +858,7 @@ private fun bindChapterData(
         holder.endTv.visibility = View.VISIBLE
     }
 
-    applyChapterStyles(holder, fontSize, fontType, textColor, titleColor, onSurfaceVariantColor)
+    applyChapterStyles(holder, fontSize, fontType, lineSpacing, letterSpacing, textColor, titleColor, onSurfaceVariantColor)
 }
 
 /**

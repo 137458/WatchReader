@@ -325,7 +325,11 @@ class MainActivity : ComponentActivity() {
                     readDays = uiState.readDays,
                     readGoalMinutes = uiState.readGoalMinutes,
                     finishedCount = uiState.bookshelf.count { it.finished },
-                    onReadGoalChange = { viewModel.setReadGoalMinutes(it) }
+                    onReadGoalChange = { viewModel.setReadGoalMinutes(it) },
+                    lineSpacing = uiState.lineSpacing,
+                    letterSpacing = uiState.letterSpacing,
+                    onLineSpacingChange = { viewModel.setLineSpacing(it) },
+                    onLetterSpacingChange = { viewModel.setLetterSpacing(it) }
                 )
 
                 is Screen.ChapterList -> ChapterListScreen(

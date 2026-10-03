@@ -48,7 +48,9 @@ data class AppInitialConfig(
     val readDurationSec: Long = 0L,
     val readDays: Map<String, Long> = emptyMap(), // 每日阅读秒数（本地日期键）
     val readGoalMinutes: Int = 0, // 每日目标分钟，0=关闭
-    val readGoalCelebrated: String = "" // 最近庆祝的日期键
+    val readGoalCelebrated: String = "", // 最近庆祝的日期键
+    val lineSpacing: Int = 1, // LineSpacingMode.STANDARD.value
+    val letterSpacing: Int = 0 // LetterSpacingMode.STANDARD.value
 )
 
 /**
@@ -72,6 +74,8 @@ object DataStoreManager {
     val KEY_READ_DAYS_JSON = stringPreferencesKey("read_days_json") // 每日阅读秒数 {"yyyy-MM-dd":sec}
     val KEY_READ_GOAL_MINUTES = intPreferencesKey("read_goal_minutes") // 每日阅读目标（分钟），0=关闭
     val KEY_READ_GOAL_CELEBRATED = stringPreferencesKey("read_goal_celebrated") // 最近一次目标达成庆祝的日期键
+    val KEY_LINE_SPACING = intPreferencesKey("line_spacing") // 行距档位（LineSpacingMode）
+    val KEY_LETTER_SPACING = intPreferencesKey("letter_spacing") // 字距档位（LetterSpacingMode）
 
     const val DEFAULT_FONT_SIZE = 14
     const val DEFAULT_AUTO_SCROLL_SPEED = 45f // 默认 45 像素/秒 (约 2~3 行/秒)
@@ -114,6 +118,8 @@ object DataStoreManager {
         val readDays = parseReadDays(prefs[KEY_READ_DAYS_JSON])
         val readGoalMinutes = prefs[KEY_READ_GOAL_MINUTES] ?: 0
         val readGoalCelebrated = prefs[KEY_READ_GOAL_CELEBRATED] ?: ""
+        val lineSpacing = prefs[KEY_LINE_SPACING] ?: LineSpacingMode.STANDARD.value
+        val letterSpacing = prefs[KEY_LETTER_SPACING] ?: LetterSpacingMode.STANDARD.value
 
         return AppInitialConfig(
             fontSize = fontSize,
@@ -130,7 +136,9 @@ object DataStoreManager {
             readDurationSec = readDurationSec,
             readDays = readDays,
             readGoalMinutes = readGoalMinutes,
-            readGoalCelebrated = readGoalCelebrated
+            readGoalCelebrated = readGoalCelebrated,
+            lineSpacing = lineSpacing,
+            letterSpacing = letterSpacing
         )
     }
 
@@ -185,6 +193,18 @@ object DataStoreManager {
     suspend fun saveReadGoalCelebrated(context: Context, dateKey: String) {
         context.dataStore.edit { prefs ->
             prefs[KEY_READ_GOAL_CELEBRATED] = dateKey
+        }
+    }
+
+    suspend fun saveLineSpacing(context: Context, mode: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_LINE_SPACING] = LineSpacingMode.fromValue(mode).value
+        }
+    }
+
+    suspend fun saveLetterSpacing(context: Context, mode: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_LETTER_SPACING] = LetterSpacingMode.fromValue(mode).value
         }
     }
 
