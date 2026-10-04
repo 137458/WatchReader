@@ -24,8 +24,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.squircle.squircleSurface
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -81,7 +82,7 @@ fun MenuScreen(
     onLetterSpacingChange: (Int) -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
-    val colors = MaterialTheme.colorScheme
+    val colors = MiuixTheme.colorScheme
     val scrollState = rememberScrollState()
 
     // 表冠滚动目标注册：Activity 顶层管线直接寻址菜单滚动（正向线性步进 + 齿轮微振）
@@ -95,6 +96,7 @@ fun MenuScreen(
             ThemeMode.PARCHMENT -> "羊皮纸"
             ThemeMode.DARK -> "极光黑"
             ThemeMode.RED_NIGHT -> "红光夜视"
+            ThemeMode.MIUIX -> "HyperOS"
         }
     }
     val tapLabel = remember(tapPageArea) {
@@ -122,15 +124,14 @@ fun MenuScreen(
                 modifier = Modifier
                     .staggeredEnter(1)
                     .fillMaxWidth()
-                    .clip(WatchShapes.Card)
-                    .background(colors.primary)
+                    .squircleSurface(colors.primary, WatchShapes.Card)
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 AnimatedValue(chapterTitle.ifBlank { "当前章节" }) { title ->
                     Text(
                         text = title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp),
+                        style = MiuixTheme.textStyles.title3.copy(fontSize = 16.sp),
                         color = colors.onPrimary,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
@@ -138,7 +139,7 @@ fun MenuScreen(
                 }
                 Text(
                     text = ReadDurationFormatter.format(readDurationSec),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MiuixTheme.textStyles.footnote2,
                     color = colors.onPrimary.copy(alpha = 0.78f)
                 )
             }
@@ -281,8 +282,8 @@ fun MenuScreen(
                     AnimatedValue(weekSummaryLabel(readDays, finishedCount)) { summary ->
                         Text(
                             text = summary,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.onSurfaceVariant
+                            style = MiuixTheme.textStyles.footnote2,
+                            color = colors.onSurfaceVariantSummary
                         )
                     }
                     HairlineDivider()
@@ -301,8 +302,8 @@ fun MenuScreen(
                             )
                             Text(
                                 text = "今日 $todayMinutes / $readGoalMinutes 分钟",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = colors.onSurfaceVariant
+                                style = MiuixTheme.textStyles.footnote2,
+                                color = colors.onSurfaceVariantSummary
                             )
                         }
                     }
@@ -354,11 +355,11 @@ private fun AnimatedValue(value: String, content: @Composable (String) -> Unit) 
 private fun SettingLine(label: String, value: String, trailing: @Composable () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 13.sp)
+            Text(label, color = MiuixTheme.colorScheme.onSurface, fontSize = 13.sp)
             AnimatedValue(value) { current ->
                 Text(
                     text = current,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MiuixTheme.colorScheme.primary,
                     fontSize = 11.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Visible
@@ -375,7 +376,7 @@ private fun SettingLine(label: String, value: String, trailing: @Composable () -
  */
 @Composable
 private fun Stepper(onMinus: () -> Unit, onPlus: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
+    val colors = MiuixTheme.colorScheme
     Row(
         modifier = Modifier
             .clip(WatchShapes.Pill)
@@ -393,7 +394,7 @@ private fun Stepper(onMinus: () -> Unit, onPlus: () -> Unit) {
 }
 
 @Composable
-private fun StepperKey(symbol: String, colors: androidx.compose.material3.ColorScheme, onClick: () -> Unit) {
+private fun StepperKey(symbol: String, colors: top.yukonga.miuix.kmp.theme.Colors, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     Box(
         modifier = Modifier
@@ -407,7 +408,7 @@ private fun StepperKey(symbol: String, colors: androidx.compose.material3.ColorS
 }
 
 @Composable
-private fun CycleLine(label: String, value: String, onClick: () -> Unit) {    val colors = MaterialTheme.colorScheme
+private fun CycleLine(label: String, value: String, onClick: () -> Unit) {    val colors = MiuixTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     Row(
         modifier = Modifier
@@ -423,7 +424,7 @@ private fun CycleLine(label: String, value: String, onClick: () -> Unit) {    va
                 Text(current, color = colors.primary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
             Spacer(Modifier.width(4.dp))
-            Text("›", color = colors.onSurfaceVariant.copy(alpha = 0.45f), fontSize = 13.sp)
+            Text("›", color = colors.onSurfaceVariantSummary.copy(alpha = 0.45f), fontSize = 13.sp)
         }
     }
 }
@@ -433,7 +434,7 @@ private fun CycleLine(label: String, value: String, onClick: () -> Unit) {    va
  */
 @Composable
 private fun WeekBars(days: Map<String, Long>) {
-    val colors = MaterialTheme.colorScheme
+    val colors = MiuixTheme.colorScheme
     val today = remember { java.time.LocalDate.now() }
     val bars = remember(days, today) { ReadingStats.weekBars(today, days) }
     val maxMinutes = bars.maxOf { it.minutes }.coerceAtLeast(1)
@@ -459,8 +460,8 @@ private fun WeekBars(days: Map<String, Long>) {
                 )
                 Text(
                     text = bar.label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (bar.isToday) colors.primary else colors.onSurfaceVariant
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = if (bar.isToday) colors.primary else colors.onSurfaceVariantSummary
                 )
             }
         }

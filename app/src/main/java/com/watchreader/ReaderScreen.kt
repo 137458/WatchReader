@@ -21,8 +21,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -215,12 +215,12 @@ fun ReaderScreen(
         }
     }
 
-    val colorScheme = MaterialTheme.colorScheme
+    val colorScheme = MiuixTheme.colorScheme
     val bgColor = colorScheme.background.toArgb()
     val textColor = colorScheme.onBackground.toArgb()
     val titleColor = colorScheme.primary.toArgb()
     val surfaceVariantColor = colorScheme.surfaceVariant.toArgb()
-    val onSurfaceVariantColor = colorScheme.onSurfaceVariant.toArgb()
+    val onSurfaceVariantColor = colorScheme.onSurfaceVariantSummary.toArgb()
 
     val currentChapterTitle = chapterContent?.title ?: ""
 
@@ -661,7 +661,7 @@ fun ReaderScreen(
             // 9 点与 3 点方向贴边弧形排布的竖排电量与时间
             CurvedSideStatusBar(
                 modifier = Modifier.fillMaxSize(),
-                textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+                textColor = colorScheme.onSurfaceVariantSummary.copy(alpha = 0.85f)
             )
 
             val bottomProgressAlpha by androidx.compose.animation.core.animateFloatAsState(
@@ -694,7 +694,7 @@ fun ReaderScreen(
                     style = TextStyle(
                         fontSize = 10.5.sp,
                         fontWeight = FontWeight.Medium,
-                        color = colorScheme.onSurfaceVariant
+                        color = colorScheme.onSurfaceVariantSummary
                     ),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)

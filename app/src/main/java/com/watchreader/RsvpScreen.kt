@@ -9,8 +9,8 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,7 +68,7 @@ fun RsvpScreen(
 
     val tick = rememberTickHaptic()
 
-    val colorScheme = MaterialTheme.colorScheme
+    val colorScheme = MiuixTheme.colorScheme
 
     // 分词并计算相对偏移
     val fullText = chapterContent?.formattedBody ?: ""
@@ -180,7 +180,7 @@ fun RsvpScreen(
         // 3. 侧边弧形电量与时间
         CurvedSideStatusBar(
             modifier = Modifier.fillMaxSize(),
-            textColor = colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+            textColor = colorScheme.onSurfaceVariantSummary.copy(alpha = 0.8f)
         )
 
         // 4. 屏幕正中心 RSVP 闪读文字呈现区（轻触中央切换 暂停/继续，ORP 焦点高亮）
@@ -243,7 +243,7 @@ fun RsvpScreen(
             } else {
                 Text(
                     text = if (fullText.isEmpty()) "加载中…" else "全章阅读完毕",
-                    style = TextStyle(fontSize = 16.sp, color = colorScheme.onSurfaceVariant)
+                    style = TextStyle(fontSize = 16.sp, color = colorScheme.onSurfaceVariantSummary)
                 )
             }
 
@@ -266,7 +266,7 @@ fun RsvpScreen(
 
             Text(
                 text = "${currentIndex + 1}/${tokens.size} · $progressPercent%",
-                style = TextStyle(fontSize = 11.sp, color = colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                style = TextStyle(fontSize = 11.sp, color = colorScheme.onSurfaceVariantSummary.copy(alpha = 0.7f))
             )
         }
 

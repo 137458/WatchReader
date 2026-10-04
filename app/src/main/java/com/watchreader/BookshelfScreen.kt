@@ -20,9 +20,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.squircle.squircleSurface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,7 +67,7 @@ fun BookshelfScreen(
     onBackup: () -> Unit = {},
     onRestore: () -> Unit = {}
 ) {
-    val colors = MaterialTheme.colorScheme
+    val colors = MiuixTheme.colorScheme
     // 过滤排序随书架/搜索词缓存：输入搜索、删除确认等重组不再反复全表扫描排序
     val latestBook = remember(bookshelf) { bookshelf.maxByOrNull { it.lastReadTime } }
     val filteredBooks = remember(bookshelf, searchQuery) {
@@ -123,14 +124,14 @@ fun BookshelfScreen(
                 SectionLabel("正在阅读", color = colors.primary)
                 Text(
                     text = "我的书架",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MiuixTheme.textStyles.title2,
                     color = colors.onBackground
                 )
             }
             Text(
                 text = "${bookshelf.size} 本",
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.onSurfaceVariant
+                style = MiuixTheme.textStyles.footnote1,
+                color = colors.onSurfaceVariantSummary
             )
         }
 
@@ -142,8 +143,7 @@ fun BookshelfScreen(
                     .staggeredEnter(1)
                     .pressScale(heroInteraction, pressedScale = 0.975f)
                     .fillMaxWidth()
-                    .clip(WatchShapes.Card)
-                    .background(colors.primary)
+                    .squircleSurface(colors.primary, WatchShapes.Card)
                     .clickable(interactionSource = heroInteraction, indication = null) {
                         tick()
                         onOpenBook(latestBook)
@@ -154,14 +154,14 @@ fun BookshelfScreen(
                 SectionLabel("继续阅读", color = colors.onPrimary.copy(alpha = 0.72f))
                 Text(
                     text = latestBook.title,
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp),
+                    style = MiuixTheme.textStyles.title3.copy(fontSize = 17.sp),
                     color = colors.onPrimary,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = latestBook.lastChapterTitle.ifBlank { "从上次阅读位置继续" },
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
+                    style = MiuixTheme.textStyles.body1.copy(fontSize = 11.sp),
                     color = colors.onPrimary.copy(alpha = 0.82f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -176,7 +176,7 @@ fun BookshelfScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "${latestBook.progressPercent}%",
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MiuixTheme.textStyles.footnote1,
                         color = colors.onPrimary
                     )
                 }
@@ -190,11 +190,11 @@ fun BookshelfScreen(
                 containerColor = colors.surfaceVariant.copy(alpha = 0.6f)
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text("建立你的第一座书架", style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+                    Text("建立你的第一座书架", style = MiuixTheme.textStyles.title3, color = colors.onSurface)
                     Text(
                         "导入 TXT 或 EPUB，阅读进度会自动保存。",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 11.sp),
-                        color = colors.onSurfaceVariant
+                        style = MiuixTheme.textStyles.body1.copy(fontSize = 11.sp),
+                        color = colors.onSurfaceVariantSummary
                     )
                 }
             }
@@ -229,7 +229,7 @@ fun BookshelfScreen(
             Text(
                 text = errorMessage.orEmpty(),
                 modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.labelSmall,
+                style = MiuixTheme.textStyles.footnote2,
                 color = colors.error
             )
         }
@@ -242,22 +242,23 @@ fun BookshelfScreen(
             Text(
                 text = infoMessage.orEmpty(),
                 modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.labelSmall,
+                style = MiuixTheme.textStyles.footnote2,
                 // 成功类信息用格式绿，与错误红区分
                 color = colors.secondary
             )
         }
 
-        OutlinedTextField(
+        TextField(
             value = searchQuery,
             onValueChange = onSearchChange,
             modifier = Modifier
                 .fillMaxWidth()
                 .staggeredEnter(3),
             singleLine = true,
-            placeholder = { Text("搜索书名", fontSize = 12.sp) },
-            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
-            shape = WatchShapes.Row
+            label = "搜索书名",
+            useLabelAsPlaceholder = true,
+            textStyle = MiuixTheme.textStyles.body1.copy(fontSize = 12.sp),
+            cornerRadius = WatchShapes.Row
         )
 
         // ── 书库列表 ──
@@ -268,11 +269,11 @@ fun BookshelfScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("书库", style = MaterialTheme.typography.titleMedium, color = colors.onBackground)
+            Text("书库", style = MiuixTheme.textStyles.title3, color = colors.onBackground)
             Text(
                 text = if (searchQuery.isBlank()) "最近阅读优先" else "${filteredBooks.size} 个结果",
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.onSurfaceVariant
+                style = MiuixTheme.textStyles.footnote2,
+                color = colors.onSurfaceVariantSummary
             )
         }
 
@@ -292,13 +293,13 @@ fun BookshelfScreen(
                 ) {
                     Text(
                         text = if (bookshelf.isEmpty()) "书架还是空的" else "没有匹配的书籍",
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MiuixTheme.textStyles.button,
                         color = colors.onSurface
                     )
                     Text(
                         text = if (bookshelf.isEmpty()) "从上方导入或扫码传入第一本书" else "换个书名关键词试试",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colors.onSurfaceVariant
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = colors.onSurfaceVariantSummary
                     )
                 }
             }
@@ -341,7 +342,7 @@ fun BookshelfScreen(
                 SectionLabel("显示")
                 Text(
                     text = "字号 $fontSize",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MiuixTheme.textStyles.footnote1,
                     color = colors.primary
                 )
             }
@@ -392,27 +393,26 @@ private fun BookshelfAction(
     value: String,
     onClick: () -> Unit
 ) {
-    val colors = MaterialTheme.colorScheme
+    val colors = MiuixTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     Row(
         modifier = modifier
             .pressScale(interaction)
-            .clip(WatchShapes.Row)
-            .background(colors.surfaceVariant)
+            .squircleSurface(colors.surfaceVariant, WatchShapes.Row)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 11.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.labelMedium, color = colors.onSurface)
+            Text(title, style = MiuixTheme.textStyles.footnote1, color = colors.onSurface)
             // 值行用格式绿：按钮浅暖底上对比 4.7:1 达 AA，且与 TXT 格式角标同一语义色
-            Text(value, style = MaterialTheme.typography.labelSmall, color = colors.secondary)
+            Text(value, style = MiuixTheme.textStyles.footnote2, color = colors.secondary)
         }
         Text(
             text = "›",
-            style = MaterialTheme.typography.labelLarge,
-            color = colors.onSurfaceVariant.copy(alpha = 0.5f)
+            style = MiuixTheme.textStyles.button,
+            color = colors.onSurfaceVariantSummary.copy(alpha = 0.5f)
         )
     }
 }
@@ -427,7 +427,7 @@ private fun BookshelfBookRow(
     onConfirmDelete: () -> Unit,
     enterOrder: Int
 ) {
-    val colors = MaterialTheme.colorScheme
+    val colors = MiuixTheme.colorScheme
     val formatBadge = remember(book.uriString, book.title) {
         BookTextConverter.formatBadgeOf(book.uriString.ifEmpty { book.title })
     }
@@ -438,7 +438,7 @@ private fun BookshelfBookRow(
         modifier = Modifier
             .fillMaxWidth()
             .staggeredEnter(enterOrder),
-        shape = WatchShapes.Row
+        cornerRadius = WatchShapes.Row
     ) {
         Column(
             modifier = Modifier
@@ -455,7 +455,7 @@ private fun BookshelfBookRow(
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = displayTitle,
-                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    style = MiuixTheme.textStyles.body1.copy(fontWeight = FontWeight.SemiBold),
                     color = colors.onSurface,
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
@@ -463,14 +463,14 @@ private fun BookshelfBookRow(
                 )
                 Text(
                     text = "${book.progressPercent}%",
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MiuixTheme.textStyles.footnote1,
                     color = colors.primary
                 )
             }
             Text(
                 text = book.lastChapterTitle.ifBlank { "尚未开始" },
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.onSurfaceVariant,
+                style = MiuixTheme.textStyles.footnote2,
+                color = colors.onSurfaceVariantSummary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -487,7 +487,7 @@ private fun BookshelfBookRow(
                         .clickable(onClick = onTogglePin)
                         // 可点击区内边距：触控热区 ≥ 文字视觉尺寸，圆屏边缘误触率显著降低
                         .padding(horizontal = 4.dp, vertical = 6.dp),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MiuixTheme.textStyles.footnote2,
                     color = colors.primary
                 )
                 Spacer(modifier = Modifier.width(2.dp))
@@ -496,8 +496,8 @@ private fun BookshelfBookRow(
                     modifier = Modifier
                         .clickable { if (isPendingDelete) onConfirmDelete() else onRequestDelete() }
                         .padding(horizontal = 4.dp, vertical = 6.dp),
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = if (isPendingDelete) FontWeight.Bold else FontWeight.Normal),
-                    color = if (isPendingDelete) colors.error else colors.onSurfaceVariant.copy(alpha = 0.75f)
+                    style = MiuixTheme.textStyles.footnote2.copy(fontWeight = if (isPendingDelete) FontWeight.Bold else FontWeight.Normal),
+                    color = if (isPendingDelete) colors.error else colors.onSurfaceVariantSummary.copy(alpha = 0.75f)
                 )
             }
         }
@@ -521,13 +521,13 @@ fun LoadingScreen() {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     text = "正在打开",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    style = MiuixTheme.textStyles.footnote2,
+                    color = MiuixTheme.colorScheme.primary
                 )
                 Text(
                     text = "加载中…",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MiuixTheme.textStyles.body1,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary
                 )
             }
         }

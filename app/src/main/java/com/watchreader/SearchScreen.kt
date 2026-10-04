@@ -19,9 +19,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,7 +51,7 @@ fun SearchScreen(
 ) {
     BackHandler(onBack = onBack)
 
-    val colorScheme = MaterialTheme.colorScheme
+    val colorScheme = MiuixTheme.colorScheme
     val bgColor = colorScheme.background.toArgb()
 
     var query by remember { mutableStateOf("") }
@@ -65,14 +65,15 @@ fun SearchScreen(
                 .padding(horizontal = 24.dp, vertical = 52.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            OutlinedTextField(
+            TextField(
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = { Text("搜索正文关键词", fontSize = 12.sp) },
-                textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
-                shape = WatchShapes.Row
+                label = "搜索正文关键词",
+                useLabelAsPlaceholder = true,
+                textStyle = MiuixTheme.textStyles.body1.copy(fontSize = 12.sp),
+                cornerRadius = WatchShapes.Row
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -102,8 +103,8 @@ fun SearchScreen(
                         LoadingIndicator(size = 26.dp, strokeWidth = 2.4.dp)
                         Text(
                             text = "正在逐章扫描…",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colorScheme.onSurfaceVariant
+                            style = MiuixTheme.textStyles.footnote2,
+                            color = colorScheme.onSurfaceVariantSummary
                         )
                     }
                 }
@@ -112,8 +113,8 @@ fun SearchScreen(
                     Text(
                         text = "找到 ${searchResults.size} 处" +
                             if (searchResults.size >= BookSearchEngine.MAX_RESULTS) "（已达上限）" else "",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colorScheme.onSurfaceVariant
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = colorScheme.onSurfaceVariantSummary
                     )
                     SearchHitListView(
                         hits = searchResults,
@@ -129,13 +130,13 @@ fun SearchScreen(
                     ) {
                         Text(
                             text = "未找到“${query.trim()}”",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontSize = 12.sp),
-                            color = colorScheme.onSurfaceVariant
+                            style = MiuixTheme.textStyles.body1.copy(fontSize = 12.sp),
+                            color = colorScheme.onSurfaceVariantSummary
                         )
                         Text(
                             text = "换个关键词试试",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colorScheme.onSurfaceVariant
+                            style = MiuixTheme.textStyles.footnote2,
+                            color = colorScheme.onSurfaceVariantSummary
                         )
                     }
                 }
@@ -164,7 +165,7 @@ private fun SearchHitListView(
     bgColor: Int,
     onHitClick: (SearchHit) -> Unit
 ) {
-    val colorScheme = MaterialTheme.colorScheme
+    val colorScheme = MiuixTheme.colorScheme
     AndroidView(
         modifier = Modifier.fillMaxSize(),
         factory = { context ->
@@ -204,7 +205,7 @@ private fun SearchHitListView(
 
 private class SearchHitListAdapter(
     var hits: List<SearchHit>,
-    var colorScheme: androidx.compose.material3.ColorScheme,
+    var colorScheme: top.yukonga.miuix.kmp.theme.Colors,
     val density: Float,
     val onHitClick: (SearchHit) -> Unit
 ) : BaseAdapter() {

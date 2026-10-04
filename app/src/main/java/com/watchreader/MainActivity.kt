@@ -20,8 +20,6 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -35,6 +33,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.abs
 
 /**
@@ -117,7 +116,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsState()
-            val colorScheme = colorSchemeOf(ThemeMode.fromValue(uiState.themeMode))
+            val colors = watchColorsOf(ThemeMode.fromValue(uiState.themeMode))
 
             // 动态同步 Window 底层 DecorView 背景色与硬件独立屏幕亮度。
             // 底色必须带变更守卫：无守卫时每次重组（搜索逐键 / 亮度步进 / 阅读时长 tick）
@@ -125,24 +124,21 @@ class MainActivity : ComponentActivity() {
             val lastDecorBackground = remember { intArrayOf(Int.MIN_VALUE) }
             SideEffect {
                 BrightnessManager.applyToWindow(this@MainActivity, uiState.appBrightness)
-                val bgArgb = colorScheme.background.toArgb()
+                val bgArgb = colors.background.toArgb()
                 if (bgArgb != lastDecorBackground[0]) {
                     lastDecorBackground[0] = bgArgb
                     window.decorView.setBackgroundColor(bgArgb)
                 }
             }
 
-            MaterialTheme(
-                colorScheme = colorScheme,
-                typography = WatchTypography
+            // 主题根节点：应用自持 ThemeMode（DataStore 持久化），显式注入色板与排版，
+            // 不走 ThemeController 的系统明暗 / 动态取色管线
+            MiuixTheme(
+                colors = colors,
+                textStyles = WatchTextStyles
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
-                    Surface(
-                        modifier = Modifier.fillMaxSize(),
-                        color = Color.Transparent // 移除重复不透明底色，交由底色层 window.decorView 承载，降低 Overdraw
-                    ) {
-                        AppContent(uiState)
-                    }
+                    AppContent(uiState)
 
                     // 极暗纯黑 Alpha 硬件加速遮罩（仅当亮度低于 12% 时激活，不拦截手势）
                     val overlayAlpha = BrightnessManager.calculateDarkOverlayAlpha(uiState.appBrightness)

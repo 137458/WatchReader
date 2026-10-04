@@ -21,9 +21,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -108,10 +107,10 @@ fun ChapterListScreen(
         }
     })
 
-    val colorScheme = MaterialTheme.colorScheme
+    val colorScheme = MiuixTheme.colorScheme
     val bgColor = colorScheme.background.toArgb()
     val activeColor = colorScheme.primary.toArgb()
-    val normalColor = colorScheme.onSurfaceVariant.toArgb()
+    val normalColor = colorScheme.onSurfaceVariantSummary.toArgb()
 
     val noIndication = remember { MutableInteractionSource() }
     var currentListView by remember { mutableStateOf<ListView?>(null) }
@@ -196,8 +195,8 @@ fun ChapterListScreen(
                 ) {
                     Text(
                         text = "暂无书签\n可在阅读菜单中点击“存为书签”",
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 18.sp),
-                        color = colorScheme.onSurfaceVariant,
+                        style = MiuixTheme.textStyles.body1.copy(fontSize = 12.sp, lineHeight = 18.sp),
+                        color = colorScheme.onSurfaceVariantSummary,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
                     )
                 }
@@ -465,14 +464,14 @@ fun ChapterListScreen(
  */
 @Composable
 private fun TabCapsule(label: String, selected: Boolean, onClick: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
+    val colors = MiuixTheme.colorScheme
     val pillAlpha by animateFloatAsState(
         targetValue = if (selected) 1f else 0f,
         animationSpec = tween(WatchMotion.DUR_SWAP_IN),
         label = "tab-pill"
     )
     val textColor by animateColorAsState(
-        targetValue = if (selected) colors.onPrimary else colors.onSurfaceVariant,
+        targetValue = if (selected) colors.onPrimary else colors.onSurfaceVariantSummary,
         animationSpec = tween(WatchMotion.DUR_SWAP_IN),
         label = "tab-text"
     )
@@ -495,7 +494,7 @@ private fun TabCapsule(label: String, selected: Boolean, onClick: () -> Unit) {
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+            style = MiuixTheme.textStyles.footnote2.copy(fontSize = 12.sp, fontWeight = FontWeight.Bold),
             color = textColor
         )
     }
@@ -504,14 +503,14 @@ private fun TabCapsule(label: String, selected: Boolean, onClick: () -> Unit) {
 private class ChapterListAdapter(
     var chapters: List<Chapter>,
     var currentChapterIndex: Int,
-    var colorScheme: androidx.compose.material3.ColorScheme,
+    var colorScheme: top.yukonga.miuix.kmp.theme.Colors,
     val density: Float
 ) : BaseAdapter() {
 
     // 缓存两级卡片背景，杜绝快速滚动期逐帧 GradientDrawable 分配引发的 GC 抖动
     private var cachedNormalBg: android.graphics.drawable.GradientDrawable? = null
     private var cachedCurrentBg: android.graphics.drawable.GradientDrawable? = null
-    private var drawableCacheKey: androidx.compose.material3.ColorScheme? = null
+    private var drawableCacheKey: top.yukonga.miuix.kmp.theme.Colors? = null
 
     private fun cachedDrawables(): Pair<android.graphics.drawable.GradientDrawable, android.graphics.drawable.GradientDrawable> {
         if (drawableCacheKey !== colorScheme || cachedNormalBg == null) {
@@ -623,7 +622,7 @@ private class ChapterListAdapter(
 
 private class BookmarkListAdapter(
     var bookmarks: List<Bookmark>,
-    var colorScheme: androidx.compose.material3.ColorScheme,
+    var colorScheme: top.yukonga.miuix.kmp.theme.Colors,
     val density: Float,
     val onBookmarkClick: (Bookmark) -> Unit,
     val onDeleteBookmark: (Bookmark) -> Unit
@@ -638,10 +637,10 @@ private class BookmarkListAdapter(
         val context = parent.context
         val bm = bookmarks[position]
         // 书签标题用 tertiary 书签琥珀：与目录条目（primary）在色彩语义上分离
-        val activeColor = colorScheme.tertiary.toArgb()
+        val activeColor = colorScheme.tertiaryContainerVariant.toArgb()
         val surfaceVariantColor = colorScheme.surfaceVariant.toArgb()
         val onSurfaceColor = colorScheme.onSurface.toArgb()
-        val normalColor = colorScheme.onSurfaceVariant.toArgb()
+        val normalColor = colorScheme.onSurfaceVariantSummary.toArgb()
         val errorColor = colorScheme.error.toArgb()
 
         val container = LinearLayout(context).apply {

@@ -11,10 +11,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
+import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
+import top.yukonga.miuix.kmp.squircle.squircleSurface
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,7 +65,7 @@ fun WifiTransferScreen(
 ) {
     BackHandler(onBack = onBack)
 
-    val colorScheme = MaterialTheme.colorScheme
+    val colorScheme = MiuixTheme.colorScheme
     val tick = rememberTickHaptic()
 
     // 就绪入场轻振：告知用户服务页已可用
@@ -114,10 +115,11 @@ fun WifiTransferScreen(
             CircularProgressIndicator(
                 progress = animatedProgress,
                 modifier = Modifier.fillMaxSize(),
-                color = colorScheme.primary,
-                trackColor = colorScheme.primary.copy(alpha = 0.12f),
-                strokeWidth = 3.dp,
-                strokeCap = StrokeCap.Round
+                colors = ProgressIndicatorDefaults.progressIndicatorColors(
+                    foregroundColor = colorScheme.primary,
+                    backgroundColor = colorScheme.primary.copy(alpha = 0.12f)
+                ),
+                strokeWidth = 3.dp
             )
         }
 
@@ -136,7 +138,7 @@ fun WifiTransferScreen(
             ) {
                 Text(
                     text = "$progressPercent%",
-                    style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace),
+                    style = MiuixTheme.textStyles.title1.copy(fontFamily = FontFamily.Monospace),
                     color = colorScheme.primary
                 )
 
@@ -160,7 +162,7 @@ fun WifiTransferScreen(
                     text = if (progressPercent >= 99) "已存入书架" else "传输中…",
                     style = TextStyle(
                         fontSize = 10.5.sp,
-                        color = colorScheme.onSurfaceVariant
+                        color = colorScheme.onSurfaceVariantSummary
                     ),
                     textAlign = TextAlign.Center
                 )
@@ -238,8 +240,8 @@ private fun QrCodePanel(
     accessToken: String?,
     uploadedCount: Int
 ) {
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+    val primaryColor = MiuixTheme.colorScheme.primary
+    val onSurfaceVariant = MiuixTheme.colorScheme.onSurfaceVariantSummary
 
     // 二维码载荷携带访问令牌：网页与全部接口调用均凭 token 鉴权，
     // 防止同网段未授权设备或网页直接访问传书服务
@@ -275,8 +277,7 @@ private fun QrCodePanel(
         Box(
             modifier = Modifier
                 .size(86.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(WatchFixed.QrPanelBackground)
+                .squircleSurface(WatchFixed.QrPanelBackground, 9.dp)
                 .padding(4.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -298,7 +299,7 @@ private fun QrCodePanel(
     Box(
         modifier = Modifier
             .clip(WatchShapes.Pill)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM))
+            .background(MiuixTheme.colorScheme.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM))
             .padding(horizontal = 10.dp, vertical = 3.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -333,7 +334,7 @@ private fun QrCodePanel(
  */
 @Composable
 private fun OfflinePanel() {
-    val colorScheme = MaterialTheme.colorScheme
+    val colorScheme = MiuixTheme.colorScheme
 
     Row(verticalAlignment = Alignment.CenterVertically) {
         StaticDot(color = colorScheme.error)
@@ -353,8 +354,7 @@ private fun OfflinePanel() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(WatchShapes.Row)
-            .background(colorScheme.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM))
+            .squircleSurface(colorScheme.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM), WatchShapes.Row)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -367,7 +367,7 @@ private fun OfflinePanel() {
                 style = TextStyle(
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium,
-                    color = colorScheme.onSurfaceVariant
+                    color = colorScheme.onSurfaceVariantSummary
                 ),
                 textAlign = TextAlign.Center
             )
@@ -375,7 +375,7 @@ private fun OfflinePanel() {
                 text = "与手机处于同个局域网即可扫码传书",
                 style = TextStyle(
                     fontSize = 10.sp,
-                    color = colorScheme.onSurfaceVariant
+                    color = colorScheme.onSurfaceVariantSummary
                 ),
                 textAlign = TextAlign.Center
             )

@@ -12,7 +12,7 @@ import android.graphics.Typeface
 import android.os.BatteryManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -46,7 +46,7 @@ fun CurvedChapterHeader(
 ) {
     if (title.isEmpty()) return
 
-    val primaryColor = MaterialTheme.colorScheme.primary
+    val primaryColor = MiuixTheme.colorScheme.primary
     val density = LocalDensity.current
     val textSizePx = with(density) { 11.5.sp.toPx() }
     val insetPx = with(density) { 2.dp.toPx() } // 紧贴圆盘上边缘 2dp
@@ -129,7 +129,7 @@ fun CurvedChapterHeader(
 @Composable
 fun CurvedSideStatusBar(
     modifier: Modifier = Modifier,
-    textColor: Color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+    textColor: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.85f)
 ) {
     val context = LocalContext.current
     var currentTime by remember {

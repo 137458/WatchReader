@@ -28,10 +28,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Divider
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -43,7 +39,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -54,6 +49,14 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import top.yukonga.miuix.kmp.basic.HorizontalDivider
+import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
+import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.squircle.squircleBorder
+import top.yukonga.miuix.kmp.squircle.squircleClip
+import top.yukonga.miuix.kmp.squircle.squircleSurface
+import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
  * WatchReader 腕上设计系统
@@ -100,12 +103,16 @@ object WatchAlpha {
     const val SUBTLE_SCRIM = 0.55f
 }
 
-/** 统一圆角体系 */
+/**
+ * 统一圆角体系：Card / Row / Badge 为超椭圆平滑圆角半径（squircleClip/squircleBorder，
+ * API 33 以下自动降级 RoundedCornerShape）；Pill 为全弧 stadium 胶囊——半径即半高，
+ * 超椭圆连续曲率在整条边均为圆弧的形态上无增益，保留百分比圆角（记录在案的豁免）
+ */
 object WatchShapes {
-    val Card = RoundedCornerShape(18.dp)
-    val Row = RoundedCornerShape(14.dp)
+    val Card = 18.dp
+    val Row = 14.dp
     val Pill = RoundedCornerShape(50)
-    val Badge = RoundedCornerShape(6.dp)
+    val Badge = 6.dp
 }
 
 /**
@@ -154,23 +161,22 @@ fun rememberCrownScrollTarget(key: Any?, onDelta: (Float) -> Boolean) {
 
 /**
  * 发丝描边卡片：surface + 1dp 低透明度轮廓描边，构成腕上卡片层次基元
- * （直绘 clip+底色+描边，不用 M3 OutlinedCard：卡片页每卡省去 Surface 阴影语义
- * 与 BorderStroke 一套机器，书架 / 菜单这类多卡页面的组合开销显著更低）
+ * （直绘 squircleSurface+squircleBorder：填充与裁切共用同一超椭圆轮廓，
+ * 配套描边严格走 squircleBorder，杜绝圆角抗锯齿破缝）
  */
 @Composable
 fun SurfaceCard(
     modifier: Modifier = Modifier,
-    shape: Shape = WatchShapes.Card,
-    containerColor: Color = MaterialTheme.colorScheme.surface,
-    borderColor: Color = MaterialTheme.colorScheme.outlineVariant,
+    cornerRadius: Dp = WatchShapes.Card,
+    containerColor: Color = MiuixTheme.colorScheme.surface,
+    borderColor: Color = MiuixTheme.colorScheme.dividerLine,
     borderWidth: Dp = 1.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
         modifier = modifier
-            .clip(shape)
-            .background(containerColor)
-            .border(borderWidth, borderColor, shape),
+            .squircleSurface(containerColor, cornerRadius)
+            .squircleBorder(borderWidth, borderColor, cornerRadius),
         content = content
     )
 }
@@ -190,7 +196,7 @@ fun PillButton(
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    val colors = MaterialTheme.colorScheme
+    val colors = MiuixTheme.colorScheme
     val isFilled = emphasis == PillEmphasis.Primary || active
     val container = when {
         !enabled -> colors.surfaceVariant.copy(alpha = 0.5f)
@@ -199,7 +205,7 @@ fun PillButton(
         else -> colors.surfaceVariant
     }
     val contentColor = when {
-        !enabled -> colors.onSurfaceVariant.copy(alpha = 0.6f)
+        !enabled -> colors.onSurfaceVariantSummary.copy(alpha = 0.6f)
         isFilled -> colors.onPrimary
         emphasis == PillEmphasis.Outline -> colors.primary
         else -> colors.onSurface
@@ -231,7 +237,7 @@ fun PillButton(
     ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelLarge,
+            style = MiuixTheme.textStyles.button,
             color = contentColor,
             maxLines = 1
         )
@@ -245,37 +251,37 @@ enum class PillEmphasis { Tonal, Primary, Outline }
 fun SectionLabel(
     text: String,
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.onSurfaceVariant
+    color: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary
 ) {
     Text(
         text = text,
         modifier = modifier,
-        style = MaterialTheme.typography.labelSmall,
+        style = MiuixTheme.textStyles.footnote2,
         color = color,
         letterSpacing = 1.4.sp
     )
 }
 
-/** 发丝分隔线（基于原生 Divider，outlineVariant 预混弱档，三主题免调） */
+/** 发丝分隔线（miuix HorizontalDivider，dividerLine 预混弱档，三主题免调） */
 @Composable
 fun HairlineDivider(modifier: Modifier = Modifier) {
-    Divider(
+    HorizontalDivider(
         modifier = modifier,
         thickness = 1.dp,
-        color = MaterialTheme.colorScheme.outlineVariant
+        color = MiuixTheme.colorScheme.dividerLine
     )
 }
 
 /**
- * 细进度轨：基于原生 LinearProgressIndicator，圆头描边与设计令牌一致；
+ * 细进度轨：miuix LinearProgressIndicator（圆头圆角轨，primary/弱档预混色）；
  * 动画值经 animateFloatAsState 一次性推进（开卷/进度刷新等一次性场景）
  */
 @Composable
 fun ProgressTrack(
     progress: Float,
     modifier: Modifier = Modifier,
-    trackColor: Color = MaterialTheme.colorScheme.outlineVariant,
-    fillColor: Color = MaterialTheme.colorScheme.primary,
+    trackColor: Color = MiuixTheme.colorScheme.dividerLine,
+    fillColor: Color = MiuixTheme.colorScheme.primary,
     height: Dp = 4.dp
 ) {
     val animated by animateFloatAsState(
@@ -286,9 +292,11 @@ fun ProgressTrack(
     LinearProgressIndicator(
         progress = animated,
         modifier = modifier.fillMaxWidth().height(height),
-        color = fillColor,
-        trackColor = trackColor,
-        strokeCap = StrokeCap.Round
+        colors = ProgressIndicatorDefaults.progressIndicatorColors(
+            foregroundColor = fillColor,
+            backgroundColor = trackColor
+        ),
+        height = height
     )
 }
 
@@ -329,7 +337,7 @@ fun LoadingIndicator(
     modifier: Modifier = Modifier,
     size: Dp = 28.dp,
     strokeWidth: Dp = 2.4.dp,
-    color: Color = MaterialTheme.colorScheme.primary
+    color: Color = MiuixTheme.colorScheme.primary
 ) {
     val transition = rememberInfiniteTransition(label = "loading-arc")
     val rotation by transition.animateFloat(
@@ -375,18 +383,18 @@ fun LoadingIndicator(
 fun TextBadge(
     text: String,
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.primary
+    color: Color = MiuixTheme.colorScheme.primary
 ) {
     Box(
         modifier = modifier
-            .clip(WatchShapes.Badge)
-            .border(1.dp, color.copy(alpha = WatchAlpha.ACCENT_BORDER), WatchShapes.Badge)
+            .squircleClip(WatchShapes.Badge)
+            .squircleBorder(1.dp, color.copy(alpha = WatchAlpha.ACCENT_BORDER), WatchShapes.Badge)
             .background(color.copy(alpha = 0.10f))
             .padding(horizontal = 5.dp, vertical = 1.dp)
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.labelSmall,
+            style = MiuixTheme.textStyles.footnote2,
             color = color,
             letterSpacing = 0.6.sp
         )
@@ -397,7 +405,7 @@ fun TextBadge(
 @Composable
 fun PulsingDot(
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.primary
+    color: Color = MiuixTheme.colorScheme.primary
 ) {
     val transition = rememberInfiniteTransition(label = "pulse-dot")
     val alpha by transition.animateFloat(
@@ -410,7 +418,7 @@ fun PulsingDot(
         modifier = modifier
             .size(6.dp)
             .graphicsLayer { this.alpha = alpha }
-            .clip(WatchShapes.Badge)
+            .squircleClip(WatchShapes.Badge)
             .background(color)
     )
 }
@@ -419,12 +427,12 @@ fun PulsingDot(
 @Composable
 fun StaticDot(
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.primary
+    color: Color = MiuixTheme.colorScheme.primary
 ) {
     Box(
         modifier = modifier
             .size(6.dp)
-            .clip(WatchShapes.Badge)
+            .squircleClip(WatchShapes.Badge)
             .background(color)
     )
 }
@@ -440,7 +448,7 @@ fun EdgeFadeMask(
     edge: Alignment.Vertical,
     modifier: Modifier = Modifier,
     height: Dp = 48.dp,
-    color: Color = MaterialTheme.colorScheme.background
+    color: Color = MiuixTheme.colorScheme.background
 ) {
     val brush = remember(color, edge) {
         if (edge == Alignment.Top) {

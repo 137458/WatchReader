@@ -9,9 +9,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import top.yukonga.miuix.kmp.squircle.squircleBackground
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -114,7 +114,7 @@ fun ArcSeekOverlay(
 ) {
     if (chapters.size <= 1) return
 
-    val primaryColor = MaterialTheme.colorScheme.primary
+    val primaryColor = MiuixTheme.colorScheme.primary
     val totalChapters = chapters.size
 
     // 纯绘制组件：手势识别由阅读页原生触摸管线（ArcSeekGestureRecognizer）承担，
@@ -181,10 +181,7 @@ fun ArcSeekOverlay(
             Box(
                 modifier = Modifier
                     .padding(horizontal = 32.dp)
-                    .background(
-                        color = WatchFixed.HudScrim,
-                        shape = RoundedCornerShape(18.dp)
-                    )
+                    .squircleBackground(WatchFixed.HudScrim, 18.dp)
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {

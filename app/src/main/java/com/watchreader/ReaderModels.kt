@@ -8,9 +8,10 @@ import kotlin.math.abs
 enum class ThemeMode(val value: Int) {
     PARCHMENT(0),
     DARK(1),
-    RED_NIGHT(2);
+    RED_NIGHT(2),
+    MIUIX(3);
 
-    /** 是否属于深色系（极光黑 / 红光夜视）—— 由主题本身派生，杜绝第二个"深色"状态量 */
+    /** 是否属于深色系（极光黑 / 红光夜视 / HyperOS）—— 由主题本身派生，杜绝第二个"深色"状态量 */
     val isDark: Boolean get() = this != PARCHMENT
 
     companion object {
