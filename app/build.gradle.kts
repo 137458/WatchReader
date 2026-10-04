@@ -1,11 +1,12 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
 }
 
 android {
     namespace = "com.watchreader"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.watchreader"
@@ -47,22 +48,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         compose = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8"
     }
 }
 
 dependencies {
-    // Compose BOM — 统一管理 Compose 版本
-    val composeBom = platform("androidx.compose:compose-bom:2024.01.00")
+    // Compose BOM — 统一管理 Compose 版本（升级至 Kotlin 2.4 同期稳定线，满足 miuix 基线）
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
 
     // 核心 Compose UI
@@ -72,11 +65,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
 
     // Activity Compose
-    implementation("androidx.activity:activity-compose:1.8.2")
+    implementation("androidx.activity:activity-compose:1.13.0")
 
-    // Lifecycle
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
+    // Lifecycle（与 miuix 0.9.4 传递基线对齐）
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
 
     // DocumentFile
     implementation("androidx.documentfile:documentfile:1.0.1")
@@ -97,4 +90,10 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("net.sf.kxml:kxml2:2.3.0")
     testImplementation("org.json:json:20240303")
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
