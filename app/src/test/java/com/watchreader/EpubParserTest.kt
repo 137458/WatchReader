@@ -178,6 +178,82 @@ class EpubParserTest {
     }
 
     @Test
+    fun testBomPrefixedXmlParsing() {
+        // 回归：OPF / NCX / container.xml 带 UTF-8 BOM（EF BB BF）的 EPUB 极为常见。
+        // 解析入口若不剥离 BOM，kxml2 会在 <?xml 声明前抛 Unexpected token，
+        // OPF 被误判为空清单，整本书报「EPUB 中未找到可阅读的章节」。
+        val bom = "\uFEFF"
+        val containerXml = bom + """
+            <?xml version="1.0"?>
+            <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+                <rootfiles>
+                    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+                </rootfiles>
+            </container>
+        """.trimIndent()
+
+        val opfXml = bom + """
+            <?xml version="1.0" encoding="utf-8"?>
+            <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="BookId">
+                <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title>BOM带宽测试传.epub</dc:title>
+                    <dc:creator>BOM测试作者</dc:creator>
+                </metadata>
+                <manifest>
+                    <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+                    <item id="ch1" href="Text/ch1.xhtml" media-type="application/xhtml+xml"/>
+                </manifest>
+                <spine toc="ncx">
+                    <itemref idref="ch1"/>
+                </spine>
+            </package>
+        """.trimIndent()
+
+        val ncxXml = bom + """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+                <navMap>
+                    <navPoint id="np-1" playOrder="1">
+                        <navLabel><text>第一章 起点</text></navLabel>
+                        <content src="Text/ch1.xhtml"/>
+                    </navPoint>
+                </navMap>
+            </ncx>
+        """.trimIndent()
+
+        val ch1Xhtml = bom + "<html><body><h1>第一章 起点</h1><p>BOM 也存在于正文时应被剥离。</p></body></html>"
+
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zos ->
+            zos.putNextEntry(ZipEntry("META-INF/container.xml"))
+            zos.write(containerXml.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("OEBPS/content.opf"))
+            zos.write(opfXml.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("OEBPS/toc.ncx"))
+            zos.write(ncxXml.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+
+            zos.putNextEntry(ZipEntry("OEBPS/Text/ch1.xhtml"))
+            zos.write(ch1Xhtml.toByteArray(Charsets.UTF_8))
+            zos.closeEntry()
+        }
+
+        val zipBytes = baos.toByteArray()
+        val meta = EpubParser.parseEpubFromStream({ ByteArrayInputStream(zipBytes) }, "默认书名")
+
+        assertEquals("BOM带宽测试传", meta.title)
+        assertEquals("BOM测试作者", meta.author)
+        assertEquals(1, meta.chapters.size)
+        assertEquals("第一章 起点", meta.chapters[0].title)
+        assertTrue("带 BOM 的正文不得残留 U+FEFF", !meta.chapters[0].title.contains('\uFEFF'))
+        assertTrue(meta.totalChars > 0)
+    }
+
+    @Test
     fun testSyntheticEpub3ParsingWithLandmarksFilter() {
         val containerXml = """
             <?xml version="1.0"?>
