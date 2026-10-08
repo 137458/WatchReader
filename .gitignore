@@ -49,3 +49,6 @@ docs/
 CONTEXT.md
 AGENTS.md
 .zcodeignore
+
+# Local agent workspace config
+.zcode/

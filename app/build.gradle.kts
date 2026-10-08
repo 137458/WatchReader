@@ -12,8 +12,8 @@ android {
         applicationId = "com.watchreader"
         minSdk = 27          // Android 8.1，覆盖绝大多数手表
         targetSdk = 34       // 编译与目标 SDK 34
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
     }
 
     lint {
@@ -61,7 +61,6 @@ dependencies {
     // 核心 Compose UI
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-text")
-    implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui-tooling-preview")
 
     // Activity Compose
