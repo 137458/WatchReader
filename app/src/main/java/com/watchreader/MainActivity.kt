@@ -407,6 +407,8 @@ class MainActivity : ComponentActivity() {
                     chapters = uiState.chapters,
                     searchResults = uiState.searchResults,
                     isSearching = uiState.isSearching,
+                    scannedChapters = uiState.searchScannedChapters,
+                    totalChapters = uiState.searchTotalChapters,
                     onSearch = { viewModel.searchInBook(it) },
                     onHitClick = { viewModel.jumpToSearchHit(it) },
                     onBack = { viewModel.handleBack() }

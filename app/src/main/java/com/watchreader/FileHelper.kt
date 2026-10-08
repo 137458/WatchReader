@@ -7,6 +7,7 @@ import androidx.compose.runtime.Immutable
 import java.io.BufferedInputStream
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.io.Reader
 import java.nio.charset.Charset
 
 /**
@@ -239,5 +240,69 @@ fun readChapterChunkFromUri(
         } ?: ""
     } catch (_: Exception) {
         ""
+    }
+}
+
+/**
+ * 全书单趟顺序字符流（BOM 处理与 [readChapterChunkFromUri] 完全一致）：
+ * 供书内全文搜索等需要线性遍历全书的场景。逐章 skip 定位是"解码后丢弃"，
+ * 全书代价为字符量 × 章节数；单趟顺序解码把总代价压回字符量本身。
+ * 调用方负责 close（同时释放底层文件描述符）。
+ */
+fun openBookCharStream(context: Context, uri: Uri, encoding: String): Reader? {
+    val safeEncoding = if (encoding.isNotEmpty()) encoding else "UTF-8"
+    val cr = context.contentResolver
+
+    fun buildReader(stream: java.io.InputStream): Reader {
+        val buffered = BufferedInputStream(stream, 32768)
+        buffered.mark(4)
+        val head = ByteArray(4)
+        val probed = buffered.read(head, 0, 4)
+        val hasUtf8Bom = probed >= 3 &&
+                head[0] == 0xEF.toByte() && head[1] == 0xBB.toByte() && head[2] == 0xBF.toByte()
+        buffered.reset()
+        if (hasUtf8Bom && safeEncoding == "UTF-8") {
+            var skipped = 0
+            while (skipped < 3) {
+                if (buffered.read() < 0) break
+                skipped++
+            }
+        }
+        return BufferedReader(InputStreamReader(buffered, Charset.forName(safeEncoding)), 32768)
+    }
+
+    // pfd 不能在返回前关闭：Reader 生命周期长于本函数，关闭链一并接管 pfd
+    fun closeWithReader(reader: Reader, pfd: android.os.ParcelFileDescriptor?): Reader =
+        object : Reader() {
+            override fun read(cbuf: CharArray, off: Int, len: Int): Int =
+                reader.read(cbuf, off, len)
+
+            override fun ready(): Boolean = reader.ready()
+
+            override fun close() {
+                try {
+                    reader.close()
+                } finally {
+                    pfd?.close()
+                }
+            }
+        }
+
+    return try {
+        val pfd = cr.openFileDescriptor(uri, "r")
+        if (pfd != null) {
+            try {
+                closeWithReader(buildReader(java.io.FileInputStream(pfd.fileDescriptor)), pfd)
+            } catch (t: Throwable) {
+                runCatching { pfd.close() }
+                throw t
+            }
+        } else null
+    } catch (_: Exception) {
+        null
+    } ?: try {
+        cr.openInputStream(uri)?.let { buildReader(it) }
+    } catch (_: Exception) {
+        null
     }
 }

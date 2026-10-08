@@ -11,7 +11,7 @@ import top.yukonga.miuix.kmp.theme.defaultTextStyles
 import top.yukonga.miuix.kmp.theme.lightColorScheme
 
 /**
- * 主题令牌系统（羊皮纸 / AMOLED 纯黑 / 深红夜视 / HyperOS）
+ * 主题令牌系统（羊皮纸 / AMOLED 纯黑 / 深红夜视 / HyperOS 深色 / HyperOS 亮色）
  *
  * 结构延续 ADR-013：每主题少量命名基色令牌（背景 / 卡片 / 按钮 / 墨字 / 次级墨 /
  * 强调蓝 / 格式绿 / 书签琥珀）→ 全量 miuix [Colors] 角色映射（迁移记录见 ADR-014）：
@@ -23,8 +23,13 @@ import top.yukonga.miuix.kmp.theme.lightColorScheme
  *
  * 对比度基线（WCAG 2.1，逐对实测，同 ADR-013）：
  * - 命名令牌本身未变，此前实测的对比度对（正文 ≥ 4.5:1）在新角色映射下原值成立；
- * - HyperOS 档直接采用 miuix darkColorScheme() 官方默认色板（厂商设计基线）；
+ * - HyperOS 深浅两档直接采用 miuix darkColorScheme()/lightColorScheme() 官方默认色板（厂商设计基线）；
  * - outline 作为发丝描边按装饰豁免，结构分离由 surface 三档明度与描边共同承担。
+ *
+ * miuix 组件默认取色纪律：miuix TextField 容器默认取 secondaryContainer（本应用
+ * 将其映射为格式绿容器语义，作输入面会串色），全部 TextField 调用点必须显式传
+ * textFieldColors(backgroundColor=surfaceVariant, labelColor=onSurfaceVariantSummary,
+ * borderColor=primary)。
  */
 
 // ═══════════════════ 亮色羊皮纸（日间护眼） ═══════════════════
@@ -190,17 +195,19 @@ private val WatchRedNightColors: Colors = darkColorScheme(
     onErrorContainer = Color(0xFFFFD9DE)
 )
 
-// ═══════════════════ HyperOS（miuix 官方深色默认色板） ═══════════════════
-// 直接采用 miuix darkColorScheme() 原厂默认（HyperOS 深色观感：#242424 底 + 品牌蓝），
+// ═══════════════════ HyperOS（miuix 官方默认色板） ═══════════════════
+// 直接采用 miuix 原厂默认（深色 #242424 底 + 品牌蓝，亮色白底同源品牌蓝），
 // 零定制即零偏移；书签琥珀语义在本档沿用其 tertiaryContainerVariant 默认。
 private val MiuixDarkColors: Colors = darkColorScheme()
+private val MiuixLightColors: Colors = lightColorScheme()
 
-/** 四套主题共用入口：按 [ThemeMode] 取对应 miuix [Colors]（MainActivity 唯一切换点） */
+/** 五套主题共用入口：按 [ThemeMode] 取对应 miuix [Colors]（MainActivity 唯一切换点） */
 fun watchColorsOf(mode: ThemeMode): Colors = when (mode) {
     ThemeMode.PARCHMENT -> WatchColors
     ThemeMode.DARK -> WatchDarkColors
     ThemeMode.RED_NIGHT -> WatchRedNightColors
     ThemeMode.MIUIX -> MiuixDarkColors
+    ThemeMode.MIUIX_LIGHT -> MiuixLightColors
 }
 
 /**

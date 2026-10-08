@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,6 +46,8 @@ fun SearchScreen(
     chapters: List<Chapter>,
     searchResults: List<SearchHit>,
     isSearching: Boolean,
+    scannedChapters: Int,
+    totalChapters: Int,
     onSearch: (String) -> Unit,
     onHitClick: (SearchHit) -> Unit,
     onBack: () -> Unit
@@ -73,7 +76,12 @@ fun SearchScreen(
                 label = "搜索正文关键词",
                 useLabelAsPlaceholder = true,
                 textStyle = MiuixTheme.textStyles.body1.copy(fontSize = 12.sp),
-                cornerRadius = WatchShapes.Row
+                cornerRadius = WatchShapes.Row,
+                colors = TextFieldDefaults.textFieldColors(
+                    backgroundColor = colorScheme.surfaceVariant,
+                    labelColor = colorScheme.onSurfaceVariantSummary,
+                    borderColor = colorScheme.primary
+                )
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -94,6 +102,25 @@ fun SearchScreen(
             }
 
             when {
+                // 有命中即出列表（边扫边出），扫描中附进度行
+                searchResults.isNotEmpty() -> {
+                    Text(
+                        text = buildString {
+                            append("找到 ${searchResults.size} 处")
+                            if (searchResults.size >= BookSearchEngine.MAX_RESULTS) append("（已达上限）")
+                            if (isSearching) append(" · 扫描 $scannedChapters/$totalChapters 章")
+                        },
+                        style = MiuixTheme.textStyles.footnote2,
+                        color = colorScheme.onSurfaceVariantSummary
+                    )
+                    SearchHitListView(
+                        hits = searchResults,
+                        bgColor = bgColor,
+                        onHitClick = onHitClick,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
                 isSearching -> {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -102,25 +129,11 @@ fun SearchScreen(
                     ) {
                         LoadingIndicator(size = 26.dp, strokeWidth = 2.4.dp)
                         Text(
-                            text = "正在逐章扫描…",
+                            text = "正在扫描 $scannedChapters/$totalChapters 章…",
                             style = MiuixTheme.textStyles.footnote2,
                             color = colorScheme.onSurfaceVariantSummary
                         )
                     }
-                }
-
-                searchResults.isNotEmpty() -> {
-                    Text(
-                        text = "找到 ${searchResults.size} 处" +
-                            if (searchResults.size >= BookSearchEngine.MAX_RESULTS) "（已达上限）" else "",
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = colorScheme.onSurfaceVariantSummary
-                    )
-                    SearchHitListView(
-                        hits = searchResults,
-                        bgColor = bgColor,
-                        onHitClick = onHitClick
-                    )
                 }
 
                 searched -> {
@@ -163,11 +176,12 @@ fun SearchScreen(
 private fun SearchHitListView(
     hits: List<SearchHit>,
     bgColor: Int,
-    onHitClick: (SearchHit) -> Unit
+    onHitClick: (SearchHit) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val colorScheme = MiuixTheme.colorScheme
     AndroidView(
-        modifier = Modifier.fillMaxSize(),
+        modifier = modifier,
         factory = { context ->
             val density = context.resources.displayMetrics.density
             val listView = ListView(context).apply {

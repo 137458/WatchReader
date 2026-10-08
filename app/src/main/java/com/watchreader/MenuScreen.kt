@@ -97,6 +97,7 @@ fun MenuScreen(
             ThemeMode.DARK -> "极光黑"
             ThemeMode.RED_NIGHT -> "红光夜视"
             ThemeMode.MIUIX -> "HyperOS"
+            ThemeMode.MIUIX_LIGHT -> "HyperOS 亮"
         }
     }
     val tapLabel = remember(tapPageArea) {

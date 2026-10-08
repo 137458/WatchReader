@@ -9,10 +9,11 @@ enum class ThemeMode(val value: Int) {
     PARCHMENT(0),
     DARK(1),
     RED_NIGHT(2),
-    MIUIX(3);
+    MIUIX(3),
+    MIUIX_LIGHT(4);
 
-    /** 是否属于深色系（极光黑 / 红光夜视 / HyperOS）—— 由主题本身派生，杜绝第二个"深色"状态量 */
-    val isDark: Boolean get() = this != PARCHMENT
+    /** 是否属于深色系（极光黑 / 红光夜视 / HyperOS 深色）—— 由主题本身派生，杜绝第二个"深色"状态量 */
+    val isDark: Boolean get() = this == DARK || this == RED_NIGHT || this == MIUIX
 
     companion object {
         fun fromValue(value: Int): ThemeMode = entries.firstOrNull { it.value == value } ?: PARCHMENT
@@ -271,6 +272,72 @@ object BookSearchEngine {
         }
         if (e < body.length) sb.append('…')
         return sb.toString().trim()
+    }
+}
+
+/**
+ * 流式章节切片装配器（纯类）：全书单趟解码时按字符偏移边界切出各章原文切片
+ *
+ * 搜索扫描 O(n²)→O(n) 的核心改造件：旧路径每章单独打开文件并从头 skip 解码到
+ * 目标偏移（Reader skip = 解码后丢弃），全书扫描代价是字符量 × 章节数；本装配器
+ * 配合顺序解码器，把全书解码压缩为单趟，切片语义与逐章装载完全一致
+ * （章节 i 占据半开区间 [前一边界, 本边界)，末章右端为全书总字符长）。
+ *
+ * 用法：顺序 feed 解码块 → 每次喂入后 drain 取走已完成切片 → 流结束后 finish()
+ * 冲刷末章；finish 与 drain 均可重复调用且幂等。
+ */
+class ChapterSliceAssembler(chapterEndOffsets: IntArray) {
+
+    private val ends = chapterEndOffsets.copyOf()
+    private var nextChapter = 0
+    private var currentStart = 0
+    private var buffer = StringBuilder()
+    private var drained: MutableList<Pair<Int, String>> = mutableListOf()
+
+    /** 喂入一段顺序解码的字符块（[offset, offset + length) 为块内窗口） */
+    fun feed(chunk: CharArray, offset: Int, length: Int) {
+        if (nextChapter >= ends.size || length <= 0) return
+        var pos = offset
+        val end = offset + length
+        while (pos < end && nextChapter < ends.size) {
+            val boundary = ends[nextChapter]
+            val remainingToBoundary = boundary - (currentStart + buffer.length)
+            if (remainingToBoundary <= 0) {
+                // 当前章已到边界：封板并推进下一章（空章节在此产出空切片）
+                completed(Pair(nextChapter, buffer.toString()))
+                nextChapter++
+                currentStart = boundary
+                buffer = StringBuilder()
+                continue
+            }
+            val take = minOf(remainingToBoundary, end - pos)
+            buffer.append(chunk, pos, take)
+            pos += take
+        }
+    }
+
+    /** 流结束：把残段冲刷为当前章，其余未触达章节按空切片补齐（实际解码截短时不丢章序） */
+    fun finish() {
+        if (nextChapter < ends.size) {
+            completed(Pair(nextChapter, buffer.toString()))
+            nextChapter++
+            buffer = StringBuilder()
+            while (nextChapter < ends.size) {
+                completed(Pair(nextChapter, ""))
+                nextChapter++
+            }
+        }
+    }
+
+    private fun completed(slice: Pair<Int, String>) {
+        drained.add(slice)
+    }
+
+    /** 取走已完成切片（取走即清空，可安全重复调用） */
+    fun drain(): List<Pair<Int, String>> {
+        val out: List<Pair<Int, String>> = drained
+        drained = mutableListOf()
+        return out
     }
 }
 

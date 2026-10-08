@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.TextFieldDefaults
 import top.yukonga.miuix.kmp.squircle.squircleSurface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -258,7 +259,14 @@ fun BookshelfScreen(
             label = "搜索书名",
             useLabelAsPlaceholder = true,
             textStyle = MiuixTheme.textStyles.body1.copy(fontSize = 12.sp),
-            cornerRadius = WatchShapes.Row
+            cornerRadius = WatchShapes.Row,
+            // miuix TextField 默认容器取 secondaryContainer（绿色系容器角色），
+            // 与各主题的中性输入面语义冲突，显式对齐按钮档表面色
+            colors = TextFieldDefaults.textFieldColors(
+                backgroundColor = colors.surfaceVariant,
+                labelColor = colors.onSurfaceVariantSummary,
+                borderColor = colors.primary
+            )
         )
 
         // ── 书库列表 ──

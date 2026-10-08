@@ -81,6 +81,8 @@ data class ReaderUiState(
     val letterSpacing: Int = LetterSpacingMode.STANDARD.value,
     val isSearching: Boolean = false,
     val searchResults: List<SearchHit> = emptyList(),
+    val searchScannedChapters: Int = 0,
+    val searchTotalChapters: Int = 0,
     val infoMessage: String? = null
 )
 
@@ -205,7 +207,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun toggleDarkMode() {
         val current = ThemeMode.fromValue(_uiState.value.themeMode)
-        setThemeMode(if (current == ThemeMode.PARCHMENT) ThemeMode.DARK else ThemeMode.PARCHMENT)
+        // 按主题自身明暗属性定向：亮色档（羊皮纸 / HyperOS 亮）一律去极光黑，反之回羊皮纸
+        setThemeMode(if (current.isDark) ThemeMode.PARCHMENT else ThemeMode.DARK)
     }
 
     /**
@@ -563,8 +566,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * 书内全文搜索：逐章后台扫描（TXT/转换类/EPUB 统一走净化关闭态正文），
-     * 命中即增量上报，全书命中总数受 BookSearchEngine.MAX_RESULTS 封顶
+     * 书内全文搜索：非 EPUB 走全书单趟流式扫描（顺序解码 + [ChapterSliceAssembler]
+     * 边界切片，替代每章从头 skip 解码的 O(n²)），EPUB 逐章读取（各条目独立，
+     * 总代价本就是各章之和）；命中即增量上报，全书命中总数受 MAX_RESULTS 封顶
      */
     fun searchInBook(query: String) {
         val state = _uiState.value
@@ -574,27 +578,60 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         if (chapters.isEmpty() || q.isEmpty()) return
 
         searchJob?.cancel()
-        _uiState.update { it.copy(isSearching = true, searchResults = emptyList()) }
+        _uiState.update {
+            it.copy(
+                isSearching = true,
+                searchResults = emptyList(),
+                searchScannedChapters = 0,
+                searchTotalChapters = chapters.size
+            )
+        }
         searchJob = viewModelScope.launch {
             val hits = mutableListOf<SearchHit>()
             try {
                 withContext(Dispatchers.IO) {
-                    for ((idx, chapter) in chapters.withIndex()) {
-                        if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
-                        val content = loadChapterContentForSearch(uri, chapters, idx)
-                        if (content.formattedBody.isNotEmpty()) {
-                            hits += BookSearchEngine.findMatches(
-                                body = content.formattedBody,
-                                query = q,
-                                bodyStartInRaw = content.rawParagraphStarts.firstOrNull() ?: 0,
-                                baseCharOffset = content.startCharOffset,
-                                chapterIndex = idx,
-                                chapterTitle = chapter.title,
-                                maxHits = BookSearchEngine.MAX_RESULTS - hits.size
-                            )
-                            _uiState.update { it.copy(searchResults = hits.toList()) }
-                        } else if (idx % 20 == 0) {
-                            _uiState.update { it.copy(searchResults = hits.toList()) }
+                    val totalChars = state.fullTextLength
+                    if (convertedFormat == null && EpubParser.isEpubFile(appCtx, uri)) {
+                        for ((idx, chapter) in chapters.withIndex()) {
+                            if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
+                            scanChapterByLoading(uri, chapters, idx, q, hits)
+                            reportSearchProgress(idx + 1, hits)
+                        }
+                    } else {
+                        val readUri = if (convertedFormat != null) resolveConvertedReadUri(uri) else uri
+                        val ends = IntArray(chapters.size) { i -> endOffsetOf(chapters, i, totalChars) }
+                        val assembler = ChapterSliceAssembler(ends)
+                        val reader = openBookCharStream(appCtx, readUri, currentEncoding)
+                        if (reader == null) {
+                            // 单趟流打开失败（如 provider 不支持 fd）回退逐章装载：坐标域一致，仅慢
+                            for ((idx, chapter) in chapters.withIndex()) {
+                                if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
+                                scanChapterByLoading(uri, chapters, idx, q, hits)
+                                reportSearchProgress(idx + 1, hits)
+                            }
+                        } else {
+                            reader.use { r ->
+                                val buf = CharArray(24576)
+                                while (isActive && hits.size < BookSearchEngine.MAX_RESULTS) {
+                                    val n = r.read(buf)
+                                    if (n < 0) break
+                                    if (n > 0) assembler.feed(buf, 0, n)
+                                    val done = assembler.drain()
+                                    if (done.isNotEmpty()) {
+                                        for ((idx, slice) in done) {
+                                            if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
+                                            scanChapterSlice(slice, chapters, idx, totalChars, q, hits)
+                                        }
+                                        reportSearchProgress(done.last().first + 1, hits)
+                                    }
+                                }
+                                assembler.finish()
+                                for ((idx, slice) in assembler.drain()) {
+                                    if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
+                                    scanChapterSlice(slice, chapters, idx, totalChars, q, hits)
+                                }
+                                reportSearchProgress(chapters.size, hits)
+                            }
                         }
                     }
                 }
@@ -606,8 +643,71 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /** 跳转至搜索命中位置（章节 + 全书原始字符偏移精准定位） */
+    /** 停止全书扫描（离开搜索页 / 跳转命中时调用）：已扫到的命中保留，转圈态立即复位 */
+    fun cancelSearch() {
+        searchJob?.cancel()
+        searchJob = null
+        _uiState.update { it.copy(isSearching = false) }
+    }
+
+    /** 单章装载→匹配（EPUB 与流打开失败的回退路径），坐标语义与流式切片一致 */
+    private suspend fun scanChapterByLoading(
+        uri: Uri,
+        chapters: List<Chapter>,
+        chapterIndex: Int,
+        query: String,
+        hits: MutableList<SearchHit>
+    ) {
+        val content = loadChapterContentForSearch(uri, chapters, chapterIndex)
+        appendSearchHits(content.formattedBody, content.rawParagraphStarts.firstOrNull() ?: 0, content.startCharOffset, chapters, chapterIndex, query, hits)
+    }
+
+    /** 流式切片→与逐章装载同语义的净化关闭态排版→匹配（单趟扫描核心步） */
+    private fun scanChapterSlice(
+        slice: String,
+        chapters: List<Chapter>,
+        chapterIndex: Int,
+        totalChars: Int,
+        query: String,
+        hits: MutableList<SearchHit>
+    ) {
+        if (chapterIndex !in chapters.indices || slice.isEmpty()) return
+        val startOffset = chapters[chapterIndex].charOffset.coerceIn(0, totalChars)
+        val endOffset = endOffsetOf(chapters, chapterIndex, totalChars).coerceIn(startOffset, totalChars)
+        val content = formatChapterRawText(slice, chapters, chapterIndex, startOffset, endOffset, cleanTypography = false)
+        appendSearchHits(content.formattedBody, content.rawParagraphStarts.firstOrNull() ?: 0, startOffset, chapters, chapterIndex, query, hits)
+    }
+
+    private fun appendSearchHits(
+        body: String,
+        bodyStartInRaw: Int,
+        baseCharOffset: Int,
+        chapters: List<Chapter>,
+        chapterIndex: Int,
+        query: String,
+        hits: MutableList<SearchHit>
+    ) {
+        if (body.isEmpty()) return
+        hits += BookSearchEngine.findMatches(
+            body = body,
+            query = query,
+            bodyStartInRaw = bodyStartInRaw,
+            baseCharOffset = baseCharOffset,
+            chapterIndex = chapterIndex,
+            chapterTitle = chapters[chapterIndex].title,
+            maxHits = BookSearchEngine.MAX_RESULTS - hits.size
+        )
+    }
+
+    private fun reportSearchProgress(scanned: Int, hits: List<SearchHit>) {
+        _uiState.update {
+            it.copy(searchScannedChapters = scanned, searchResults = hits.toList())
+        }
+    }
+
+    /** 跳转至搜索命中位置（章节 + 全书原始字符偏移精准定位），跳转即停止后台扫描 */
     fun jumpToSearchHit(hit: SearchHit) {
+        cancelSearch()
         goToChapter(hit.chapterIndex, hit.charOffset)
     }
 
@@ -887,7 +987,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun handleBack(): Boolean {
         return when (_uiState.value.screen) {
-            is Screen.Menu, is Screen.ChapterList, is Screen.Rsvp, is Screen.Search -> {
+            is Screen.Menu, is Screen.ChapterList, is Screen.Rsvp -> {
+                returnToReader()
+                true
+            }
+            is Screen.Search -> {
+                // 离开搜索页即停扫：O(n) 后仍不应在阅读/书架页后台空转
+                cancelSearch()
                 returnToReader()
                 true
             }

@@ -30,10 +30,19 @@ class ThemeModeTest {
     }
 
     @Test
-    fun `主题档位共四档 供菜单循环切换取模`() {
-        assertEquals(4, ThemeMode.entries.size)
+    fun `HyperOS 亮色档占据持久化值 4 且属亮色系`() {
+        assertEquals(4, ThemeMode.MIUIX_LIGHT.value)
+        assertEquals(ThemeMode.MIUIX_LIGHT, ThemeMode.fromValue(4))
+        assert(!ThemeMode.MIUIX_LIGHT.isDark)
+    }
+
+    @Test
+    fun `主题档位共五档 供菜单循环切换取模`() {
+        assertEquals(5, ThemeMode.entries.size)
         assertEquals(0, ThemeMode.PARCHMENT.value)
         assertEquals(1, ThemeMode.DARK.value)
         assertEquals(2, ThemeMode.RED_NIGHT.value)
+        assertEquals(3, ThemeMode.MIUIX.value)
+        assertEquals(4, ThemeMode.MIUIX_LIGHT.value)
     }
 }
