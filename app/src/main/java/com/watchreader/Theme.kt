@@ -23,7 +23,9 @@ import top.yukonga.miuix.kmp.theme.lightColorScheme
  *
  * 对比度基线（WCAG 2.1，逐对实测，同 ADR-013）：
  * - 命名令牌本身未变，此前实测的对比度对（正文 ≥ 4.5:1）在新角色映射下原值成立；
- * - HyperOS 深浅两档直接采用 miuix darkColorScheme()/lightColorScheme() 官方默认色板（厂商设计基线）；
+ * - HyperOS 深浅两档以 miuix darkColorScheme()/lightColorScheme() 官方色板为基座，
+ *   对语义绑定角色（品牌蓝 / 格式绿 / 书签琥珀 / 表面层次 / 次级墨）做对比度校准覆写——
+ *   miuix 默认色板不认识这些语义，零覆写会使书签琥珀与格式绿在该档失效（详见覆写块注释）；
  * - outline 作为发丝描边按装饰豁免，结构分离由 surface 三档明度与描边共同承担。
  *
  * miuix 组件默认取色纪律：miuix TextField 容器默认取 secondaryContainer（本应用
@@ -147,7 +149,7 @@ private val RedNightBackground = Color(0xFF000000)
 private val RedNightCardSurface = Color(0xFF0D0303)  // 微红黑底
 private val RedNightCardVariant = Color(0xFF1A0606)  // 按钮深红底
 private val RedNightInkPrimary = Color(0xFFE57373)   // 柔和珊瑚红正文（纯黑底 7.0:1）
-private val RedNightInkSecondary = Color(0xFFBE5B5B) // 次级暗红（纯黑底 4.8:1，夜视下的 AA 下限）
+private val RedNightInkSecondary = Color(0xFFC46363) // 次级暗红（纯黑底 5.3:1 / 按钮底 4.9:1，夜视下仍达 AA）
 private val RedNightAccent = Color(0xFFFF5252)       // 明亮珊瑚红强调（纯黑底 6.6:1）
 private val RedNightGreen = Color(0xFFC86A6A)        // 格式语义（红夜域内取中档，5.7:1）
 private val RedNightAmber = Color(0xFFD97848)        // 书签琥珀→暖橙红（纯黑底 6.7:1）
@@ -195,11 +197,52 @@ private val WatchRedNightColors: Colors = darkColorScheme(
     onErrorContainer = Color(0xFFFFD9DE)
 )
 
-// ═══════════════════ HyperOS（miuix 官方默认色板） ═══════════════════
-// 直接采用 miuix 原厂默认（深色 #242424 底 + 品牌蓝，亮色白底同源品牌蓝），
-// 零定制即零偏移；书签琥珀语义在本档沿用其 tertiaryContainerVariant 默认。
-private val MiuixDarkColors: Colors = darkColorScheme()
-private val MiuixLightColors: Colors = lightColorScheme()
+// ═══════════════════ HyperOS（miuix 官方色板 + 语义校准覆写） ═══════════════════
+// 基座取 miuix 原厂默认（深色 #242424 底 / 亮色白底），对四类角色做语义校准——
+// miuix 默认色板不认识本应用的语义绑定，零覆写在两档下直接失效（ADR-013 纪律优先于像素级复刻）：
+// 1. 品牌蓝同相校准：默认 primary(#277AF7/#3482FF) 对 12sp 按钮字与章名仅 3.6~4.0:1，
+//    沿同一蓝色相调整明度至 ≥5:1（深 #5E9EFF 配黑字 / 亮 #2E6BC4 配白字）；
+// 2. 格式绿 secondary 与书签琥珀 tertiaryContainerVariant：默认值为中性灰/淡蓝白，
+//    书签标题与 TXT 徽章在该档近乎不可见（1.1~1.9:1），覆写为全主题统一的绿/琥珀语义色；
+// 3. 表面层次修正：miuix 深色默认 surface 为纯黑、暗于 background(#242424)，卡片比页面更黑；
+//    亮档 surfaceVariant 为纯白、tonal 按钮失去块面。覆写为 背景→卡片→按钮 三档明度，
+//    与自定义四主题的表面层次同构；
+// 4. 次级墨两档：默认 onSurfaceVariantSummary 为 50% 白/54% 黑，在按钮底上不足 4.5:1，
+//    覆写为 65% 白 / 62% 黑预混档，background/card/button 三层表面全部实测 ≥4.5:1。
+private val MiuixDarkColors: Colors = darkColorScheme(
+    primary = Color(0xFF5E9EFF),
+    onPrimary = Color(0xFF000000),
+    secondary = Color(0xFF4EBA87),
+    onSecondary = Color(0xFF000000),
+    tertiaryContainerVariant = Color(0xFFFFB74D),
+    surface = Color(0xFF2C2C2C),
+    surfaceContainer = Color(0xFF2C2C2C),
+    surfaceVariant = Color(0xFF333333),
+    surfaceContainerHigh = Color(0xFF333333),
+    surfaceContainerHighest = Color(0xFF383838),
+    onBackgroundVariant = Color(0xA6FFFFFF),
+    onSurfaceVariantSummary = Color(0xA6FFFFFF),
+    onSurfaceVariantActions = Color(0xA6FFFFFF),
+    onSurfaceContainerVariant = Color(0xA6FFFFFF),
+    disabledOnSurface = Color(0xA6FFFFFF)
+)
+private val MiuixLightColors: Colors = lightColorScheme(
+    primary = Color(0xFF2E6BC4),
+    onPrimary = Color(0xFFFFFFFF),
+    secondary = Color(0xFF2D6A4F),
+    onSecondary = Color(0xFFFFFFFF),
+    tertiaryContainerVariant = Color(0xFF984607),
+    surface = Color(0xFFF5F5F5),
+    surfaceContainer = Color(0xFFF5F5F5),
+    surfaceVariant = Color(0xFFE9E9E9),
+    surfaceContainerHigh = Color(0xFFEDEDED),
+    surfaceContainerHighest = Color(0xFFE9E9E9),
+    onBackgroundVariant = Color(0x9E000000),
+    onSurfaceVariantSummary = Color(0x9E000000),
+    onSurfaceVariantActions = Color(0x9E000000),
+    onSurfaceContainerVariant = Color(0x9E000000),
+    disabledOnSurface = Color(0x9E000000)
+)
 
 /** 五套主题共用入口：按 [ThemeMode] 取对应 miuix [Colors]（MainActivity 唯一切换点） */
 fun watchColorsOf(mode: ThemeMode): Colors = when (mode) {
@@ -218,9 +261,16 @@ object WatchFixed {
     /** 寻道 HUD 悬浮胶囊底：所有主题恒黑底（悬浮于正文之上，黑底保证任意正文配色下可读） */
     val HudScrim = Color(0xDD000000)
 
+    /** 寻道 HUD 悬浮文字：恒黑底配固定柔白字（主题 primary 为纸底设计，羊皮纸档黑底上仅 2.8:1） */
+    val HudInk = Color(0xFFF0EFEC)
+
     /** 二维码面板底与前景：白底深码是扫码引擎的识别前提，严禁随主题反转 */
     val QrPanelBackground = Color(0xFFFFFFFF)
     val QrPanelInk = Color(0xFF444444)
+
+    /** 二维码码点模块两色（QrCodeGenerator 矩阵绘制）：与面板同源的扫码引擎前置条件 */
+    val QrModuleInk = Color(0xFF000000)
+    val QrModulePaper = Color(0xFFFFFFFF)
 }
 
 /**

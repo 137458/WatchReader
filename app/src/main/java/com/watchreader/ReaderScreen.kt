@@ -280,7 +280,7 @@ fun ReaderScreen(
                         setColor(surfaceVariantColor)
                         cornerRadius = 14 * density
                     }
-                    setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
+                    setPadding((12 * density).toInt(), (12 * density).toInt(), (12 * density).toInt(), (12 * density).toInt())
                     isClickable = true
                     setOnClickListener { onPrevChapter() }
                     addView(prevTv)
@@ -335,7 +335,7 @@ fun ReaderScreen(
                         setColor(surfaceVariantColor)
                         cornerRadius = 14 * density
                     }
-                    setPadding((12 * density).toInt(), (10 * density).toInt(), (12 * density).toInt(), (10 * density).toInt())
+                    setPadding((12 * density).toInt(), (12 * density).toInt(), (12 * density).toInt(), (12 * density).toInt())
                     isClickable = true
                     setOnClickListener { onNextChapter() }
                     addView(nextTv)
@@ -382,36 +382,24 @@ fun ReaderScreen(
                 holder.appliedChromeColor = surfaceVariantColor
                 scrollView.tag = holder
 
-                // 手势交互：支持上下/左右点按翻页、长按呼出菜单、自动滚屏时单击暂停
-                val gestureDetector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
-                    override fun onLongPress(e: MotionEvent) {
-                        autoEngine.stop()
-                        onLongPress()
-                    }
-
-                    override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                        if (isScrolling) return true
-
-                        // 若正在自动滚屏，单击任意位置暂停
-                        if (latestIsAutoScrolling.value) {
-                            onAutoScrollToggle()
-                            return true
-                        }
-
-                        val w = scrollView.width.toFloat()
-                        val h = scrollView.height.toFloat()
-                        if (w <= 0 || h <= 0) return true
-
-                        val action = TapPageHelper.resolveTapAction(e.x, e.y, w, h, latestTapPageArea.value)
-                        val scrollDistance = TapPageHelper.calculateScrollDistance(h, density)
-
-                        when (action) {
+                // 手势交互：支持上下/左右点按翻页、长按呼出菜单、自动滚屏时单击暂停。
+                // 点按走 onSingleTapUp 即触即判：本应用没有双击行为，onSingleTapConfirmed 会让
+                // 最高频的点按翻页每次白等 ~300ms 双击确认窗（腕上"点了没反应"的主要体感来源）
+                val handleTap: (Float, Float) -> Unit = { tapX, tapY ->
+                    val w = scrollView.width.toFloat()
+                    val h = scrollView.height.toFloat()
+                    if (w <= 0f || h <= 0f) {
+                        // 布局未就绪，忽略本次点按
+                    } else if (latestIsAutoScrolling.value) {
+                        onAutoScrollToggle()
+                    } else {
+                        when (TapPageHelper.resolveTapAction(tapX, tapY, w, h, latestTapPageArea.value)) {
                             TapAction.PAGE_UP -> {
-                                scrollView.smoothScrollBy(0, -scrollDistance)
+                                scrollView.smoothScrollBy(0, -TapPageHelper.calculateScrollDistance(h, density))
                                 RotaryHapticManager.performScrollTick(ctx, scrollView)
                             }
                             TapAction.PAGE_DOWN -> {
-                                scrollView.smoothScrollBy(0, scrollDistance)
+                                scrollView.smoothScrollBy(0, TapPageHelper.calculateScrollDistance(h, density))
                                 RotaryHapticManager.performScrollTick(ctx, scrollView)
                             }
                             TapAction.SHOW_MENU -> {
@@ -422,6 +410,16 @@ fun ReaderScreen(
                                 }
                             }
                         }
+                    }
+                }
+                val gestureDetector = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onLongPress(e: MotionEvent) {
+                        autoEngine.stop()
+                        onLongPress()
+                    }
+
+                    override fun onSingleTapUp(e: MotionEvent): Boolean {
+                        handleTap(e.x, e.y)
                         return true
                     }
                 })
@@ -469,10 +467,16 @@ fun ReaderScreen(
                         }
                         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                             if (seekRecognizer.isTracking) {
+                                // 未越过拖动门限的寻道带点按回落为翻页点按：
+                                // 右缘寻道带与翻页热区存在重叠，纯吞掉会形成"点了没反应"死点
+                                val wasTapCandidate = !seekRecognizer.isSeeking
                                 val confirmed = seekRecognizer.onUp()
                                 seekState.isSeeking = false
                                 if (confirmed != null) {
                                     onSeekChapter(confirmed)
+                                    seekHandled = true
+                                } else if (wasTapCandidate && event.actionMasked == MotionEvent.ACTION_UP) {
+                                    handleTap(event.x, event.y)
                                     seekHandled = true
                                 }
                             }
@@ -482,7 +486,8 @@ fun ReaderScreen(
                         }
                     }
 
-                    // 寻道态下不参与点按/长按判定，避免与翻页热区双重触发
+                    // 寻道带内起手的整段手势不参与点按/长按判定（避免拖动双触发）；
+                    // 带内未成形的纯点按已在 UP 分支回落为翻页点按，不再形成死点
                     val tapSuppressed = seekHandled || seekRecognizer.isTracking || seekRecognizer.isSeeking
                     if (!tapSuppressed) {
                         gestureDetector.onTouchEvent(event)
@@ -661,7 +666,7 @@ fun ReaderScreen(
             // 9 点与 3 点方向贴边弧形排布的竖排电量与时间
             CurvedSideStatusBar(
                 modifier = Modifier.fillMaxSize(),
-                textColor = colorScheme.onSurfaceVariantSummary.copy(alpha = 0.85f)
+                textColor = colorScheme.onSurfaceVariantSummary
             )
 
             val bottomProgressAlpha by androidx.compose.animation.core.animateFloatAsState(
@@ -711,12 +716,12 @@ fun ReaderScreen(
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 18.dp)
                         .clip(WatchShapes.Pill)
-                        .background(colorScheme.surfaceVariant.copy(alpha = 0.90f))
+                        .background(colorScheme.surfaceVariant)
                         .clickable(
                             interactionSource = capsuleInteraction,
                             indication = null
                         ) { onAutoScrollToggle() }
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(
                         text = "▶ 自动滚屏 ${autoScrollSpeed.toInt()} px/s",

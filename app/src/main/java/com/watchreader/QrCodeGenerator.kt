@@ -60,6 +60,7 @@ object QrCodeGenerator {
             for (y in 0 until h) {
                 val offset = y * w
                 for (x in 0 until w) {
+                    // 白底深码是扫码引擎识别前提（语义固定色，登记见 Theme.kt WatchFixed.QrModuleInk/Paper）
                     pixels[offset + x] = if (bitMatrix.get(x, y)) Color.BLACK else Color.WHITE
                 }
             }

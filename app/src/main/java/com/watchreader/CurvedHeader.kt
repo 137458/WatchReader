@@ -129,7 +129,7 @@ fun CurvedChapterHeader(
 @Composable
 fun CurvedSideStatusBar(
     modifier: Modifier = Modifier,
-    textColor: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary.copy(alpha = 0.85f)
+    textColor: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary
 ) {
     val context = LocalContext.current
     var currentTime by remember {

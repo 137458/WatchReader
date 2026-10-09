@@ -19,7 +19,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.input.ImeAction
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
@@ -69,6 +73,7 @@ fun BookshelfScreen(
     onRestore: () -> Unit = {}
 ) {
     val colors = MiuixTheme.colorScheme
+    val keyboardController = LocalSoftwareKeyboardController.current
     // 过滤排序随书架/搜索词缓存：输入搜索、删除确认等重组不再反复全表扫描排序
     val latestBook = remember(bookshelf) { bookshelf.maxByOrNull { it.lastReadTime } }
     val filteredBooks = remember(bookshelf, searchQuery) {
@@ -106,11 +111,22 @@ fun BookshelfScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // 顶部/底部羽化渐隐（统一 EdgeFadeMask 基元，与其他滚动页观感一致）
+        EdgeFadeMask(
+            edge = Alignment.Top,
+            modifier = Modifier.align(Alignment.TopCenter),
+            height = 48.dp
+        )
+        EdgeFadeMask(
+            edge = Alignment.Bottom,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            height = 44.dp
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 24.dp, vertical = 42.dp),
+                .padding(horizontal = 24.dp, vertical = 44.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
         // ── 头部：栏目标签 + 主标题 ──
@@ -152,7 +168,7 @@ fun BookshelfScreen(
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp)
             ) {
-                SectionLabel("继续阅读", color = colors.onPrimary.copy(alpha = 0.72f))
+                SectionLabel("继续阅读", color = colors.onPrimary)
                 Text(
                     text = latestBook.title,
                     style = MiuixTheme.textStyles.title3.copy(fontSize = 17.sp),
@@ -163,7 +179,7 @@ fun BookshelfScreen(
                 Text(
                     text = latestBook.lastChapterTitle.ifBlank { "从上次阅读位置继续" },
                     style = MiuixTheme.textStyles.body1.copy(fontSize = 11.sp),
-                    color = colors.onPrimary.copy(alpha = 0.82f),
+                    color = colors.onPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -171,7 +187,6 @@ fun BookshelfScreen(
                     ProgressTrack(
                         progress = (latestBook.progressPercent / 100f).coerceIn(0f, 1f),
                         modifier = Modifier.weight(1f),
-                        trackColor = colors.onPrimary.copy(alpha = 0.25f),
                         fillColor = colors.onPrimary
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -187,8 +202,7 @@ fun BookshelfScreen(
                 modifier = Modifier
                     .staggeredEnter(1)
                     .fillMaxWidth()
-                    .padding(0.dp),
-                containerColor = colors.surfaceVariant.copy(alpha = 0.6f)
+                    .padding(0.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text("建立你的第一座书架", style = MiuixTheme.textStyles.title3, color = colors.onSurface)
@@ -260,6 +274,8 @@ fun BookshelfScreen(
             useLabelAsPlaceholder = true,
             textStyle = MiuixTheme.textStyles.body1.copy(fontSize = 12.sp),
             cornerRadius = WatchShapes.Row,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
             // miuix TextField 默认容器取 secondaryContainer（绿色系容器角色），
             // 与各主题的中性输入面语义冲突，显式对齐按钮档表面色
             colors = TextFieldDefaults.textFieldColors(
@@ -289,8 +305,7 @@ fun BookshelfScreen(
             SurfaceCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .staggeredEnter(5),
-                containerColor = colors.surfaceVariant.copy(alpha = 0.45f)
+                    .staggeredEnter(5)
             ) {
                 Column(
                     modifier = Modifier
@@ -316,10 +331,8 @@ fun BookshelfScreen(
                 BookshelfBookRow(
                     book = book,
                     isPendingDelete = pendingDeleteUri == book.uriString,
-                    onOpen = {
-                        tick()
-                        onOpenBook(book)
-                    },
+                    // 点按反馈（tick + 按压缩放）统一在行内处理，父层不再叠加
+                    onOpen = { onOpenBook(book) },
                     onTogglePin = { onTogglePin(book) },
                     onRequestDelete = { pendingDeleteUri = book.uriString },
                     onConfirmDelete = {
@@ -403,11 +416,15 @@ private fun BookshelfAction(
 ) {
     val colors = MiuixTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
+    val tick = rememberTickHaptic()
     Row(
         modifier = modifier
             .pressScale(interaction)
             .squircleSurface(colors.surfaceVariant, WatchShapes.Row)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .clickable(interactionSource = interaction, indication = null) {
+                tick()
+                onClick()
+            }
             .padding(horizontal = 12.dp, vertical = 11.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -420,7 +437,7 @@ private fun BookshelfAction(
         Text(
             text = "›",
             style = MiuixTheme.textStyles.button,
-            color = colors.onSurfaceVariantSummary.copy(alpha = 0.5f)
+            color = colors.onSurfaceVariantSummary
         )
     }
 }
@@ -441,6 +458,8 @@ private fun BookshelfBookRow(
     }
     // 书名清洗含正则替换：随书名 remember，避免父级每次重组（搜索逐键 / 时长 tick）逐行重算
     val displayTitle = remember(book.title) { EpubParser.cleanBookTitle(book.title) }
+    val rowInteraction = remember { MutableInteractionSource() }
+    val rowTick = rememberTickHaptic()
 
     SurfaceCard(
         modifier = Modifier
@@ -451,14 +470,19 @@ private fun BookshelfBookRow(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onOpen)
+                .pressScale(rowInteraction, pressedScale = 0.985f)
+                .clickable(interactionSource = rowInteraction, indication = null) {
+                    rowTick()
+                    onOpen()
+                }
                 .padding(horizontal = 12.dp, vertical = 11.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TextBadge(
                     text = formatBadge,
-                    color = if (formatBadge == "TXT") colors.secondary else colors.primary
+                    container = if (formatBadge == "TXT") colors.secondaryContainer else colors.primaryContainer,
+                    content = if (formatBadge == "TXT") colors.onSecondaryContainer else colors.onPrimaryContainer
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
@@ -488,24 +512,30 @@ private fun BookshelfBookRow(
                     modifier = Modifier.weight(1f),
                     height = 3.dp
                 )
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = if (book.isPinned) "已置顶" else "置顶",
                     modifier = Modifier
-                        .clickable(onClick = onTogglePin)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                            rowTick()
+                            onTogglePin()
+                        }
                         // 可点击区内边距：触控热区 ≥ 文字视觉尺寸，圆屏边缘误触率显著降低
-                        .padding(horizontal = 4.dp, vertical = 6.dp),
+                        .padding(horizontal = 4.dp, vertical = 12.dp),
                     style = MiuixTheme.textStyles.footnote2,
                     color = colors.primary
                 )
-                Spacer(modifier = Modifier.width(2.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = if (isPendingDelete) "确认删除？" else "删除",
                     modifier = Modifier
-                        .clickable { if (isPendingDelete) onConfirmDelete() else onRequestDelete() }
-                        .padding(horizontal = 4.dp, vertical = 6.dp),
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
+                            rowTick()
+                            if (isPendingDelete) onConfirmDelete() else onRequestDelete()
+                        }
+                        .padding(horizontal = 4.dp, vertical = 12.dp),
                     style = MiuixTheme.textStyles.footnote2.copy(fontWeight = if (isPendingDelete) FontWeight.Bold else FontWeight.Normal),
-                    color = if (isPendingDelete) colors.error else colors.onSurfaceVariantSummary.copy(alpha = 0.75f)
+                    color = if (isPendingDelete) colors.error else colors.onSurfaceVariantSummary
                 )
             }
         }
@@ -513,10 +543,12 @@ private fun BookshelfBookRow(
 }
 
 /**
- * 加载中界面：旋转弧环 + 呼吸文字
+ * 加载中界面：旋转弧环 + 呼吸文字；返回键取消加载回书架
+ * （此前 handleBack 的 Loading 分支无 BackHandler 可达，按返回会直接退出应用）
  */
 @Composable
-fun LoadingScreen() {
+fun LoadingScreen(onBack: () -> Unit = {}) {
+    androidx.activity.compose.BackHandler(onBack = onBack)
     Box(
         modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center

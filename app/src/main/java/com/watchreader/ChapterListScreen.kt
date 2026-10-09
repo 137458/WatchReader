@@ -55,6 +55,21 @@ internal fun applyListViewBg(view: View, color: Int) {
 }
 
 /**
+ * 原生 View 行按压反馈：按下轻陷（alpha 0.65）、抬起/取消恢复。
+ * 不消费事件，项点击回调不受影响 —— 与 Compose 侧 pressScale 对齐的"点了有动静"底线
+ */
+internal fun applyPressFeedback(view: View) {
+    view.setOnTouchListener { v, ev ->
+        when (ev.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> v.animate().alpha(0.65f).setDuration(60L).start()
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
+                v.animate().alpha(1f).setDuration(120L).start()
+        }
+        false
+    }
+}
+
+/**
  * 章节范围分卷模型
  */
 data class ChapterRange(
@@ -114,6 +129,19 @@ fun ChapterListScreen(
 
     val noIndication = remember { MutableInteractionSource() }
     var currentListView by remember { mutableStateOf<ListView?>(null) }
+    // 选卷浮层的表冠归属：浮层打开时注册 Compose 侧目标抢占顶层管线，
+    // 兜底焦点路由不再有机会命中被浮层盖住的章节列表（"滚的是看不见的列表"缺陷）
+    val rangeListViewRef = remember { arrayOfNulls<ListView>(1) }
+    val crownContext = androidx.compose.ui.platform.LocalContext.current
+    rememberCrownScrollTarget(showRangePicker) { delta ->
+        val lv = rangeListViewRef[0]
+        if (!showRangePicker || lv == null) {
+            false
+        } else {
+            CrownScrollHelper.dispatchScroll(delta, lv, crownContext)
+            true
+        }
+    }
     val ranges = remember(chapters.size) { generateChapterRanges(chapters.size) }
 
     Box(
@@ -127,7 +155,8 @@ fun ChapterListScreen(
                 factory = { context ->
                     val density = context.resources.displayMetrics.density
                     val padH = (20 * density).toInt()
-                    val padTop = (50 * density).toInt()
+                    // padTop 与顶部 Tab 胶囊（44dp 起，圆屏弧线安全区）对齐，列表内容不被 Tab 压住
+                    val padTop = (78 * density).toInt()
                     val padBottom = (56 * density).toInt()
 
                     val listView = ListView(context).apply {
@@ -206,7 +235,8 @@ fun ChapterListScreen(
                     factory = { context ->
                         val density = context.resources.displayMetrics.density
                         val padH = (18 * density).toInt()
-                        val padTop = (50 * density).toInt()
+                        // 与目录模式一致：避让顶部 Tab 胶囊（44dp 起的安全区）
+                        val padTop = (78 * density).toInt()
                         val padBottom = (56 * density).toInt()
 
                         val bookmarkListView = ListView(context).apply {
@@ -260,13 +290,14 @@ fun ChapterListScreen(
             height = 44.dp
         )
 
-        // 顶部 Tab 切换胶囊（滑动式指示：填充与文字颜色双通道动画，仅绘制层失效）
+        // 顶部 Tab 切换胶囊（滑动式指示：填充与文字颜色双通道动画，仅绘制层失效）。
+        // 顶部 44dp 起：18dp 处弦宽仅 ~124dp 装不下双胶囊，外端贴弧甚至点不到
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 18.dp)
+                .padding(top = 44.dp)
                 .clip(WatchShapes.Pill)
-                .background(colorScheme.surfaceVariant.copy(alpha = 0.94f))
+                .background(colorScheme.surfaceVariant)
                 .border(1.dp, colorScheme.outline.copy(alpha = WatchAlpha.HAIRLINE), WatchShapes.Pill)
                 .padding(2.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -348,8 +379,10 @@ fun ChapterListScreen(
                             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
                         }
 
-                        // 表冠物理旋转无缝滚动（统一管线扩展）
+                        // 表冠物理旋转无缝滚动（统一管线扩展）；实例经捕获数组交给 Compose 侧，
+                        // 浮层打开时注册的表冠目标抢占顶层管线（局部名与外层状态同名，直接赋值会被遮蔽）
                         rangeListView.bindCrownScroll(context)
+                        rangeListViewRef[0] = rangeListView
 
                         rangeListView.adapter = object : BaseAdapter() {
 
@@ -365,7 +398,8 @@ fun ChapterListScreen(
                                     }
                                     currentBg = android.graphics.drawable.GradientDrawable().apply {
                                         cornerRadius = 14 * density
-                                        setColor(colorScheme.primary.copy(alpha = 0.22f).toArgb())
+                                        // 当前卷走预混容器角色：primaryContainer 底 + primary 强调描边（零 alpha）
+                                        setColor(colorScheme.primaryContainer.toArgb())
                                         setStroke((1.5f * density).toInt(), activeColor)
                                     }
                                 }
@@ -392,8 +426,10 @@ fun ChapterListScreen(
                                 val (rangeNormalBg, rangeCurrentBg) = drawables()
                                 tv.background = if (isCurrentRange) rangeCurrentBg else rangeNormalBg
                                 tv.text = if (isCurrentRange) "${range.label} • 正在读" else range.label
-                                tv.setTextColor(if (isCurrentRange) activeColor else normalColor)
+                                // 当前卷文字用容器配对内容色（onPrimaryContainer），保证 container 底上达 AA
+                                tv.setTextColor(if (isCurrentRange) colorScheme.onPrimaryContainer.toArgb() else normalColor)
                                 tv.typeface = if (isCurrentRange) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                                applyPressFeedback(tv)
                                 return tv
                             }
                         }
@@ -489,7 +525,7 @@ private fun TabCapsule(label: String, selected: Boolean, onClick: () -> Unit) {
                 }
             }
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 5.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -516,11 +552,12 @@ private class ChapterListAdapter(
         if (drawableCacheKey !== colorScheme || cachedNormalBg == null) {
             cachedNormalBg = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = 14 * density
-                setColor(colorScheme.surfaceVariant.copy(alpha = 0.70f).toArgb())
+                setColor(colorScheme.surfaceVariant.toArgb())
             }
             cachedCurrentBg = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = 14 * density
-                setColor(colorScheme.primary.copy(alpha = 0.18f).toArgb())
+                // 当前章走预混容器角色：primaryContainer 实底 + primary 强调描边（零 alpha 糊底）
+                setColor(colorScheme.primaryContainer.toArgb())
                 setStroke((1.5f * density).toInt(), colorScheme.primary.toArgb())
             }
             drawableCacheKey = colorScheme
@@ -538,6 +575,8 @@ private class ChapterListAdapter(
         val chapter = chapters[position]
         val activeColor = colorScheme.primary.toArgb()
         val onSurfaceColor = colorScheme.onSurface.toArgb()
+        // 当前章标题落在 primaryContainer 实底上，用配对内容色保证 AA（primary 在该底上不足 4.5:1）
+        val onPrimaryContainerColor = colorScheme.onPrimaryContainer.toArgb()
 
         val container: FrameLayout
         val holder: ChapterCardViewHolder
@@ -579,7 +618,8 @@ private class ChapterListAdapter(
                 typeface = Typeface.DEFAULT_BOLD
                 setPadding((6 * density).toInt(), (1.5f * density).toInt(), (6 * density).toInt(), (1.5f * density).toInt())
                 background = android.graphics.drawable.GradientDrawable().apply {
-                    setColor(colorScheme.primary.copy(alpha = 0.25f).toArgb())
+                    // 标签实底 primary + 配对 onPrimary 文字（预混角色，替代 25% alpha 糊底）
+                    setColor(colorScheme.primary.toArgb())
                     cornerRadius = 6 * density
                 }
             }
@@ -595,6 +635,7 @@ private class ChapterListAdapter(
 
         val (normalBg, currentBg) = cachedDrawables()
         container.background = if (isCurrent) currentBg else normalBg
+        applyPressFeedback(container)
 
         holder.titleTv.text = chapter.title
 
@@ -602,12 +643,12 @@ private class ChapterListAdapter(
             holder.indicatorTv.visibility = View.VISIBLE
             holder.indicatorTv.text = "●"
             holder.indicatorTv.setTextColor(activeColor)
-            holder.titleTv.setTextColor(activeColor)
+            holder.titleTv.setTextColor(onPrimaryContainerColor)
             holder.titleTv.typeface = Typeface.DEFAULT_BOLD
 
             holder.tagTv.visibility = View.VISIBLE
             holder.tagTv.text = "正在读"
-            holder.tagTv.setTextColor(activeColor)
+            holder.tagTv.setTextColor(colorScheme.onPrimary.toArgb())
         } else {
             holder.indicatorTv.visibility = View.GONE
             holder.titleTv.setTextColor(onSurfaceColor)
@@ -629,6 +670,17 @@ private class BookmarkListAdapter(
 ) : BaseAdapter() {
     private val timeFormat = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
 
+    // 两段式删除（与书架删书同款）：首按进入待确认，3.2s 无操作自动回滚。
+    // 书签删除不可恢复，防护等级必须与删书对齐，不能 ✕ 一下就没
+    private var pendingDeleteId: String? = null
+    private val revertHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val revertRunnable = Runnable {
+        if (pendingDeleteId != null) {
+            pendingDeleteId = null
+            notifyDataSetChanged()
+        }
+    }
+
     override fun getCount(): Int = bookmarks.size
     override fun getItem(position: Int): Any = bookmarks[position]
     override fun getItemId(position: Int): Long = position.toLong()
@@ -636,6 +688,7 @@ private class BookmarkListAdapter(
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
         val context = parent.context
         val bm = bookmarks[position]
+        val isPending = pendingDeleteId == bm.id
         // 书签标题用 tertiary 书签琥珀：与目录条目（primary）在色彩语义上分离
         val activeColor = colorScheme.tertiaryContainerVariant.toArgb()
         val surfaceVariantColor = colorScheme.surfaceVariant.toArgb()
@@ -693,24 +746,47 @@ private class BookmarkListAdapter(
         textLayout.addView(dateTv)
         container.addView(textLayout)
 
-        // 删除按钮：热区扩大至 42dp 以上，带点击触达保护
+        // 删除按钮：热区 42dp+；与文本区之间留 6dp 死区，降低误触 ✕ 概率
         val delBtn = TextView(context).apply {
-            text = "✕"
+            text = if (isPending) "确认删除" else "✕"
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             setTextColor(errorColor)
+            typeface = if (isPending) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             gravity = Gravity.CENTER
-            minWidth = (42 * density).toInt()
+            minWidth = ((if (isPending) 76 else 42) * density).toInt()
             minHeight = (42 * density).toInt()
             setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = (6 * density).toInt() }
             setOnClickListener {
-                onDeleteBookmark(bm)
+                if (isPending) {
+                    revertHandler.removeCallbacks(revertRunnable)
+                    pendingDeleteId = null
+                    onDeleteBookmark(bm)
+                } else {
+                    pendingDeleteId = bm.id
+                    RotaryHapticManager.performScrollTick(context, null)
+                    notifyDataSetChanged()
+                    revertHandler.removeCallbacks(revertRunnable)
+                    revertHandler.postDelayed(revertRunnable, 3200L)
+                }
             }
         }
         container.addView(delBtn)
 
         container.setOnClickListener {
-            onBookmarkClick(bm)
+            if (pendingDeleteId != null) {
+                // 待确认期点击行体 = 取消删除，避免误跳转
+                revertHandler.removeCallbacks(revertRunnable)
+                pendingDeleteId = null
+                notifyDataSetChanged()
+            } else {
+                onBookmarkClick(bm)
+            }
         }
+        applyPressFeedback(container)
 
         return container
     }

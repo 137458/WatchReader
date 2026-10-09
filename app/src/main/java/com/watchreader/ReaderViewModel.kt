@@ -83,6 +83,8 @@ data class ReaderUiState(
     val searchResults: List<SearchHit> = emptyList(),
     val searchScannedChapters: Int = 0,
     val searchTotalChapters: Int = 0,
+    val bookSearchQuery: String = "",
+    val pendingRestoreCount: Int? = null,
     val infoMessage: String? = null
 )
 
@@ -580,6 +582,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         searchJob?.cancel()
         _uiState.update {
             it.copy(
+                // 搜索词随结果一起收敛进 VM：返回后再进搜索页可微调关键词重查，
+                // 不再出现"有结果无关键词"的表冠重打成本
+                bookSearchQuery = q,
                 isSearching = true,
                 searchResults = emptyList(),
                 searchScannedChapters = 0,
@@ -926,6 +931,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(searchQuery = query) }
     }
 
+    /** 书内搜索关键词（与搜索结果同生命周期，返回搜索页可微调重查） */
+    fun setBookSearchQuery(query: String) {
+        _uiState.update { it.copy(bookSearchQuery = query) }
+    }
+
     /**
      * 保存当前阅读位置为书签
      */
@@ -1181,8 +1191,37 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 从备份 JSON 恢复：成功后重载全部配置与书架到当前状态
      * @return 是否恢复成功
      */
-    suspend fun restoreBackup(json: String): Boolean {
-        val count = withContext(Dispatchers.IO) { DataStoreManager.restoreBackup(appCtx, json) }
+    // 待确认的恢复备份原文：SAF 选完文件先解析预览，用户在确认浮层点头后才覆盖
+    @Volatile
+    private var pendingRestoreJson: String? = null
+
+    /**
+     * 解析备份供确认浮层预览：合法则记录原文并返回书目数，非法返回 null（文件不是有效备份）
+     */
+    fun previewBackupRestore(json: String): Int? {
+        val payload = BackupCodec.decode(json) ?: return null
+        pendingRestoreJson = json
+        _uiState.update { it.copy(pendingRestoreCount = payload.shelf.size) }
+        return payload.shelf.size
+    }
+
+    /** 取消恢复：丢弃待确认备份 */
+    fun cancelBackupRestore() {
+        pendingRestoreJson = null
+        _uiState.update { it.copy(pendingRestoreCount = null) }
+    }
+
+    /** 确认恢复：走原 restoreBackup 覆盖路径 */
+    suspend fun confirmBackupRestore() {
+        val json = pendingRestoreJson
+        pendingRestoreJson = null
+        _uiState.update { it.copy(pendingRestoreCount = null) }
+        if (json != null) {
+            restoreBackup(json)
+        }
+    }
+
+    suspend fun restoreBackup(json: String): Boolean {        val count = withContext(Dispatchers.IO) { DataStoreManager.restoreBackup(appCtx, json) }
         if (count < 0) return false
         val config = withContext(Dispatchers.IO) { DataStoreManager.loadInitialConfig(appCtx) }
         _uiState.update {

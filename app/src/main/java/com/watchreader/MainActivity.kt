@@ -18,8 +18,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -30,9 +35,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import kotlin.math.abs
 
@@ -84,7 +93,8 @@ class MainActivity : ComponentActivity() {
             try {
                 val json = contentResolver.openInputStream(uri)
                     ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-                if (!viewModel.restoreBackup(json)) {
+                // 先解析预览、确认浮层点头后才真正覆盖（误选旧备份不再立即回滚全书架）
+                if (viewModel.previewBackupRestore(json) == null) {
                     viewModel.notifyBackupRestoreFailed()
                 }
             } catch (_: Exception) {
@@ -133,24 +143,76 @@ class MainActivity : ComponentActivity() {
 
             // 主题根节点：应用自持 ThemeMode（DataStore 持久化），显式注入色板与排版，
             // 不走 ThemeController 的系统明暗 / 动态取色管线
-            MiuixTheme(
-                colors = colors,
-                textStyles = WatchTextStyles
-            ) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    AppContent(uiState)
+                MiuixTheme(
+                    colors = colors,
+                    textStyles = WatchTextStyles
+                ) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        AppContent(uiState)
 
-                    // 极暗纯黑 Alpha 硬件加速遮罩（仅当亮度低于 12% 时激活，不拦截手势）
-                    val overlayAlpha = BrightnessManager.calculateDarkOverlayAlpha(uiState.appBrightness)
-                    if (overlayAlpha > 0f) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.Black.copy(alpha = overlayAlpha))
-                        )
+                        // 恢复备份确认浮层：SAF 选完文件先亮出将载入的书目数，确认才覆盖
+                        uiState.pendingRestoreCount?.let { count ->
+                            val blockInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.6f))
+                                    // 拦截浮层外的一切点击，强制走 取消/确认 二选一
+                                    .clickable(
+                                        interactionSource = blockInteraction,
+                                        indication = null
+                                    ) {},
+                                contentAlignment = androidx.compose.ui.Alignment.Center
+                            ) {
+                                SurfaceCard(modifier = Modifier.padding(horizontal = 28.dp)) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(16.dp),
+                                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text(
+                                            text = "恢复备份？",
+                                            style = MiuixTheme.textStyles.title3,
+                                            color = colors.onBackground
+                                        )
+                                        Text(
+                                            text = "将载入 $count 本书的书架快照，并覆盖当前书架与全部阅读设置。",
+                                            style = MiuixTheme.textStyles.body1.copy(fontSize = 11.sp),
+                                            color = colors.onSurfaceVariantSummary,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                        )
+                                        Row(
+                                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            PillButton("取消", Modifier.weight(1f)) {
+                                                viewModel.cancelBackupRestore()
+                                            }
+                                            PillButton(
+                                                "确认恢复",
+                                                Modifier.weight(1f),
+                                                emphasis = PillEmphasis.Primary
+                                            ) {
+                                                lifecycleScope.launch { viewModel.confirmBackupRestore() }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // 极暗纯黑 Alpha 硬件加速遮罩（仅当亮度低于 12% 时激活，不拦截手势）
+                        val overlayAlpha = BrightnessManager.calculateDarkOverlayAlpha(uiState.appBrightness)
+                        if (overlayAlpha > 0f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = overlayAlpha))
+                            )
+                        }
                     }
                 }
-            }
         }
     }
 
@@ -316,7 +378,7 @@ class MainActivity : ComponentActivity() {
                     }
                 )
 
-                is Screen.Loading -> LoadingScreen()
+                is Screen.Loading -> LoadingScreen(onBack = { viewModel.handleBack() })
 
                 // 阅读页由常驻层承载，此槽位保持透明空占位（零绘制）
                 is Screen.Reader -> Box(modifier = Modifier.fillMaxSize())
@@ -409,6 +471,8 @@ class MainActivity : ComponentActivity() {
                     isSearching = uiState.isSearching,
                     scannedChapters = uiState.searchScannedChapters,
                     totalChapters = uiState.searchTotalChapters,
+                    query = uiState.bookSearchQuery,
+                    onQueryChange = { viewModel.setBookSearchQuery(it) },
                     onSearch = { viewModel.searchInBook(it) },
                     onHitClick = { viewModel.jumpToSearchHit(it) },
                     onBack = { viewModel.handleBack() }

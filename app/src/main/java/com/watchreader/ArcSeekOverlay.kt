@@ -134,9 +134,9 @@ fun ArcSeekOverlay(
                 val cy = size.height / 2f
                 val arcRadius = minOf(cx, cy) - 10f
 
-                // 1. 底层微光导轨弧 (-60° 到 +60°)
+                // 1. 底层微光导轨弧 (-60° 到 +60°)：强调描边档预混 alpha 令牌
                 drawArc(
-                    color = primaryColor.copy(alpha = 0.25f),
+                    color = primaryColor.copy(alpha = WatchAlpha.ACCENT_BORDER),
                     startAngle = -60f,
                     sweepAngle = 120f,
                     useCenter = false,
@@ -150,9 +150,9 @@ fun ArcSeekOverlay(
                 val cursorX = cx + (arcRadius * cos(cursorAngleRad)).toFloat()
                 val cursorY = cy + (arcRadius * sin(cursorAngleRad)).toFloat()
 
-                // 游标晕影
+                // 游标晕影（纯装饰辉光，按装饰豁免对比度）
                 drawCircle(
-                    color = primaryColor.copy(alpha = 0.40f),
+                    color = primaryColor.copy(alpha = WatchAlpha.ACCENT_BORDER),
                     radius = 12.dp.toPx(),
                     center = Offset(cursorX, cursorY)
                 )
@@ -187,7 +187,8 @@ fun ArcSeekOverlay(
             ) {
                 Text(
                     text = label,
-                    color = primaryColor,
+                    // 恒黑胶囊配固定柔白字：主题 primary 为纸底设计，羊皮纸档黑底上仅 2.8:1
+                    color = WatchFixed.HudInk,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center,

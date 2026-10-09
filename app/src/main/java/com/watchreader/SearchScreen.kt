@@ -19,6 +19,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
@@ -48,6 +51,8 @@ fun SearchScreen(
     isSearching: Boolean,
     scannedChapters: Int,
     totalChapters: Int,
+    query: String,
+    onQueryChange: (String) -> Unit,
     onSearch: (String) -> Unit,
     onHitClick: (SearchHit) -> Unit,
     onBack: () -> Unit
@@ -57,8 +62,7 @@ fun SearchScreen(
     val colorScheme = MiuixTheme.colorScheme
     val bgColor = colorScheme.background.toArgb()
 
-    var query by remember { mutableStateOf("") }
-    // 是否已发起过搜索：用于区分「未搜索」与「无结果」两种空态文案
+    // 搜索词由 VM 持有（与结果同生命周期）：返回后再进本页仍可微调关键词重查
     var searched by remember { mutableStateOf(false) }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -70,13 +74,17 @@ fun SearchScreen(
         ) {
             TextField(
                 value = query,
-                onValueChange = { query = it },
+                onValueChange = onQueryChange,
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = "搜索正文关键词",
                 useLabelAsPlaceholder = true,
                 textStyle = MiuixTheme.textStyles.body1.copy(fontSize = 12.sp),
                 cornerRadius = WatchShapes.Row,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = {
+                    if (query.isNotBlank()) onSearch(query)
+                }),
                 colors = TextFieldDefaults.textFieldColors(
                     backgroundColor = colorScheme.surfaceVariant,
                     labelColor = colorScheme.onSurfaceVariantSummary,
@@ -267,6 +275,7 @@ private class SearchHitListAdapter(
         holder.snippetTv.text = hit.snippet
         holder.snippetTv.setTextColor(colorScheme.onSurface.toArgb())
         container.setOnClickListener { onHitClick(hit) }
+        applyPressFeedback(container)
         return container
     }
 }

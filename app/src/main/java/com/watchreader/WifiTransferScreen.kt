@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.graphics.Bitmap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
@@ -63,10 +64,26 @@ fun WifiTransferScreen(
     onToggleServer: () -> Unit,
     onBack: () -> Unit
 ) {
-    BackHandler(onBack = onBack)
-
     val colorScheme = MiuixTheme.colorScheme
     val tick = rememberTickHaptic()
+
+    // 传输中返回两步确认（与书架删书同款 3.2s 节奏）：右滑退出在传输中已被禁用，
+    // 返回键若不加防护会成为"一按就断传"的破坏性陷阱
+    var pendingExit by remember { mutableStateOf(false) }
+    LaunchedEffect(pendingExit) {
+        if (pendingExit) {
+            delay(3200L)
+            pendingExit = false
+        }
+    }
+    BackHandler(onBack = {
+        if (isTransferring && !pendingExit) {
+            pendingExit = true
+            tick()
+        } else {
+            onBack()
+        }
+    })
 
     // 就绪入场轻振：告知用户服务页已可用
     LaunchedEffect(Unit) {
@@ -112,15 +129,15 @@ fun WifiTransferScreen(
     ) {
         // 1. 沿屏幕边缘的极简纯色环形进度条（原生 CircularProgressIndicator，仅在传输时呈现）
         if (isTransferring) {
-            CircularProgressIndicator(
-                progress = animatedProgress,
-                modifier = Modifier.fillMaxSize(),
-                colors = ProgressIndicatorDefaults.progressIndicatorColors(
-                    foregroundColor = colorScheme.primary,
-                    backgroundColor = colorScheme.primary.copy(alpha = 0.12f)
-                ),
-                strokeWidth = 3.dp
-            )
+                CircularProgressIndicator(
+                    progress = animatedProgress,
+                    modifier = Modifier.fillMaxSize(),
+                    colors = ProgressIndicatorDefaults.progressIndicatorColors(
+                        foregroundColor = colorScheme.primary,
+                        backgroundColor = colorScheme.dividerLine
+                    ),
+                    strokeWidth = 3.dp
+                )
         }
 
         // 2. 视图 A：极简传输进度展示
@@ -166,6 +183,18 @@ fun WifiTransferScreen(
                     ),
                     textAlign = TextAlign.Center
                 )
+
+                if (pendingExit) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "再按一次返回键将中断传输",
+                        style = TextStyle(
+                            fontSize = 10.5.sp,
+                            color = colorScheme.error
+                        ),
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
         }
 
@@ -295,25 +324,40 @@ private fun QrCodePanel(
 
     Spacer(modifier = Modifier.height(5.dp))
 
-    // 备用纯文本网址胶囊
+    // 备用纯文本网址：地址与令牌分两行（带 token 的完整 URL ~42 字符，单行必被圆屏裁切，
+    // 手机相机不可用时这里是唯一兜底通道，信息必须完整可抄）
     Box(
         modifier = Modifier
             .clip(WatchShapes.Pill)
             .background(MiuixTheme.colorScheme.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM))
-            .padding(horizontal = 10.dp, vertical = 3.dp),
+            .padding(horizontal = 10.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = pageUrl,
-            style = TextStyle(
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = primaryColor
-            ),
-            maxLines = 1,
-            softWrap = false
-        )
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "http://${ipAddress}:$port",
+                style = TextStyle(
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace,
+                    color = primaryColor
+                ),
+                maxLines = 1,
+                softWrap = false
+            )
+            if (!accessToken.isNullOrEmpty()) {
+                Text(
+                    text = "令牌 $accessToken",
+                    style = TextStyle(
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = onSurfaceVariant
+                    ),
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        }
     }
 
     Spacer(modifier = Modifier.height(5.dp))

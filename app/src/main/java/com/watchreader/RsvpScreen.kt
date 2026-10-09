@@ -177,11 +177,11 @@ fun RsvpScreen(
                 )
         )
 
-        // 3. 侧边弧形电量与时间
-        CurvedSideStatusBar(
-            modifier = Modifier.fillMaxSize(),
-            textColor = colorScheme.onSurfaceVariantSummary.copy(alpha = 0.8f)
-        )
+            // 3. 侧边弧形电量与时间
+            CurvedSideStatusBar(
+                modifier = Modifier.fillMaxSize(),
+                textColor = colorScheme.onSurfaceVariantSummary
+            )
 
         // 4. 屏幕正中心 RSVP 闪读文字呈现区（轻触中央切换 暂停/继续，ORP 焦点高亮）
         Column(
@@ -203,7 +203,7 @@ fun RsvpScreen(
                 modifier = Modifier
                     .size(width = 3.dp, height = 5.dp)
                     .clip(RoundedCornerShape(1.dp))
-                    .background(colorScheme.primary.copy(alpha = 0.55f))
+                    .background(colorScheme.primary)
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -213,8 +213,10 @@ fun RsvpScreen(
                 val orp = currentToken.orpIndex.coerceIn(0, maxOf(0, tokenText.length - 1))
                 val annotatedString = remember(currentToken, colorScheme) {
                     buildAnnotatedString {
+                        // ORP 焦点字前后的非焦点部分用次级墨角色（onBackgroundVariant）：
+                        // 视觉降调由角色承担，不再运行时叠 alpha
                         if (orp > 0) {
-                            withStyle(SpanStyle(color = colorScheme.onBackground.copy(alpha = 0.85f), fontWeight = FontWeight.Normal)) {
+                            withStyle(SpanStyle(color = colorScheme.onBackgroundVariant, fontWeight = FontWeight.Normal)) {
                                 append(tokenText.substring(0, orp))
                             }
                         }
@@ -224,7 +226,7 @@ fun RsvpScreen(
                             }
                         }
                         if (orp + 1 < tokenText.length) {
-                            withStyle(SpanStyle(color = colorScheme.onBackground.copy(alpha = 0.85f), fontWeight = FontWeight.Normal)) {
+                            withStyle(SpanStyle(color = colorScheme.onBackgroundVariant, fontWeight = FontWeight.Normal)) {
                                 append(tokenText.substring(orp + 1))
                             }
                         }
@@ -254,7 +256,7 @@ fun RsvpScreen(
                 modifier = Modifier
                     .size(width = 3.dp, height = 5.dp)
                     .clip(RoundedCornerShape(1.dp))
-                    .background(colorScheme.primary.copy(alpha = 0.55f))
+                    .background(colorScheme.primary)
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -266,7 +268,7 @@ fun RsvpScreen(
 
             Text(
                 text = "${currentIndex + 1}/${tokens.size} · $progressPercent%",
-                style = TextStyle(fontSize = 11.sp, color = colorScheme.onSurfaceVariantSummary.copy(alpha = 0.7f))
+                style = TextStyle(fontSize = 11.sp, color = colorScheme.onSurfaceVariantSummary)
             )
         }
 

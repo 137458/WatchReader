@@ -82,9 +82,8 @@ dependencies {
     // ZXing Core — 超轻量二维码生成引擎（纯 Java，R8 裁剪后体积极小）
     implementation("com.google.zxing:core:3.5.3")
 
-    // miuix — HyperOS 设计语言 Compose 组件库（主题 / 基础件 / 设置件，纯 Android 产物）
+    // miuix — HyperOS 设计语言 Compose 组件库（主题 / 基础件，纯 Android 产物）
     implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.4")
-    implementation("top.yukonga.miuix.kmp:miuix-preference-android:0.9.4")
 
     // 调试工具
     debugImplementation("androidx.compose.ui:ui-tooling")

@@ -11,6 +11,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import top.yukonga.miuix.kmp.squircle.squircleSurface
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -38,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 
 /**
  * 阅读菜单 — 设计系统统一排版：分区卡片 + 发丝分隔 + 弹簧按压反馈
@@ -115,7 +118,7 @@ fun MenuScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 24.dp, vertical = 42.dp),
+                .padding(horizontal = 24.dp, vertical = 44.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             SectionLabel("阅读控制", modifier = Modifier.staggeredEnter(0), color = colors.primary)
@@ -141,7 +144,7 @@ fun MenuScreen(
                 Text(
                     text = ReadDurationFormatter.format(readDurationSec),
                     style = MiuixTheme.textStyles.footnote2,
-                    color = colors.onPrimary.copy(alpha = 0.78f)
+                    color = colors.onPrimary
                 )
             }
 
@@ -373,7 +376,8 @@ private fun SettingLine(label: String, value: String, trailing: @Composable () -
 }
 
 /**
- * 步进器：发丝描边胶囊双键（各自独立按压缩放）
+ * 步进器：发丝描边胶囊双键（各自独立按压缩放）；长按 400ms 后 90ms 连发，
+ * 免去调字号从默认到目标档的逐档连点
  */
 @Composable
 private fun Stepper(onMinus: () -> Unit, onPlus: () -> Unit) {
@@ -388,7 +392,7 @@ private fun Stepper(onMinus: () -> Unit, onPlus: () -> Unit) {
             modifier = Modifier
                 .width(1.dp)
                 .height(22.dp)
-                .background(colors.outline.copy(alpha = 0.25f))
+                .background(colors.dividerLine)
         )
         StepperKey("+", colors, onPlus)
     }
@@ -397,6 +401,17 @@ private fun Stepper(onMinus: () -> Unit, onPlus: () -> Unit) {
 @Composable
 private fun StepperKey(symbol: String, colors: top.yukonga.miuix.kmp.theme.Colors, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    LaunchedEffect(pressed) {
+        if (pressed) {
+            onClick()
+            delay(400L)
+            while (true) {
+                onClick()
+                delay(90L)
+            }
+        }
+    }
     Box(
         modifier = Modifier
             .pressScale(interaction, pressedScale = 0.9f)
@@ -409,13 +424,20 @@ private fun StepperKey(symbol: String, colors: top.yukonga.miuix.kmp.theme.Color
 }
 
 @Composable
-private fun CycleLine(label: String, value: String, onClick: () -> Unit) {    val colors = MiuixTheme.colorScheme
+private fun CycleLine(label: String, value: String, onClick: () -> Unit) {
+    val colors = MiuixTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
+    val tick = rememberTickHaptic()
+    // 行热区垂直内边距：13sp 文本裸行仅 ~18dp，密集相邻行腕上必误触邻行
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .pressScale(interaction, pressedScale = 0.985f)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+            .clickable(interactionSource = interaction, indication = null) {
+                tick()
+                onClick()
+            }
+            .padding(vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -425,7 +447,7 @@ private fun CycleLine(label: String, value: String, onClick: () -> Unit) {    va
                 Text(current, color = colors.primary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             }
             Spacer(Modifier.width(4.dp))
-            Text("›", color = colors.onSurfaceVariantSummary.copy(alpha = 0.45f), fontSize = 13.sp)
+            Text("›", color = colors.onSurfaceVariantSummary, fontSize = 13.sp)
         }
     }
 }
@@ -457,7 +479,8 @@ private fun WeekBars(days: Map<String, Long>) {
                         .fillMaxWidth()
                         .height(barHeight)
                         .clip(RoundedCornerShape(3.dp))
-                        .background(if (bar.isToday) colors.primary else colors.primary.copy(alpha = 0.32f))
+                        // 非今日柱用次级墨（灰），今日柱用强调色——全主题零 alpha 的两档语义
+                        .background(if (bar.isToday) colors.primary else colors.onSurfaceVariantSummary)
                 )
                 Text(
                     text = bar.label,

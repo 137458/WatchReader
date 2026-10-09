@@ -23,6 +23,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -182,7 +183,7 @@ fun SurfaceCard(
 }
 
 /**
- * 胶囊按钮：tonal（次要）/ primary（主要）/ outline（主色描边强调）三种强调级
+ * 胶囊按钮：tonal（次要）/ primary（主要）/ outline（主色容器底强调）三种强调级
  * 按压缩放 + 轻触感，无水波纹叠加，保持克制纯粹
  */
 @Composable
@@ -199,21 +200,22 @@ fun PillButton(
     val colors = MiuixTheme.colorScheme
     val isFilled = emphasis == PillEmphasis.Primary || active
     val container = when {
-        !enabled -> colors.surfaceVariant.copy(alpha = 0.5f)
+        !enabled -> colors.surfaceVariant
         isFilled -> colors.primary
-        emphasis == PillEmphasis.Outline -> colors.primary.copy(alpha = 0.16f)
+        emphasis == PillEmphasis.Outline -> colors.primaryContainer
         else -> colors.surfaceVariant
     }
     val contentColor = when {
-        !enabled -> colors.onSurfaceVariantSummary.copy(alpha = 0.6f)
+        !enabled -> colors.disabledOnSurface
         isFilled -> colors.onPrimary
-        emphasis == PillEmphasis.Outline -> colors.primary
+        emphasis == PillEmphasis.Outline -> colors.onPrimaryContainer
         else -> colors.onSurface
     }
     val interaction = remember { MutableInteractionSource() }
     val tick = rememberTickHaptic()
     Box(
         modifier = modifier
+            .defaultMinSize(minHeight = 44.dp)
             .pressScale(interaction)
             .clip(WatchShapes.Pill)
             .background(container)
@@ -289,9 +291,10 @@ fun ProgressTrack(
         animationSpec = tween(520, easing = WatchMotion.EnterEasing),
         label = "progress-track"
     )
+    // 高度只经组件参数下发（modifier 侧再 .height() 会形成双源指定，单改其一必漂移）
     LinearProgressIndicator(
         progress = animated,
-        modifier = modifier.fillMaxWidth().height(height),
+        modifier = modifier.fillMaxWidth(),
         colors = ProgressIndicatorDefaults.progressIndicatorColors(
             foregroundColor = fillColor,
             backgroundColor = trackColor
@@ -337,7 +340,8 @@ fun LoadingIndicator(
     modifier: Modifier = Modifier,
     size: Dp = 28.dp,
     strokeWidth: Dp = 2.4.dp,
-    color: Color = MiuixTheme.colorScheme.primary
+    color: Color = MiuixTheme.colorScheme.primary,
+    trackColor: Color = MiuixTheme.colorScheme.dividerLine
 ) {
     val transition = rememberInfiniteTransition(label = "loading-arc")
     val rotation by transition.animateFloat(
@@ -369,7 +373,7 @@ fun LoadingIndicator(
             style = Stroke(width = stroke, cap = StrokeCap.Round)
         )
         drawArc(
-            color = color.copy(alpha = 0.22f),
+            color = trackColor,
             startAngle = -90f + 96f + 18f,
             sweepAngle = 360f - 96f - 18f,
             useCenter = false,
@@ -378,24 +382,30 @@ fun LoadingIndicator(
     }
 }
 
-/** 格式角标（TXT / EPUB）：发丝描边小徽章 */
+/**
+ * 格式角标（TXT / EPUB）：容器角色底 + 发丝描边小徽章。
+ * 填充走预混容器角色（primaryContainer/secondaryContainer 对），文字用配对内容色，
+ * 替代旧版「同色 10% alpha 自底」——亮主题下自衬对不达标且产生影子令牌。
+ * 描边是 onDrawBehind 语义：background 必须先于 squircleBorder，描边才能浮于填充之上。
+ */
 @Composable
 fun TextBadge(
     text: String,
     modifier: Modifier = Modifier,
-    color: Color = MiuixTheme.colorScheme.primary
+    container: Color = MiuixTheme.colorScheme.primaryContainer,
+    content: Color = MiuixTheme.colorScheme.onPrimaryContainer
 ) {
     Box(
         modifier = modifier
             .squircleClip(WatchShapes.Badge)
-            .squircleBorder(1.dp, color.copy(alpha = WatchAlpha.ACCENT_BORDER), WatchShapes.Badge)
-            .background(color.copy(alpha = 0.10f))
+            .background(container)
+            .squircleBorder(1.dp, content.copy(alpha = WatchAlpha.ACCENT_BORDER), WatchShapes.Badge)
             .padding(horizontal = 5.dp, vertical = 1.dp)
     ) {
         Text(
             text = text,
             style = MiuixTheme.textStyles.footnote2,
-            color = color,
+            color = content,
             letterSpacing = 0.6.sp
         )
     }
