@@ -209,7 +209,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun toggleDarkMode() {
         val current = ThemeMode.fromValue(_uiState.value.themeMode)
-        // 按主题自身明暗属性定向：亮色档（羊皮纸 / HyperOS 亮）一律去极光黑，反之回羊皮纸
+        // 按主题自身明暗属性定向：亮色档（羊皮纸 / 晴空蓝）一律去极光黑，反之回羊皮纸
         setThemeMode(if (current.isDark) ThemeMode.PARCHMENT else ThemeMode.DARK)
     }
 

@@ -3,7 +3,7 @@ package com.watchreader
 import kotlin.math.abs
 
 /**
- * 主题模式
+ * 主题模式（枚举名为持久化标识，显示一律走 [label]）
  */
 enum class ThemeMode(val value: Int) {
     PARCHMENT(0),
@@ -12,8 +12,18 @@ enum class ThemeMode(val value: Int) {
     MIUIX(3),
     MIUIX_LIGHT(4);
 
-    /** 是否属于深色系（极光黑 / 红光夜视 / HyperOS 深色）—— 由主题本身派生，杜绝第二个"深色"状态量 */
+    /** 是否属于深色系（极光黑 / 红光夜视 / 深空蓝）—— 由主题本身派生，杜绝第二个"深色"状态量 */
     val isDark: Boolean get() = this == DARK || this == RED_NIGHT || this == MIUIX
+
+    /** 主题显示名：按配色命名（深空蓝 = 深灰底蓝强调，晴空蓝 = 白底蓝强调） */
+    val label: String
+        get() = when (this) {
+            PARCHMENT -> "羊皮纸"
+            DARK -> "极光黑"
+            RED_NIGHT -> "红光夜视"
+            MIUIX -> "深空蓝"
+            MIUIX_LIGHT -> "晴空蓝"
+        }
 
     companion object {
         fun fromValue(value: Int): ThemeMode = entries.firstOrNull { it.value == value } ?: PARCHMENT

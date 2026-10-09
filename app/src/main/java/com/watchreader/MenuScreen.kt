@@ -9,6 +9,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -21,17 +22,21 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import top.yukonga.miuix.kmp.squircle.squircleBorder
 import top.yukonga.miuix.kmp.squircle.squircleSurface
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -87,6 +92,8 @@ fun MenuScreen(
     BackHandler(onBack = onBack)
     val colors = MiuixTheme.colorScheme
     val scrollState = rememberScrollState()
+    // 主题选择浮层：配色一步直达，替代逐档循环点按
+    var showThemePicker by remember { mutableStateOf(false) }
 
     // 表冠滚动目标注册：Activity 顶层管线直接寻址菜单滚动（正向线性步进 + 齿轮微振）
     val context = LocalContext.current
@@ -94,15 +101,7 @@ fun MenuScreen(
         CrownScrollHelper.dispatchScroll(delta, scrollState, context)
         true
     }
-    val themeLabel = remember(themeMode) {
-        when (ThemeMode.fromValue(themeMode)) {
-            ThemeMode.PARCHMENT -> "羊皮纸"
-            ThemeMode.DARK -> "极光黑"
-            ThemeMode.RED_NIGHT -> "红光夜视"
-            ThemeMode.MIUIX -> "HyperOS"
-            ThemeMode.MIUIX_LIGHT -> "HyperOS 亮"
-        }
-    }
+    val themeLabel = remember(themeMode) { ThemeMode.fromValue(themeMode).label }
     val tapLabel = remember(tapPageArea) {
         when (TapPageArea.fromValue(tapPageArea)) {
             TapPageArea.TOP_BOTTOM -> "上下点按"
@@ -253,7 +252,7 @@ fun MenuScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     SectionLabel("偏好")
-                    CycleLine("主题", themeLabel) { onThemeModeChange((themeMode + 1) % ThemeMode.entries.size) }
+                    CycleLine("主题", themeLabel) { showThemePicker = true }
                     HairlineDivider()
                     CycleLine("点按翻页", tapLabel) { onTapPageAreaChange((tapPageArea + 1) % TapPageArea.entries.size) }
                     HairlineDivider()
@@ -338,6 +337,111 @@ fun MenuScreen(
             modifier = Modifier.align(Alignment.TopCenter),
             height = 48.dp
         )
+
+        // 配色选择浮层：全屏单选列表（底色 + 强调色色样直达观感），点击即换并关闭；
+        // 返回键先关浮层；浮层期表冠滚动注册抢占，直接寻址浮层列表
+        if (showThemePicker) {
+            val pickerScroll = rememberScrollState()
+            val pickerCrownContext = LocalContext.current
+            rememberCrownScrollTarget(pickerScroll) { delta ->
+                CrownScrollHelper.dispatchScroll(delta, pickerScroll, pickerCrownContext)
+                true
+            }
+            androidx.activity.compose.BackHandler { showThemePicker = false }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(colors.background)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { showThemePicker = false }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(pickerScroll)
+                        .padding(horizontal = 24.dp, vertical = 52.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SectionLabel("选择配色", color = colors.primary)
+                    ThemeMode.entries.forEach { mode ->
+                        ThemeOptionRow(
+                            mode = mode,
+                            selected = mode.value == themeMode,
+                            onSelect = {
+                                onThemeModeChange(mode.value)
+                                showThemePicker = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 配色选择浮层单行：主题底色胶囊内嵌强调色圆点作色样（所见即所得），
+ * 选中行强调描边 + 高亮文字；行热区 ≥44dp
+ */
+@Composable
+private fun ThemeOptionRow(
+    mode: ThemeMode,
+    selected: Boolean,
+    onSelect: () -> Unit
+) {
+    val colors = MiuixTheme.colorScheme
+    val scheme = watchColorsOf(mode)
+    val interaction = remember { MutableInteractionSource() }
+    val tick = rememberTickHaptic()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pressScale(interaction, pressedScale = 0.985f)
+            .squircleSurface(colors.surfaceVariant, WatchShapes.Row)
+            .then(
+                if (selected) {
+                    Modifier.squircleBorder(1.dp, colors.primary.copy(alpha = WatchAlpha.ACCENT_BORDER), WatchShapes.Row)
+                } else {
+                    Modifier
+                }
+            )
+            .clickable(interactionSource = interaction, indication = null) {
+                tick()
+                onSelect()
+            }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // 色样：底色胶囊 + 强调色圆点
+        Box(
+            modifier = Modifier
+                .size(width = 34.dp, height = 22.dp)
+                .clip(WatchShapes.Pill)
+                .background(scheme.background)
+                .border(1.dp, colors.outline.copy(alpha = WatchAlpha.HAIRLINE), WatchShapes.Pill),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(10.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(scheme.primary)
+            )
+        }
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = mode.label,
+            fontSize = 13.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            color = if (selected) colors.primary else colors.onSurface
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        if (selected) {
+            Text("●", color = colors.primary, fontSize = 11.sp)
+        }
     }
 }
 

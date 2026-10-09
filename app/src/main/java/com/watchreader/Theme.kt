@@ -11,7 +11,7 @@ import top.yukonga.miuix.kmp.theme.defaultTextStyles
 import top.yukonga.miuix.kmp.theme.lightColorScheme
 
 /**
- * 主题令牌系统（羊皮纸 / AMOLED 纯黑 / 深红夜视 / HyperOS 深色 / HyperOS 亮色）
+ * 主题令牌系统（羊皮纸 / AMOLED 纯黑 / 深红夜视 / 深空蓝 / 晴空蓝）
  *
  * 结构延续 ADR-013：每主题少量命名基色令牌（背景 / 卡片 / 按钮 / 墨字 / 次级墨 /
  * 强调蓝 / 格式绿 / 书签琥珀）→ 全量 miuix [Colors] 角色映射（迁移记录见 ADR-014）：
@@ -197,7 +197,8 @@ private val WatchRedNightColors: Colors = darkColorScheme(
     onErrorContainer = Color(0xFFFFD9DE)
 )
 
-// ═══════════════════ HyperOS（miuix 官方色板 + 语义校准覆写） ═══════════════════
+// ═══════════════════ 深空蓝 / 晴空蓝（miuix 官方色板 + 语义校准覆写） ═══════════════════
+// 显示名按配色命名（ThemeMode.label）：深空蓝 = 深灰底蓝强调，晴空蓝 = 白底蓝强调。
 // 基座取 miuix 原厂默认（深色 #242424 底 / 亮色白底），对四类角色做语义校准——
 // miuix 默认色板不认识本应用的语义绑定，零覆写在两档下直接失效（ADR-013 纪律优先于像素级复刻）：
 // 1. 品牌蓝同相校准：默认 primary(#277AF7/#3482FF) 对 12sp 按钮字与章名仅 3.6~4.0:1，
