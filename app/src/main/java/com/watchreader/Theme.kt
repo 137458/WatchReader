@@ -23,10 +23,12 @@ import top.yukonga.miuix.kmp.theme.lightColorScheme
  *
  * 对比度基线（WCAG 2.1，逐对实测，同 ADR-013）：
  * - 命名令牌本身未变，此前实测的对比度对（正文 ≥ 4.5:1）在新角色映射下原值成立；
- * - HyperOS 深浅两档以 miuix darkColorScheme()/lightColorScheme() 官方色板为基座，
- *   对语义绑定角色（品牌蓝 / 格式绿 / 书签琥珀 / 表面层次 / 次级墨）做对比度校准覆写——
- *   miuix 默认色板不认识这些语义，零覆写会使书签琥珀与格式绿在该档失效（详见覆写块注释）；
+ * - HyperOS 深浅两档为全量自持色板（53 角色逐具名声明，不依赖 miuix 出厂缺省），
+ *   中性表面 + 语义彩色 + 正确层次方向三条纪律详见该档块注释与 ADR-015；
  * - outline 作为发丝描边按装饰豁免，结构分离由 surface 三档明度与描边共同承担。
+ *
+ * 验收：HyperOS 两档的全部角色不透明性、表面层次方向、逐对对比度与语义三色色相分离
+ * 由 HyperOsPaletteTest 在 JVM 侧断言（ADR-013 的"逐对实测"自此可执行，不再只活在注释里）。
  *
  * miuix 组件默认取色纪律：miuix TextField 容器默认取 secondaryContainer（本应用
  * 将其映射为格式绿容器语义，作输入面会串色），全部 TextField 调用点必须显式传
@@ -197,52 +199,147 @@ private val WatchRedNightColors: Colors = darkColorScheme(
     onErrorContainer = Color(0xFFFFD9DE)
 )
 
-// ═══════════════════ 深空蓝 / 晴空蓝（miuix 官方色板 + 语义校准覆写） ═══════════════════
+// ═══════════════════ 深空蓝 / 晴空蓝（HyperOS 亮暗双档，全量自持色板） ═══════════════════
 // 显示名按配色命名（ThemeMode.label）：深空蓝 = 深灰底蓝强调，晴空蓝 = 白底蓝强调。
-// 基座取 miuix 原厂默认（深色 #242424 底 / 亮色白底），对四类角色做语义校准——
-// miuix 默认色板不认识本应用的语义绑定，零覆写在两档下直接失效（ADR-013 纪律优先于像素级复刻）：
-// 1. 品牌蓝同相校准：默认 primary(#277AF7/#3482FF) 对 12sp 按钮字与章名仅 3.6~4.0:1，
-//    沿同一蓝色相调整明度至 ≥5:1（深 #5E9EFF 配黑字 / 亮 #2E6BC4 配白字）；
-// 2. 格式绿 secondary 与书签琥珀 tertiaryContainerVariant：默认值为中性灰/淡蓝白，
-//    书签标题与 TXT 徽章在该档近乎不可见（1.1~1.9:1），覆写为全主题统一的绿/琥珀语义色；
-// 3. 表面层次修正：miuix 深色默认 surface 为纯黑、暗于 background(#242424)，卡片比页面更黑；
-//    亮档 surfaceVariant 为纯白、tonal 按钮失去块面。覆写为 背景→卡片→按钮 三档明度，
-//    与自定义四主题的表面层次同构；
-// 4. 次级墨两档：默认 onSurfaceVariantSummary 为 50% 白/54% 黑，在按钮底上不足 4.5:1，
-//    覆写为 65% 白 / 62% 黑预混档，background/card/button 三层表面全部实测 ≥4.5:1。
-private val MiuixDarkColors: Colors = darkColorScheme(
-    primary = Color(0xFF5E9EFF),
-    onPrimary = Color(0xFF000000),
-    secondary = Color(0xFF4EBA87),
-    onSecondary = Color(0xFF000000),
-    tertiaryContainerVariant = Color(0xFFFFB74D),
-    surface = Color(0xFF2C2C2C),
-    surfaceContainer = Color(0xFF2C2C2C),
-    surfaceVariant = Color(0xFF333333),
-    surfaceContainerHigh = Color(0xFF333333),
-    surfaceContainerHighest = Color(0xFF383838),
-    onBackgroundVariant = Color(0xA6FFFFFF),
-    onSurfaceVariantSummary = Color(0xA6FFFFFF),
-    onSurfaceVariantActions = Color(0xA6FFFFFF),
-    onSurfaceContainerVariant = Color(0xA6FFFFFF),
-    disabledOnSurface = Color(0xA6FFFFFF)
+// 这两档是全站唯一「按 HyperOS 原样建模」的主题（决策全文见 ADR-015），三条重做纪律：
+// 1. 全量自持：53 角色逐具名声明，不再依赖 lightColorScheme()/darkColorScheme() 缺省。
+//    缺省值不认识本应用的语义与层次，凡漏填的角色当场泄漏——旧实现即泄漏了暗档
+//    onBackground(#E6FFFFFF, alpha)、primaryContainer/secondaryContainer 弱配对
+//    （容器内文字 2.37~3.39:1）与 error(#F12522 对页面 3.72:1)；
+// 2. HyperOS 中性纪律：背景 / 卡片 / 按钮 / 分隔线 / 描边一律近中性灰（彩度 ≤ 14/255），
+//    彩色只出现在语义角色上——这是 HyperOS 与 MD3 tonal（表面自带主色相）的根本区别；
+// 3. 表面层次方向：暗档 页面 < 卡片 < 按钮 < 浮层（出厂 surface 为纯黑，比页面还暗，是倒挂）；
+//    亮档 卡片（纯白）> 页面（浅灰）> 按钮衬底 > 浮层，与真机 HyperOS 设置页同构。
+//
+// 语义契约与另三档完全一致（同一套消费者，禁止按档分叉取色）：primary=品牌蓝强调，
+// secondary=格式绿前景，secondaryContainer/onSecondaryContainer=TXT 角标容器对，
+// tertiaryContainerVariant=书签琥珀前景。
+//
+// miuix 0.9.4 组件内部取色考据（AAR 字节码常量池）：TextFieldDefaults 读
+// secondaryContainer/onSecondaryContainer/primary，ProgressIndicatorDefaults 读
+// primary/secondaryContainer/disabledPrimarySlider，Switch/CheckboxDefaults 读 secondary，
+// Dropdown/SpinnerDefaults 读 tertiaryContainer，Divider/Text/squircle 系列不取色。
+// 故 secondaryContainer 可安全承载绿容器语义——前提是文件头那条纪律：
+// 全部 TextField 与进度条调用点必须显式传色，输入面与轨道才会保持中性。
+//
+// 品牌蓝与格式绿均沿同色相做明度校准（出厂 #3482FF / #277AF7 对 12sp 章名与按钮字只有
+// 3.3~3.7:1）：亮 #2460C4 配白字 / 暗 #69B3FF 配深墨字，两档在全部表面 ≥4.5:1。
+// 全部对比度对由 HyperOsPaletteTest 逐对断言（不再只活在注释里）。
+private val HyperOsDarkColors: Colors = darkColorScheme(
+    // 品牌蓝（出厂 #277AF7 对页面仅 3.72，同相提亮）：页面 7.02 卡片 6.12 按钮 5.28
+    primary = Color(0xFF69B3FF),
+    onPrimary = Color(0xFF001828),                  // 入口卡深墨字，配主色 8.17:1
+    primaryVariant = Color(0xFF277AF7),             // HyperOS 原厂强调蓝，供 Card 强调档
+    onPrimaryVariant = Color(0xFFCDE6FF),
+    primaryContainer = Color(0xFF1C4B7C),
+    onPrimaryContainer = Color(0xFFBFE0FF),         // 容器对 6.53:1
+    disabledPrimary = Color(0xFF253E64),
+    disabledOnPrimary = Color(0xFF677993),
+    disabledPrimaryButton = Color(0xFF2A3F5E),
+    disabledOnPrimaryButton = Color(0xFF677893),
+    disabledPrimarySlider = Color(0xFF44587C),
+    // 格式绿：页面 6.88 卡片 6.00 按钮 5.18
+    secondary = Color(0xFF55C08D),
+    onSecondary = Color(0xFF00231A),
+    secondaryVariant = Color(0xFF38383C),
+    onSecondaryVariant = Color(0xFFEDEDF0),
+    secondaryContainer = Color(0xFF1E4B36),         // TXT 角标容器对（绿容器语义）
+    onSecondaryContainer = Color(0xFFAFE7CC),       // 容器对 7.15:1
+    secondaryContainerVariant = Color(0xFF3E3E43),  // 中性容器 variant（HyperOS 灰）
+    onSecondaryContainerVariant = Color(0xFFB0B2B8),
+    disabledSecondary = Color(0xFF2E2E32),
+    disabledOnSecondary = Color(0xFF6C6E74),
+    disabledSecondaryVariant = Color(0xFF333337),
+    disabledOnSecondaryVariant = Color(0xFF6C6E74),
+    tertiaryContainer = Color(0xFF2B3B54),          // miuix Dropdown/Spinner 容器，保留出厂蓝调
+    onTertiaryContainer = Color(0xFFB4D6FF),        // 容器对 7.54:1
+    tertiaryContainerVariant = Color(0xFFFFB74D),   // 书签琥珀文本语义（页面 8.97 卡片 7.82 按钮 6.74）
+    // 页面 #242424 → 卡片 → 按钮 → 浮层逐档提亮（修掉出厂 surface 纯黑的层次倒挂）
+    background = Color(0xFF242424),
+    onBackground = Color(0xFFEDEDF0),               // 正文柔白 13.29:1（出厂为 alpha 值 #E6FFFFFF）
+    onBackgroundVariant = Color(0xFF9FA6C2),        // 6.44:1
+    surface = Color(0xFF2E2E31),
+    onSurface = Color(0xFFEDEDF0),                  // 卡片 11.59:1
+    surfaceVariant = Color(0xFF38383C),
+    onSurfaceSecondary = Color(0xFFB9BAC0),         // 卡片 6.99 按钮 6.03
+    onSurfaceVariantSummary = Color(0xFFB0B2B8),    // 次级墨：六档表面 4.68~7.32 全部达 AA
+    onSurfaceVariantActions = Color(0xFFB0B2B8),
+    disabledOnSurface = Color(0xFF6C6E74),
+    surfaceContainer = Color(0xFF2E2E31),
+    onSurfaceContainer = Color(0xFFEDEDF0),
+    onSurfaceContainerVariant = Color(0xFFB0B2B8),
+    surfaceContainerHigh = Color(0xFF38383C),
+    onSurfaceContainerHigh = Color(0xFFB9BAC0),
+    surfaceContainerHighest = Color(0xFF3E3E43),
+    onSurfaceContainerHighest = Color(0xFFEDEDF0),
+    outline = Color(0xFF4A4A50),
+    dividerLine = Color(0xFF3A3A3F),
+    error = Color(0xFFFF7A6E),                      // 出厂 #F12522 对页面 3.72，提亮至 6.11
+    onError = Color(0xFF3B0001),
+    errorContainer = Color(0xFF6B1D16),
+    onErrorContainer = Color(0xFFFFDAD6),           // 容器对 8.97:1
+    windowDimming = Color(0x99000000),              // 系统遮罩：两档唯一允许带 alpha 的角色
+    sliderKeyPoint = Color(0xFF3E5C80),             // 出厂 #4D7A8AA6 为 alpha 值，预混为不透明
+    sliderKeyPointForeground = Color(0xFF5DAAFF),
+    sliderBackground = Color(0xFF454549),           // 出厂 #26FFFFFF 预混为不透明
 )
-private val MiuixLightColors: Colors = lightColorScheme(
-    primary = Color(0xFF2E6BC4),
+private val HyperOsLightColors: Colors = lightColorScheme(
+    // 品牌蓝（出厂 #3482FF 对卡片仅 3.34，同相压暗）：页面 5.29 卡片 5.92 按钮 5.02，配白字 5.92
+    primary = Color(0xFF2460C4),
     onPrimary = Color(0xFFFFFFFF),
-    secondary = Color(0xFF2D6A4F),
+    primaryVariant = Color(0xFF3482FF),             // HyperOS 原厂强调蓝，供 Card 强调档
+    onPrimaryVariant = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFFD6E7FB),
+    onPrimaryContainer = Color(0xFF0E3A66),         // 容器对 9.19:1
+    disabledPrimary = Color(0xFFC9DEFB),
+    disabledOnPrimary = Color(0xFFF5F8FD),
+    disabledPrimaryButton = Color(0xFFD8E6F8),
+    disabledOnPrimaryButton = Color(0xFFFFFFFF),
+    disabledPrimarySlider = Color(0xFFB8CFF5),
+    // 格式绿（TXT 徽章文字 / 成功提示）：页面 5.34 卡片 5.98 按钮 5.07
+    secondary = Color(0xFF0E7246),
     onSecondary = Color(0xFFFFFFFF),
-    tertiaryContainerVariant = Color(0xFF984607),
-    surface = Color(0xFFF5F5F5),
-    surfaceContainer = Color(0xFFF5F5F5),
-    surfaceVariant = Color(0xFFE9E9E9),
-    surfaceContainerHigh = Color(0xFFEDEDED),
-    surfaceContainerHighest = Color(0xFFE9E9E9),
-    onBackgroundVariant = Color(0x9E000000),
-    onSurfaceVariantSummary = Color(0x9E000000),
-    onSurfaceVariantActions = Color(0x9E000000),
-    onSurfaceContainerVariant = Color(0x9E000000),
-    disabledOnSurface = Color(0x9E000000)
+    secondaryVariant = Color(0xFFECECEF),           // 普通按钮底（miuix ButtonDefaults 常规档）
+    onSecondaryVariant = Color(0xFF17181A),
+    secondaryContainer = Color(0xFFCFE7DB),         // TXT 角标容器对（绿容器语义）
+    onSecondaryContainer = Color(0xFF14432C),       // 容器对 8.62:1
+    secondaryContainerVariant = Color(0xFFE4E5E8),  // 中性容器 variant（HyperOS 灰）
+    onSecondaryContainerVariant = Color(0xFF5F6368),
+    disabledSecondary = Color(0xFFF1F1F3),
+    disabledOnSecondary = Color(0xFFFFFFFF),
+    disabledSecondaryVariant = Color(0xFFF2F2F4),
+    disabledOnSecondaryVariant = Color(0xFFB6B9BF),
+    tertiaryContainer = Color(0xFFEAF2FF),          // miuix Dropdown/Spinner 容器，保留出厂蓝调
+    onTertiaryContainer = Color(0xFF1A5CBD),        // 容器对 4.55:1
+    tertiaryContainerVariant = Color(0xFF8A4B08),   // 书签琥珀文本语义（页面 6.07 卡片 6.79 按钮 5.76）
+    // 卡片（纯白）> 页面（浅灰）> 按钮衬底 > 浮层（HyperOS 亮档层次方向，出厂为页面纯白卡片浅灰的倒挂）
+    background = Color(0xFFF2F2F3),
+    onBackground = Color(0xFF17181A),               // 正文浓墨 15.88:1
+    onBackgroundVariant = Color(0xFF5A5F66),        // 5.75:1
+    surface = Color(0xFFFFFFFF),
+    onSurface = Color(0xFF17181A),                  // 卡片 17.77:1
+    surfaceVariant = Color(0xFFECECEF),
+    onSurfaceSecondary = Color(0xFF4B4E53),         // 卡片 8.35 按钮 7.09
+    onSurfaceVariantSummary = Color(0xFF5F6368),    // 次级墨：六档表面 4.59~6.05 全部达 AA
+    onSurfaceVariantActions = Color(0xFF5F6368),
+    disabledOnSurface = Color(0xFF979AA1),
+    surfaceContainer = Color(0xFFFFFFFF),
+    onSurfaceContainer = Color(0xFF17181A),
+    onSurfaceContainerVariant = Color(0xFF5F6368),
+    surfaceContainerHigh = Color(0xFFE6E7EA),
+    onSurfaceContainerHigh = Color(0xFF4B4E53),
+    surfaceContainerHighest = Color(0xFFDFE0E4),
+    onSurfaceContainerHighest = Color(0xFF17181A),
+    outline = Color(0xFFC9CBD1),                    // 强描边（发丝按装饰豁免，与卡片有明度步长）
+    dividerLine = Color(0xFFE3E4E8),                // 弱分隔线（预混弱档，替代运行时透明度）
+    error = Color(0xFFC0331F),                      // 出厂 #E94634 对页面仅 3.60，校准至 5.03
+    onError = Color(0xFFFFFFFF),
+    errorContainer = Color(0xFFFAE3DF),
+    onErrorContainer = Color(0xFF6B0D07),           // 容器对 10.15:1
+    windowDimming = Color(0x4D000000),              // 系统遮罩：两档唯一允许带 alpha 的角色
+    sliderKeyPoint = Color(0xFFA9C4E8),             // 出厂 #4DA3B3CD 为 alpha 值，预混为不透明
+    sliderKeyPointForeground = Color(0xFF6EB5FF),
+    sliderBackground = Color(0xFFE5E6E8),           // 出厂 #0F000000 预混为不透明
 )
 
 /** 五套主题共用入口：按 [ThemeMode] 取对应 miuix [Colors]（MainActivity 唯一切换点） */
@@ -250,8 +347,8 @@ fun watchColorsOf(mode: ThemeMode): Colors = when (mode) {
     ThemeMode.PARCHMENT -> WatchColors
     ThemeMode.DARK -> WatchDarkColors
     ThemeMode.RED_NIGHT -> WatchRedNightColors
-    ThemeMode.MIUIX -> MiuixDarkColors
-    ThemeMode.MIUIX_LIGHT -> MiuixLightColors
+    ThemeMode.MIUIX -> HyperOsDarkColors
+    ThemeMode.MIUIX_LIGHT -> HyperOsLightColors
 }
 
 /**
