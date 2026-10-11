@@ -18,6 +18,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
@@ -43,6 +45,8 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +54,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
@@ -157,6 +162,60 @@ fun rememberCrownScrollTarget(key: Any?, onDelta: (Float) -> Boolean) {
         val target = CrownScrollTarget(onDelta)
         CrownScrollTargetRegistry.activate(target)
         onDispose { CrownScrollTargetRegistry.deactivate(target) }
+    }
+}
+
+/**
+ * 右滑退出裁决器：把「是否构成一次右滑」从 Compose 手势管线里剥出来做纯位移判定，
+ * 三条行为由 SwipeBackArbiterTest 锁定（水平主导、累加门限、触发即复位）。
+ */
+class SwipeBackArbiter(private val thresholdPx: Float) {
+    private var accumulated = 0f
+
+    /** 竖向或等量斜向位移直接放行给滚动容器；反向位移回吐累加，杜绝画圈式手抖误触 */
+    fun onDrag(dx: Float, dy: Float): Boolean {
+        if (abs(dx) <= abs(dy)) return false
+        accumulated += dx
+        if (accumulated > thresholdPx) {
+            accumulated = 0f
+            return true
+        }
+        return false
+    }
+
+    fun reset() {
+        accumulated = 0f
+    }
+}
+
+/**
+ * 右滑退出手势：挂在页面 / 浮层根节点，与竖向滚动共存。
+ *
+ * 走 EventPass.Initial 在子节点之前取得位移，只在水平主导时消费，竖向滚动与行内点按
+ * 全程不受影响；[enabled] 为 false 时整条识别器停摆（浮层开启期由浮层自己接右滑，
+ * 宿主页面让位，避免一次滑动同时关浮层又退页面）。
+ */
+fun Modifier.horizontalDismissBack(
+    enabled: Boolean = true,
+    thresholdPx: Float = 60f,
+    onDismiss: () -> Unit
+): Modifier = pointerInput(enabled, thresholdPx) {
+    if (!enabled) return@pointerInput
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        val arbiter = SwipeBackArbiter(thresholdPx)
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val change = event.changes.firstOrNull() ?: continue
+            if (!change.pressed) break
+            val dx = change.position.x - change.previousPosition.x
+            val dy = change.position.y - change.previousPosition.y
+            if (arbiter.onDrag(dx, dy)) {
+                change.consume()
+                onDismiss()
+                break
+            }
+        }
     }
 }
 

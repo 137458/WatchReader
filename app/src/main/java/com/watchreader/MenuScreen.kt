@@ -111,8 +111,17 @@ fun MenuScreen(
     }
     val fontLabel = if (FontType.fromValue(fontType) == FontType.SERIF) "宋体" else "黑体"
 
+    // 右滑退出：菜单页右滑回阅读页；配色浮层开启期由浮层自己接管右滑，此处停摆
+    val backTick = rememberTickHaptic()
     // 底色由 Window decorView 统一承载，此处不再整屏填充（少一层全屏 overdraw）
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .horizontalDismissBack(enabled = !showThemePicker) {
+                backTick()
+                onBack()
+            }
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -347,11 +356,17 @@ fun MenuScreen(
                 CrownScrollHelper.dispatchScroll(delta, pickerScroll, pickerCrownContext)
                 true
             }
+            val pickerTick = rememberTickHaptic()
             androidx.activity.compose.BackHandler { showThemePicker = false }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(colors.background)
+                    // 右滑关浮层（与传书页右滑退出同一阻尼口径），竖向滚动仍归列表
+                    .horizontalDismissBack {
+                        pickerTick()
+                        showThemePicker = false
+                    }
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
