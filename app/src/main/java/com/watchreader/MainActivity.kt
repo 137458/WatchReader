@@ -7,10 +7,12 @@ import android.view.MotionEvent
 import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.tween
@@ -150,13 +152,25 @@ class MainActivity : ComponentActivity() {
                     Box(modifier = Modifier.fillMaxSize()) {
                         AppContent(uiState)
 
-                        // 恢复备份确认浮层：SAF 选完文件先亮出将载入的书目数，确认才覆盖
-                        uiState.pendingRestoreCount?.let { count ->
+                        // 恢复备份确认浮层：SAF 选完文件先亮出将载入的书目数，确认才覆盖。
+                        // 出口三条：取消按钮 / 返回键 / 右滑，后两者一律走「取消」而非覆盖，
+                        // 与浮层外点击被拦截的强制二选一语义一致（侧滑绝不等于确认）。
+                        // 退出动画期 pendingRestoreCount 已置空，故留存最后一次书目数供离场渲染。
+                        val restoreCount = uiState.pendingRestoreCount
+                        var lastRestoreCount by remember { mutableStateOf(0) }
+                        if (restoreCount != null) lastRestoreCount = restoreCount
+                        AnimatedVisibility(
+                            visible = restoreCount != null,
+                            enter = WatchOverlay.Enter,
+                            exit = WatchOverlay.Exit
+                        ) {
                             val blockInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                            BackHandler { viewModel.cancelBackupRestore() }
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .background(Color.Black.copy(alpha = 0.6f))
+                                    .swipeDismissBack { viewModel.cancelBackupRestore() }
                                     // 拦截浮层外的一切点击，强制走 取消/确认 二选一
                                     .clickable(
                                         interactionSource = blockInteraction,
@@ -178,7 +192,7 @@ class MainActivity : ComponentActivity() {
                                             color = colors.onBackground
                                         )
                                         Text(
-                                            text = "将载入 $count 本书的书架快照，并覆盖当前书架与全部阅读设置。",
+                                            text = "将载入 $lastRestoreCount 本书的书架快照，并覆盖当前书架与全部阅读设置。",
                                             style = MiuixTheme.textStyles.body1.copy(fontSize = 11.sp),
                                             color = colors.onSurfaceVariantSummary,
                                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -375,7 +389,8 @@ class MainActivity : ComponentActivity() {
                     },
                     onRestore = {
                         importBackupLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
-                    }
+                    },
+                    onExitApp = { finish() }
                 )
 
                 is Screen.Loading -> LoadingScreen(onBack = { viewModel.handleBack() })

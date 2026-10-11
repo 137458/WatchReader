@@ -1,5 +1,7 @@
 package com.watchreader
 
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.EaseInCubic
@@ -15,6 +17,10 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -377,6 +383,18 @@ fun PillButton(
 }
 
 enum class PillEmphasis { Tonal, Primary, Outline }
+
+/**
+ * 浮层进出场统一档位：scale + fade，时长复用 WatchMotion 的微内容档
+ * （180ms 进 / 160ms 出），全部条件浮层共用，杜绝各页自定 scale 与时长漂移
+ */
+object WatchOverlay {
+    val Enter: EnterTransition = fadeIn(tween(WatchMotion.DUR_SWAP_IN)) +
+        scaleIn(initialScale = 0.92f, animationSpec = tween(WatchMotion.DUR_SWAP_IN))
+
+    val Exit: ExitTransition = fadeOut(tween(WatchMotion.DUR_FADE_OUT)) +
+        scaleOut(targetScale = 0.92f, animationSpec = tween(WatchMotion.DUR_FADE_OUT))
+}
 
 /** 分区小标题：加宽字距的克星级标签 */
 @Composable

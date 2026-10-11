@@ -70,7 +70,8 @@ fun BookshelfScreen(
     infoMessage: String? = null,
     onInfoMessageShown: () -> Unit = {},
     onBackup: () -> Unit = {},
-    onRestore: () -> Unit = {}
+    onRestore: () -> Unit = {},
+    onExitApp: () -> Unit = {}
 ) {
     val colors = MiuixTheme.colorScheme
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -110,7 +111,13 @@ fun BookshelfScreen(
         true
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    // 右滑关闭应用：Wear 对顶层视图的定义即「左→右滑动关闭当前视图」，
+    // 书架是应用根页，右滑与系统返回同义
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .swipeDismissBack(onDismiss = onExitApp)
+    ) {
         // 顶部/底部羽化渐隐（统一 EdgeFadeMask 基元，与其他滚动页观感一致）
         EdgeFadeMask(
             edge = Alignment.Top,

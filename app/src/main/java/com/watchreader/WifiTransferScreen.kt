@@ -9,7 +9,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
@@ -26,7 +25,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -109,21 +107,11 @@ fun WifiTransferScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            // 右滑手势退出（带累加阻尼防手抖误触，贴合 Wear OS 交互习惯）
-            .pointerInput(isTransferring) {
-                var dragAccumulator = 0f
-                detectHorizontalDragGestures(
-                    onDragEnd = { dragAccumulator = 0f },
-                    onDragCancel = { dragAccumulator = 0f },
-                    onHorizontalDrag = { _, dragAmount ->
-                        dragAccumulator += dragAmount
-                        if (dragAccumulator > 60f && !isTransferring) {
-                            dragAccumulator = 0f
-                            tick()
-                            onBack()
-                        }
-                    }
-                )
+            // 右滑退出：与全站同一 Wear 口径（跟手平移、未越限弹回、越限滑出）；
+            // 传输进行期整条识别器停摆，中断须走两步确认返回
+            .swipeDismissBack(enabled = !isTransferring) {
+                tick()
+                onBack()
             },
         contentAlignment = Alignment.Center
     ) {

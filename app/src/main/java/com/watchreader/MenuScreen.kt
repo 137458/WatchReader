@@ -355,10 +355,8 @@ fun MenuScreen(
         // 返回键先关浮层；浮层期表冠滚动注册抢占，直接寻址浮层列表
         AnimatedVisibility(
             visible = showThemePicker,
-            enter = fadeIn(tween(WatchMotion.DUR_SWAP_IN)) +
-                scaleIn(initialScale = 0.92f, animationSpec = tween(WatchMotion.DUR_SWAP_IN)),
-            exit = fadeOut(tween(WatchMotion.DUR_FADE_OUT)) +
-                scaleOut(targetScale = 0.92f, animationSpec = tween(WatchMotion.DUR_FADE_OUT)),
+            enter = WatchOverlay.Enter,
+            exit = WatchOverlay.Exit,
         ) {
             val pickerScroll = rememberScrollState()
             val pickerCrownContext = LocalContext.current

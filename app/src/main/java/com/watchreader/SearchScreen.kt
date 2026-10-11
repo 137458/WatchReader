@@ -65,7 +65,12 @@ fun SearchScreen(
     // 搜索词由 VM 持有（与结果同生命周期）：返回后再进本页仍可微调关键词重查
     var searched by remember { mutableStateOf(false) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            // 右滑退出搜索页（与返回键同一处理）
+            .swipeDismissBack(onDismiss = onBack)
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()

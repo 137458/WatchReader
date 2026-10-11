@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -145,7 +146,10 @@ fun ChapterListScreen(
     val ranges = remember(chapters.size) { generateChapterRanges(chapters.size) }
 
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            // 右滑退出目录页；选卷浮层开启期让位给浮层自身的右滑关闭
+            .swipeDismissBack(enabled = !showRangePicker, onDismiss = onBack),
         contentAlignment = Alignment.TopCenter
     ) {
         if (selectedTab == 0) {
@@ -340,8 +344,12 @@ fun ChapterListScreen(
             }
         }
 
-        // 2. 范围分卷极速直达浮层
-        if (showRangePicker && ranges.isNotEmpty()) {
+        // 2. 范围分卷极速直达浮层（进出场走统一 scale + fade 档位）
+        AnimatedVisibility(
+            visible = showRangePicker && ranges.isNotEmpty(),
+            enter = WatchOverlay.Enter,
+            exit = WatchOverlay.Exit,
+        ) {
             val activeRangeIndex = ranges.indexOfFirst { currentChapterIndex in it.startIndex..it.endIndex }.coerceAtLeast(0)
             // 选卷列表条件化刷新状态：[0]=章节总数快照, [1]=当前章节快照
             val rangeSyncState = remember { intArrayOf(-1, -1) }
@@ -350,6 +358,8 @@ fun ChapterListScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(colorScheme.background)
+                    // 右滑关浮层：内容跟手平移并淡出，越过门限滑出后关闭
+                    .swipeDismissBack { showRangePicker = false }
                     .clickable(interactionSource = noIndication, indication = null) {
                         showRangePicker = false
                     },
