@@ -2,9 +2,12 @@ package com.watchreader
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
@@ -117,7 +120,7 @@ fun MenuScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .horizontalDismissBack(enabled = !showThemePicker) {
+            .swipeDismissBack(enabled = !showThemePicker) {
                 backTick()
                 onBack()
             }
@@ -348,8 +351,15 @@ fun MenuScreen(
         )
 
         // 配色选择浮层：全屏单选列表（底色 + 强调色色样直达观感），点击即换并关闭；
+        // 进出场走 scale + fade（微内容时长档），右滑则内容跟手滑出后关闭；
         // 返回键先关浮层；浮层期表冠滚动注册抢占，直接寻址浮层列表
-        if (showThemePicker) {
+        AnimatedVisibility(
+            visible = showThemePicker,
+            enter = fadeIn(tween(WatchMotion.DUR_SWAP_IN)) +
+                scaleIn(initialScale = 0.92f, animationSpec = tween(WatchMotion.DUR_SWAP_IN)),
+            exit = fadeOut(tween(WatchMotion.DUR_FADE_OUT)) +
+                scaleOut(targetScale = 0.92f, animationSpec = tween(WatchMotion.DUR_FADE_OUT)),
+        ) {
             val pickerScroll = rememberScrollState()
             val pickerCrownContext = LocalContext.current
             rememberCrownScrollTarget(pickerScroll) { delta ->
@@ -362,8 +372,8 @@ fun MenuScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(colors.background)
-                    // 右滑关浮层（与传书页右滑退出同一阻尼口径），竖向滚动仍归列表
-                    .horizontalDismissBack {
+                    // 右滑关浮层：内容跟手平移并淡出，越过门限滑出后关闭，竖向滚动仍归列表
+                    .swipeDismissBack {
                         pickerTick()
                         showThemePicker = false
                     }

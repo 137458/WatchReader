@@ -12,6 +12,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -35,7 +36,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -166,18 +170,24 @@ fun rememberCrownScrollTarget(key: Any?, onDelta: (Float) -> Boolean) {
 }
 
 /**
- * 右滑退出裁决器：把「是否构成一次右滑」从 Compose 手势管线里剥出来做纯位移判定，
- * 三条行为由 SwipeBackArbiterTest 锁定（水平主导、累加门限、触发即复位）。
+ * 右滑退出裁决器：把「是否构成一次右滑」与「跟手进度」从 Compose 手势管线里剥出来做
+ * 纯位移判定，行为由 SwipeBackArbiterTest 锁定（水平主导、累加门限、进度线性、触发即封顶）。
  */
 class SwipeBackArbiter(private val thresholdPx: Float) {
     private var accumulated = 0f
+
+    /** 0..1 归一化进度，驱动内容跟手平移与淡出；越限后保持 1 直到 reset */
+    var progress: Float = 0f
+        private set
 
     /** 竖向或等量斜向位移直接放行给滚动容器；反向位移回吐累加，杜绝画圈式手抖误触 */
     fun onDrag(dx: Float, dy: Float): Boolean {
         if (abs(dx) <= abs(dy)) return false
         accumulated += dx
+        progress = (accumulated / thresholdPx).coerceIn(0f, 1f)
         if (accumulated > thresholdPx) {
             accumulated = 0f
+            progress = 1f
             return true
         }
         return false
@@ -185,38 +195,99 @@ class SwipeBackArbiter(private val thresholdPx: Float) {
 
     fun reset() {
         accumulated = 0f
+        progress = 0f
     }
 }
 
 /**
- * 右滑退出手势：挂在页面 / 浮层根节点，与竖向滚动共存。
+ * 右滑退出（Wear 运动口径的本应用自持实现）：Google 对 Wear 侧滑返回的定义是
+ * 「内容跟手平移 + 未越门限松手弹回 + 越门限整屏滑出」，动画属于手势本身而非事后补帧。
+ * ADR-001 不引 androidx.wear.compose，故在 UiKit 内复刻同一运动语义。
  *
- * 走 EventPass.Initial 在子节点之前取得位移，只在水平主导时消费，竖向滚动与行内点按
- * 全程不受影响；[enabled] 为 false 时整条识别器停摆（浮层开启期由浮层自己接右滑，
- * 宿主页面让位，避免一次滑动同时关浮层又退页面）。
+ * 逐帧只改 graphicsLayer（平移与 alpha），不触发重组；走 EventPass.Initial 在子节点之前
+ * 取得位移，只认水平主导，竖向滚动与行内点按全程不受影响；[enabled] 为 false 时整条
+ * 识别器停摆（浮层开启期由浮层自己接右滑，宿主页面让位，避免一次滑动同时关浮层又退页）。
  */
-fun Modifier.horizontalDismissBack(
+@Composable
+fun Modifier.swipeDismissBack(
     enabled: Boolean = true,
     thresholdPx: Float = 60f,
     onDismiss: () -> Unit
-): Modifier = pointerInput(enabled, thresholdPx) {
-    if (!enabled) return@pointerInput
-    awaitEachGesture {
-        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-        val arbiter = SwipeBackArbiter(thresholdPx)
-        while (true) {
-            val event = awaitPointerEvent(PointerEventPass.Initial)
-            val change = event.changes.firstOrNull() ?: continue
-            if (!change.pressed) break
-            val dx = change.position.x - change.previousPosition.x
-            val dy = change.position.y - change.previousPosition.y
-            if (arbiter.onDrag(dx, dy)) {
-                change.consume()
+): Modifier {
+    // 视觉位移只有一个来源：拖拽期 spec 为 snap 逐帧跟手，松手后切 spring（弹回）
+    // 或 tween（滑出），滑出结束由 finishedListener 回调 onDismiss。
+    // awaitEachGesture 是 @RestrictsSuspension 作用域，内部不得挂起 Animatable，
+    // 故全程零协程、只写普通状态。
+    var dragging by remember { mutableStateOf(false) }
+    var dismissing by remember { mutableStateOf(false) }
+    var targetPx by remember { mutableFloatStateOf(0f) }
+    val offset by animateFloatAsState(
+        targetValue = targetPx,
+        animationSpec = when {
+            dragging -> snap()
+            dismissing -> tween(WatchMotion.DUR_FADE_OUT, easing = WatchMotion.ExitEasing)
+            else -> spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)
+        },
+        label = "swipe-dismiss",
+        finishedListener = {
+            if (dismissing) {
+                dismissing = false
+                targetPx = 0f
                 onDismiss()
-                break
             }
         }
+    )
+    LaunchedEffect(enabled) {
+        if (!enabled) {
+            dragging = false
+            dismissing = false
+            targetPx = 0f
+        }
     }
+    return this
+        .graphicsLayer {
+            val layerWidth = size.width
+            translationX = offset
+            alpha = if (layerWidth <= 0f) 1f else 1f - 0.28f * (offset / layerWidth)
+        }
+        .pointerInput(enabled, thresholdPx) {
+            if (!enabled) return@pointerInput
+            val width = size.width.toFloat()
+            awaitEachGesture {
+                awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                val arbiter = SwipeBackArbiter(thresholdPx)
+                var dragged = false
+                var fired = false
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = event.changes.firstOrNull() ?: continue
+                    if (!change.pressed) break
+                    if (arbiter.onDrag(
+                            change.position.x - change.previousPosition.x,
+                            change.position.y - change.previousPosition.y
+                        )) {
+                        fired = true
+                        change.consume()
+                        break
+                    }
+                    if (arbiter.progress > 0f) {
+                        dragged = true
+                        change.consume()
+                        dragging = true
+                        targetPx = arbiter.progress * width
+                    }
+                }
+                if (dragged || fired) {
+                    dragging = false
+                    if (fired) {
+                        dismissing = true
+                        targetPx = width
+                    } else {
+                        targetPx = 0f
+                    }
+                }
+            }
+        }
 }
 
 /**

@@ -1,5 +1,6 @@
 package com.watchreader
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -64,5 +65,44 @@ class SwipeBackArbiterTest {
         assertFalse(arbiter.onDrag(50f, 0f))
         arbiter.reset()
         assertFalse(arbiter.onDrag(10f, 0f))
+    }
+
+    // ────────────────── progress（跟手位移与淡出由它驱动） ──────────────────
+
+    @Test
+    fun `progress 随累加位移线性增长并在越限时封顶`() {
+        val arbiter = SwipeBackArbiter(threshold)
+        arbiter.onDrag(30f, 2f)
+        assertEquals(0.5f, arbiter.progress, 0.001f)
+        arbiter.onDrag(20f, 0f)
+        assertEquals(0.8333f, arbiter.progress, 0.001f)
+        assertTrue(arbiter.onDrag(50f, 0f))
+        assertEquals(1f, arbiter.progress, 0.001f)
+    }
+
+    @Test
+    fun `竖向主导帧不改变 progress`() {
+        val arbiter = SwipeBackArbiter(threshold)
+        arbiter.onDrag(30f, 0f)
+        val before = arbiter.progress
+        repeat(5) { arbiter.onDrag(5f, 40f) }
+        assertEquals(before, arbiter.progress, 0.0001f)
+    }
+
+    @Test
+    fun `反向位移拉低 progress`() {
+        val arbiter = SwipeBackArbiter(threshold)
+        arbiter.onDrag(45f, 0f)
+        arbiter.onDrag(-15f, 0f)
+        assertEquals(0.5f, arbiter.progress, 0.001f)
+    }
+
+    @Test
+    fun `reset 后 progress 归零`() {
+        val arbiter = SwipeBackArbiter(threshold)
+        assertTrue(arbiter.onDrag(70f, 0f))
+        assertEquals(1f, arbiter.progress, 0.001f)
+        arbiter.reset()
+        assertEquals(0f, arbiter.progress, 0.0001f)
     }
 }
