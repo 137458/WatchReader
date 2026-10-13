@@ -88,4 +88,44 @@ class CrownScrollTuningTest {
         assertFalse(gate2.onScroll(40f))
         assertTrue(gate2.onScroll(10f))
     }
+
+    @Test
+    fun testCrownStepGateNotchQuantizationAndRemainder() {
+        val gate = CrownStepGate(thresholdUnits = 12f, idleTimeoutMs = 250L)
+        var now = 1000L
+
+        // 未满 1 档返回 0
+        assertEquals(0, gate.onDelta(5f, now))
+        assertEquals(0, gate.onDelta(5f, now))
+
+        // 累积 5 + 5 + 4 = 14 单位，满 1 档（12 单位），余量 2 单位
+        assertEquals(1, gate.onDelta(4f, now))
+
+        // 快甩 24 单位：余量 2 + 24 = 26 单位，满 2 档（24 单位），余量 2 单位
+        assertEquals(2, gate.onDelta(24f, now))
+
+        // 补齐 10 单位达到 1 档（余量 2 + 10 = 12 单位）
+        assertEquals(1, gate.onDelta(10f, now))
+    }
+
+    @Test
+    fun testCrownStepGateBidirectionalAndIdleReset() {
+        val gate = CrownStepGate(thresholdUnits = 12f, idleTimeoutMs = 250L)
+        var now = 1000L
+
+        // 顺时针累加 7 单位
+        assertEquals(0, gate.onDelta(7f, now))
+
+        // 逆时针回退 3 单位，余量回落为 4 单位
+        assertEquals(0, gate.onDelta(-3f, now))
+
+        // 逆时针连续 -16 单位：4 + (-16) = -12 单位（满逆向 1 档）
+        assertEquals(-1, gate.onDelta(-16f, now))
+
+        // 停顿超过 250ms 空闲超时，余量清零
+        now += 300L
+        assertEquals(0, gate.onDelta(6f, now))
+        now += 300L
+        assertEquals(0, gate.onDelta(6f, now)) // 前次过期清零，本次独立仍未满 1 档
+    }
 }

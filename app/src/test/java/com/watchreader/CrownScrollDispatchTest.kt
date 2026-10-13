@@ -48,11 +48,100 @@ class CrownScrollDispatchTest {
     }
 
     @Test
-    fun highResolutionStreamScalesLinearly() {
-        // 实机事件流为高分辨率单位：快甩单事件可达 ±50+，必须全量线性换算而非跳档
+    fun belowThresholdDoesNotScrollOrVibrate() {
+        CrownScrollHelper.resetFeedbackGatesForTest()
         val state = newScrollState()
-        CrownScrollHelper.dispatchScroll(55f, state, null, null)
-        assertEquals((55f * 64f / 12f).toInt(), state.value)
+        var ticks = 0
+        CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
+        try {
+            CrownScrollHelper.dispatchScroll(6f, state, null, null) // 不足一档（12 单位）
+            assertEquals("未满足一档门限绝不触发界面滚动", 0, state.value)
+            assertEquals("未满足一档门限绝不触发齿轮微振", 0, ticks)
+        } finally {
+            CrownScrollHelper.gearTickProbe = null
+        }
+    }
+
+    @Test
+    fun accumulatingToThresholdTriggersScrollAndVibrate() {
+        CrownScrollHelper.resetFeedbackGatesForTest()
+        val state = newScrollState()
+        var ticks = 0
+        CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
+        try {
+            CrownScrollHelper.dispatchScroll(6f, state, null, null) // 累积 6 单位
+            assertEquals(0, state.value)
+            assertEquals(0, ticks)
+
+            CrownScrollHelper.dispatchScroll(6f, state, null, null) // 补齐 12 单位（满 1 档）
+            assertEquals("满 1 档必须分发一次标准步进滚动", 64, state.value)
+            assertEquals("满 1 档必须 1:1 触发一次齿轮微振", 1, ticks)
+        } finally {
+            CrownScrollHelper.gearTickProbe = null
+        }
+    }
+
+    @Test
+    fun idleTimeoutResetsAccumulator() {
+        CrownScrollHelper.resetFeedbackGatesForTest()
+        var now = 1000L
+        CrownScrollHelper.timeSourceMs = { now }
+        val state = newScrollState()
+        var ticks = 0
+        CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
+        try {
+            CrownScrollHelper.dispatchScroll(6f, state, null, null) // 累积 6 单位
+            assertEquals(0, state.value)
+
+            now += 300L // 停顿 300ms（超过 250ms 空闲超时）
+            CrownScrollHelper.dispatchScroll(6f, state, null, null) // 前次余量已回弹清零，本次独立仍未满一档
+            assertEquals("空闲超时后余量重置，不应越时拼接滚动", 0, state.value)
+            assertEquals("空闲超时后不应误触微振", 0, ticks)
+        } finally {
+            CrownScrollHelper.gearTickProbe = null
+        }
+    }
+
+    @Test
+    fun oppositeRotationRollsBackRemainder() {
+        CrownScrollHelper.resetFeedbackGatesForTest()
+        val state = newScrollState(maxValue = 1000)
+        var ticks = 0
+        CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
+        try {
+            CrownScrollHelper.dispatchScroll(8f, state, null, null) // 顺时针累积 8 单位，未达门限
+            assertEquals(0, state.value)
+
+            CrownScrollHelper.dispatchScroll(-4f, state, null, null) // 逆时针回退 4 单位，余量回落为 4 单位
+            assertEquals(0, state.value)
+
+            CrownScrollHelper.dispatchScroll(8f, state, null, null) // 再顺时针 8 单位，4 + 8 = 12 单位（满 1 档）
+            assertEquals(64, state.value)
+            assertEquals(1, ticks)
+        } finally {
+            CrownScrollHelper.gearTickProbe = null
+        }
+    }
+
+    @Test
+    fun highResolutionStreamQuantizesToNotchesAndRetainsRemainder() {
+        CrownScrollHelper.resetFeedbackGatesForTest()
+        val state = newScrollState()
+        var ticks = 0
+        CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
+        try {
+            // 快甩单事件 55 单位：4 档（48 单位）+ 7 单位余量
+            CrownScrollHelper.dispatchScroll(55f, state, null, null)
+            assertEquals("55 单位应量子化为 4 档位移（4 * 64 = 256）", 256, state.value)
+            assertEquals("快甩 4 档触发微振", 1, ticks)
+
+            // 后续小微动 5 单位：余量 7 + 5 = 12 单位，补齐第 5 档
+            CrownScrollHelper.dispatchScroll(5f, state, null, null)
+            assertEquals("余量补齐后滚动到第 5 档（5 * 64 = 320）", 320, state.value)
+            assertEquals(2, ticks)
+        } finally {
+            CrownScrollHelper.gearTickProbe = null
+        }
     }
 
     @Test
