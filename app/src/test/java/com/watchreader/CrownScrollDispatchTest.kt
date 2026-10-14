@@ -243,6 +243,53 @@ class CrownScrollDispatchTest {
     }
 
     @Test
+    fun slowSingleNotchNeverTriggersFling() {
+        CrownScrollHelper.resetFeedbackGatesForTest()
+        var now = 1000L
+        CrownScrollHelper.timeSourceMs = { now }
+        val state = newScrollState()
+        var flingFired = false
+        CrownScrollHelper.flingStartProbe = { _ -> flingFired = true }
+        try {
+            // 慢转 1 档（12 单位 = 64px）：未达最小位移门限（120px）
+            CrownScrollHelper.dispatchScroll(12f, state, null, null)
+            assertEquals(64, state.value)
+
+            // 停顿超过 settle 延时，执行 settle 检查
+            now += 50L
+            CrownScrollHelper.triggerSettleForTest()
+            assertTrue("单档或微小位移绝对不应触发惯性滑动", !flingFired)
+        } finally {
+            CrownScrollHelper.flingStartProbe = null
+        }
+    }
+
+    @Test
+    fun fastFlickTriggersFlingWhenDisplacementAndVelocitySufficient() {
+        CrownScrollHelper.resetFeedbackGatesForTest()
+        var now = 1000L
+        CrownScrollHelper.timeSourceMs = { now }
+        val state = newScrollState()
+        var flingVelocity = 0f
+        CrownScrollHelper.flingStartProbe = { v -> flingVelocity = v }
+        try {
+            // 快速甩动：在 40ms 内连续转动 36 单位（3 档 = 192px）
+            CrownScrollHelper.dispatchScroll(18f, state, null, null)
+            now += 20L
+            CrownScrollHelper.dispatchScroll(18f, state, null, null)
+            now += 20L
+            assertEquals(192, state.value)
+
+            // 松手后经过 settle 延时
+            now += 40L
+            CrownScrollHelper.triggerSettleForTest()
+            assertTrue("快甩且位移达标时必须触发惯性滑动", flingVelocity >= CrownScrollHelper.FLING_MIN_VELOCITY_PX_S)
+        } finally {
+            CrownScrollHelper.flingStartProbe = null
+        }
+    }
+
+    @Test
     fun continuedSpinAtBottomEdgeStaysSilentlyClamped() {
         // 安全边界：触底后持续同向空转，完全静默钳制（无齿轮微振、无越界、无任何边界振感）
         CrownScrollHelper.resetFeedbackGatesForTest()

@@ -49,6 +49,29 @@ object CrownScrollHelper {
     // 调速档位微振节流器（跨界面共享：每物理档位 12 单位累积一次微振，供 RSVP 速率 / 自动滚屏调速使用）
     private val adjustTickGate = CrownTickGate(thresholdPx = CROWN_UNITS_PER_NOTCH)
 
+    // 惯性滑动启动最小累计位移门限：单次连续手势必须累计 >= 120px（接近 2 档），慢速微调与单档绝不触发
+    internal const val FLING_MIN_DISPLACEMENT_PX = 120f
+    // 惯性起振速度门限（px/s）
+    internal const val FLING_MIN_VELOCITY_PX_S = 600f
+    private const val FLING_MAX_VELOCITY_PX_S = 2000f
+    // 手势停顿判定时间（松手延时）
+    internal const val FLING_SETTLE_DELAY_MS = 35L
+    // 手势空闲超时：超过 40ms 无事件视为前一次手势完全结束，重置累计位移与速度窗口
+    private const val GESTURE_IDLE_TIMEOUT_MS = 40L
+
+    private var gestureStartMs = 0L
+    private var gestureLastEventMs = 0L
+    private var gestureAccumPx = 0f
+    private var lastEstimatedVelocity = 0f
+
+    // 供 JVM 单测断言 Fling 触发
+    internal var flingStartProbe: ((Float) -> Unit)? = null
+
+    private var settleSurface: Any? = null
+    private var settleContext: Context? = null
+    private var settlePending = false
+    private val mainHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
+
     // 时间源（可注入：JVM 单测用假时钟驱动节流与重武装逻辑）
     internal var timeSourceMs: () -> Long = { android.os.SystemClock.uptimeMillis() }
 
@@ -60,6 +83,15 @@ object CrownScrollHelper {
         scrollStepGate.reset()
         gearTickGate.reset()
         adjustTickGate.reset()
+        gestureStartMs = 0L
+        gestureLastEventMs = 0L
+        gestureAccumPx = 0f
+        lastEstimatedVelocity = 0f
+        settleSurface = null
+        settleContext = null
+        settlePending = false
+        flingStartProbe = null
+        stopFlingInternal()
         timeSourceMs = { android.os.SystemClock.uptimeMillis() }
     }
 
@@ -128,8 +160,8 @@ object CrownScrollHelper {
     }
 
     /**
-     * 执行表冠滚动分发（Compose 滚动容器）：齿轮档位对齐模式
-     * 必须累积达到一个物理档位门限（12 单位）才下发单格步进，并 1:1 触发一次齿轮微振。未满一档绝不滑动。
+     * 执行表冠滚动分发（Compose 滚动容器）：齿轮档位对齐模式 + 快甩惯性启动
+     * 慢转微调严格档位对齐；大幅快甩（>= 120px 且速度达标）在松手后触发顺滑惯性滑动。
      */
     fun dispatchScroll(
         rawOrPixelDelta: Float,
@@ -138,21 +170,21 @@ object CrownScrollHelper {
         view: View? = null
     ) {
         if (abs(rawOrPixelDelta) < 0.0001f) return
-        val notches = scrollStepGate.onDelta(rawOrPixelDelta, timeSourceMs())
-        if (notches == 0) return
-
-        val scrollPixels = notches * DEFAULT_STEP_PIXELS
         abortFling(scrollState)
 
-        // 触底/触顶静默钳制：到达边界后滚动安全停止，不响任何振感
-        if ((scrollPixels > 0f && !scrollState.canScrollForward) ||
-            (scrollPixels < 0f && !scrollState.canScrollBackward)
-        ) {
-            return
+        val notches = scrollStepGate.onDelta(rawOrPixelDelta, timeSourceMs())
+        if (notches != 0) {
+            val scrollPixels = notches * DEFAULT_STEP_PIXELS
+            // 触底/触顶静默钳制：到达边界后滚动安全停止，不响任何振感
+            if (!((scrollPixels > 0f && !scrollState.canScrollForward) ||
+                (scrollPixels < 0f && !scrollState.canScrollBackward))
+            ) {
+                scrollState.dispatchRawDelta(scrollPixels)
+                emitNotchHaptic(context, view)
+            }
         }
 
-        scrollState.dispatchRawDelta(scrollPixels)
-        emitNotchHaptic(context, view)
+        trackGestureMotion(rawOrPixelDelta, scrollState, context)
     }
 
     /**
@@ -177,7 +209,7 @@ object CrownScrollHelper {
     }
 
     /**
-     * 原生 Android ListView 表冠滚动分发（目录 / 书签 / 选卷）：齿轮档位对齐模式
+     * 原生 Android ListView 表冠滚动分发（目录 / 书签 / 选卷）：齿轮档位对齐模式 + 快甩惯性
      */
     fun dispatchScroll(
         rawOrPixelDelta: Float,
@@ -186,22 +218,22 @@ object CrownScrollHelper {
         view: View? = null
     ) {
         if (abs(rawOrPixelDelta) < 0.0001f) return
-        val notches = scrollStepGate.onDelta(rawOrPixelDelta, timeSourceMs())
-        if (notches == 0) return
-
-        val scrollPixels = notches * DEFAULT_STEP_PIXELS
         abortFling(listView)
 
-        if (!listView.canScrollList(if (scrollPixels > 0f) 1 else -1)) {
-            return
+        val notches = scrollStepGate.onDelta(rawOrPixelDelta, timeSourceMs())
+        if (notches != 0) {
+            val scrollPixels = notches * DEFAULT_STEP_PIXELS
+            if (listView.canScrollList(if (scrollPixels > 0f) 1 else -1)) {
+                listView.scrollListBy(scrollPixels.toInt())
+                emitNotchHaptic(context, view)
+            }
         }
 
-        listView.scrollListBy(scrollPixels.toInt())
-        emitNotchHaptic(context, view)
+        trackGestureMotion(rawOrPixelDelta, listView, context)
     }
 
     /**
-     * 原生 Android ScrollView 表冠滚动分发（阅读页）：齿轮档位对齐 + 即时直接位移（彻底杜绝 smoothScroll 抽搐与假速度狂滑）
+     * 原生 Android ScrollView 表冠滚动分发（阅读页）：齿轮档位对齐 + 即时直接位移 + 快甩惯性
      */
     fun dispatchScroll(
         rawOrPixelDelta: Float,
@@ -210,33 +242,164 @@ object CrownScrollHelper {
         view: View? = null
     ) {
         if (abs(rawOrPixelDelta) < 0.0001f) return
-        val notches = scrollStepGate.onDelta(rawOrPixelDelta, timeSourceMs())
-        if (notches == 0) return
-
-        val scrollPixels = notches * DEFAULT_STEP_PIXELS
         abortFling(scrollView)
 
-        val maxScroll = maxScrollOf(scrollView)
-        if ((scrollPixels > 0f && scrollView.scrollY >= maxScroll) ||
-            (scrollPixels < 0f && scrollView.scrollY <= 0)
-        ) {
-            return
+        val notches = scrollStepGate.onDelta(rawOrPixelDelta, timeSourceMs())
+        if (notches != 0) {
+            val scrollPixels = notches * DEFAULT_STEP_PIXELS
+            val maxScroll = maxScrollOf(scrollView)
+            if (!((scrollPixels > 0f && scrollView.scrollY >= maxScroll) ||
+                (scrollPixels < 0f && scrollView.scrollY <= 0))
+            ) {
+                scrollView.scrollBy(0, scrollPixels.toInt())
+                emitNotchHaptic(context, view)
+            }
         }
 
-        scrollView.scrollBy(0, scrollPixels.toInt())
-        emitNotchHaptic(context, view)
+        trackGestureMotion(rawOrPixelDelta, scrollView, context)
     }
 
-    // ═══ 惯性滑动工具与状态清理（[ADR-017] 齿轮档位模式下停表冠即停，杜绝假速度误判）═══
+    // ═══ 惯性滑动工具与状态清理（[ADR-017] 齿轮档位模式 + 动力学快甩惯性引擎）═══
 
     // 速度估计公式：窗口累计位移 × 700 / 窗口毫秒数（launcher 原实现即此系数）
     private const val VELOCITY_ESTIMATE_FACTOR = 700f
 
-    // fling 起振门限与上限（launcher：f4415x0 = 500，钳制 ±2000）
-    internal const val FLING_MIN_VELOCITY_PX_S = 500f
-    private const val FLING_MAX_VELOCITY_PX_S = 2000f
+    private fun trackGestureMotion(deltaUnits: Float, surface: Any, context: Context?) {
+        val now = timeSourceMs()
+        if (now - gestureLastEventMs > GESTURE_IDLE_TIMEOUT_MS) {
+            gestureStartMs = now
+            gestureAccumPx = 0f
+            lastEstimatedVelocity = 0f
+        }
+        gestureLastEventMs = now
 
-    /** 速度估计（纯函数，可测）：累计位移 × 700 / 毫秒 → px/s，钳制 ±2000 */
+        val deltaPx = normalizeToPixels(deltaUnits)
+        gestureAccumPx += deltaPx
+
+        val elapsed = now - gestureStartMs
+        if (elapsed >= 20L) {
+            lastEstimatedVelocity = computeFlingVelocity(gestureAccumPx, elapsed)
+        }
+
+        // 仅当累计位移达到了最小甩动手势门限（>= 120px，约 2 档以上）时，才计划松冠 settleCheck
+        if (abs(gestureAccumPx) >= FLING_MIN_DISPLACEMENT_PX) {
+            if (settlePending) {
+                mainHandler.removeCallbacks(settleCheck)
+            }
+            settleSurface = surface
+            settleContext = context
+            settlePending = true
+            mainHandler.postDelayed(settleCheck, FLING_SETTLE_DELAY_MS)
+        } else {
+            // 位移不足（精细微调或单档），取消任何 pending 的 settle，确保绝对手停即停
+            if (settlePending) {
+                mainHandler.removeCallbacks(settleCheck)
+                settlePending = false
+            }
+        }
+    }
+
+    private val settleCheck = Runnable {
+        performSettle()
+    }
+
+    internal fun triggerSettleForTest() {
+        performSettle()
+    }
+
+    private fun performSettle() {
+        settlePending = false
+        val surface = settleSurface ?: return
+        val context = settleContext
+        val velocity = lastEstimatedVelocity
+        val totalDisplacement = gestureAccumPx
+        settleSurface = null
+        settleContext = null
+
+        if (abs(totalDisplacement) >= FLING_MIN_DISPLACEMENT_PX && abs(velocity) >= FLING_MIN_VELOCITY_PX_S) {
+            flingStartProbe?.invoke(velocity)
+            if (context != null) {
+                startFling(surface, velocity, context)
+            }
+        }
+    }
+
+    private var flingScroller: OverScroller? = null
+    private var flingSurface: Any? = null
+    private var flingLastPos = 0f
+    private var flingRunnable: Runnable? = null
+    private var flingFrameCallback: Choreographer.FrameCallback? = null
+    private val mainChoreographer: Choreographer by lazy { Choreographer.getInstance() }
+
+    private fun startFling(surface: Any, velocity: Float, context: Context) {
+        stopFlingInternal()
+        val scroller = flingScroller ?: OverScroller(context).also { flingScroller = it }
+        when (surface) {
+            is ScrollView -> {
+                scroller.fling(0, surface.scrollY, 0, velocity.toInt(), 0, 0, 0, maxScrollOf(surface))
+                flingLastPos = surface.scrollY.toFloat()
+            }
+            else -> {
+                scroller.fling(0, 0, 0, velocity.toInt(), Int.MIN_VALUE, Int.MAX_VALUE, Int.MIN_VALUE, Int.MAX_VALUE)
+                flingLastPos = 0f
+            }
+        }
+        flingSurface = surface
+        val step = object : Runnable {
+            override fun run() {
+                if (flingRunnable !== this || flingSurface !== surface) return
+                if (!scroller.computeScrollOffset()) {
+                    stopFlingInternal()
+                    return
+                }
+                val delta = scroller.currY.toFloat() - flingLastPos
+                flingLastPos = scroller.currY.toFloat()
+                when (surface) {
+                    is ScrollView -> {
+                        surface.scrollTo(0, scroller.currY)
+                        if (surface.scrollY <= 0 || surface.scrollY >= maxScrollOf(surface)) {
+                            stopFlingInternal()
+                            return
+                        }
+                    }
+                    is ListView -> {
+                        if ((delta > 0f && !surface.canScrollList(1)) ||
+                            (delta < 0f && !surface.canScrollList(-1))
+                        ) {
+                            stopFlingInternal()
+                            return
+                        }
+                        surface.scrollListBy(delta.toInt())
+                    }
+                    is ScrollableState -> {
+                        if ((delta > 0f && !surface.canScrollForward) ||
+                            (delta < 0f && !surface.canScrollBackward)
+                        ) {
+                            stopFlingInternal()
+                            return
+                        }
+                        surface.dispatchRawDelta(delta)
+                    }
+                }
+                postFlingFrame(surface, this)
+            }
+        }
+        flingRunnable = step
+        postFlingFrame(surface, step)
+    }
+
+    private fun postFlingFrame(surface: Any, step: Runnable) {
+        when (surface) {
+            is View -> surface.postOnAnimation(step)
+            else -> {
+                val callback = Choreographer.FrameCallback { step.run() }
+                flingFrameCallback = callback
+                mainChoreographer.postFrameCallback(callback)
+            }
+        }
+    }
+
+    /** 速度估计（纯函数，可测）：累计位移 × 700 / 毫秒 → px/s，钳制 ±2500 */
     internal fun computeFlingVelocity(accumDeltaPx: Float, windowMs: Long): Float {
         if (windowMs <= 0L) return 0f
         return (accumDeltaPx * VELOCITY_ESTIMATE_FACTOR / windowMs)
@@ -254,8 +417,21 @@ object CrownScrollHelper {
 
     /** 终止惯性滑动（新表冠事件 / 章节切换恢复滚动位置时调用） */
     fun abortFling(surface: Any?) {
-        // 档位模式下表冠自身停手即停；若外部有平滑动画或残存任务在此安全清除
-        (surface as? View)?.animate()?.cancel()
+        if (surface == null || flingSurface === surface) {
+            stopFlingInternal()
+        }
+    }
+
+    private fun stopFlingInternal() {
+        flingScroller?.forceFinished(true)
+        flingFrameCallback?.let(mainChoreographer::removeFrameCallback)
+        flingFrameCallback = null
+        flingRunnable?.let { r ->
+            val view = flingSurface as? View
+            if (view != null) view.removeCallbacks(r) else mainHandler.removeCallbacks(r)
+        }
+        flingRunnable = null
+        flingSurface = null
     }
 }
 
