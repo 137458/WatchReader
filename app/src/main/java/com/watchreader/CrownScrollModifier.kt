@@ -27,8 +27,8 @@ import kotlin.math.abs
  */
 object CrownScrollHelper {
 
-    // 每物理档位滚动量：对齐系统 app 每档滚动量（约 3 行文字）
-    const val DEFAULT_STEP_PIXELS = 64f
+    // 每物理档位滚动量：单档步长标定为 40px（约 1.5 行文字，细腻跟手）
+    const val DEFAULT_STEP_PIXELS = 40f
 
     // 每物理档位对应的相对滚轮单位数（2026-09-25 OWW251 实机 getevent 标定）：
     // oplus_crown 上报的是高分辨率相对滚轮单位流而非档位脉冲 —— 约 12~13 单位 = 一个物理棘轮档位。

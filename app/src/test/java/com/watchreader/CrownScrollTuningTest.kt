@@ -19,13 +19,13 @@ class CrownScrollTuningTest {
 
     @Test
     fun testNormalizeScalesUnitsLinearlyToPixels() {
-        // 线性标定：12 单位 = 一档 = 64px（64/12 ≈ 5.33px/单位）
-        assertEquals(64f, CrownScrollHelper.normalizeToPixels(12f), 0.01f)
-        assertEquals(32f, CrownScrollHelper.normalizeToPixels(6f), 0.01f)
-        assertEquals(-69.33f, CrownScrollHelper.normalizeToPixels(-13f), 0.01f)
+        // 线性标定：12 单位 = 一档 = 40px（40/12 ≈ 3.33px/单位）
+        assertEquals(40f, CrownScrollHelper.normalizeToPixels(12f), 0.01f)
+        assertEquals(20f, CrownScrollHelper.normalizeToPixels(6f), 0.01f)
+        assertEquals(-43.33f, CrownScrollHelper.normalizeToPixels(-13f), 0.01f)
         assertEquals(0f, CrownScrollHelper.normalizeToPixels(0f), 0.01f)
         // 快甩大值同样线性，不再透传跳变
-        assertEquals(293.33f, CrownScrollHelper.normalizeToPixels(55f), 0.01f)
+        assertEquals(183.33f, CrownScrollHelper.normalizeToPixels(55f), 0.01f)
     }
 
     @Test
