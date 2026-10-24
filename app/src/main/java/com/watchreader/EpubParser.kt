@@ -397,14 +397,15 @@ object EpubParser {
                     ZipFile(localFile).use { zf ->
                         val entry = findZipEntry(zf, currentEntry.entryPath)
                         if (entry != null) {
-                            rawHtml = zf.getInputStream(entry).bufferedReader(Charsets.UTF_8).readText()
+                            rawHtml = stripBom(zf.getInputStream(entry).bufferedReader(Charsets.UTF_8).readText())
                         }
                     }
                 } catch (_: Exception) {}
             }
 
             if (rawHtml.isEmpty()) {
-                rawHtml = readZipEntryString({ context.contentResolver.openInputStream(uri)!! }, currentEntry.entryPath) ?: ""
+                rawHtml = readZipEntryString({ context.contentResolver.openInputStream(uri)!! }, currentEntry.entryPath)
+                    ?.let { stripBom(it) } ?: ""
             }
         }
 
@@ -475,10 +476,21 @@ object EpubParser {
         return null
     }
 
+    /**
+     * 剥离 UTF-8 BOM（U+FEFF）。
+     *
+     * 相当一部分 EPUB 制作工具会为 container.xml / OPF / NCX 写入 BOM。XML 规范要求
+     * 解析器接受 BOM，但本解析器以 StringReader 交付已解码文本，InputStreamReader 并
+     * 不吞掉 BOM，它会成为文档首个字符被 kxml2 当作正文，在 `<?xml` 声明处抛出
+     * `XmlPullParserException: Unexpected token`，随后 OPF 被误判为空清单，整本书报
+     * 「EPUB 中未找到可阅读的章节」。统一在解析入口剥离一次即可。
+     */
+    private fun stripBom(text: String): String = text.trimStart('\uFEFF')
+
     private fun parseOpfPathFromContainer(containerXml: String): String? {
         return try {
             val parser = createPullParser()
-            parser.setInput(StringReader(containerXml))
+            parser.setInput(StringReader(stripBom(containerXml)))
             var eventType = parser.eventType
             while (eventType != XmlPullParser.END_DOCUMENT) {
                 if (eventType == XmlPullParser.START_TAG && parser.name.equals("rootfile", ignoreCase = true)) {
@@ -509,7 +521,7 @@ object EpubParser {
 
         try {
             val parser = createPullParser()
-            parser.setInput(StringReader(opfXml))
+            parser.setInput(StringReader(stripBom(opfXml)))
 
             var eventType = parser.eventType
             var currentTag = ""
@@ -607,7 +619,7 @@ object EpubParser {
         val list = mutableListOf<EpubChapterEntry>()
         try {
             val parser = createPullParser()
-            parser.setInput(StringReader(ncxXml))
+            parser.setInput(StringReader(stripBom(ncxXml)))
 
             var eventType = parser.eventType
             var currentTitle = ""
@@ -670,7 +682,7 @@ object EpubParser {
         val list = mutableListOf<EpubChapterEntry>()
         try {
             val parser = createPullParser()
-            parser.setInput(StringReader(navXml))
+            parser.setInput(StringReader(stripBom(navXml)))
 
             var eventType = parser.eventType
             var inAnchor = false
