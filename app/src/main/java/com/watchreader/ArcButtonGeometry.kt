@@ -35,7 +35,7 @@ object ArcButtonGeometry {
     /** 按钮数量 → 各槽中心角（度，屏幕坐标顺时针，90° = 正下方） */
     fun slotAnglesDeg(count: Int): List<Float> = when (count) {
         2 -> listOf(125f, 55f)
-        3 -> listOf(125f, 90f, 55f)
+        3 -> listOf(140f, 90f, 40f)
         else -> listOf(90f)
     }
 
@@ -44,18 +44,20 @@ object ArcButtonGeometry {
      *
      * @param thicknessPx 径向厚度（外缘到内缘）
      * @param gapDeg 相邻扇带侧边的间隙角
+     * @param edgeInsetPx 外缘离屏幕圆周的距离（0 = 齐边）
      */
     fun sectors(
         buttonCount: Int,
         screenWidthPx: Float,
         screenHeightPx: Float,
         thicknessPx: Float,
-        gapDeg: Float
+        gapDeg: Float,
+        edgeInsetPx: Float = 0f
     ): List<Sector> {
         val angles = slotAnglesDeg(buttonCount)
         if (angles.isEmpty() || screenWidthPx <= 0f || screenHeightPx <= 0f) return emptyList()
 
-        val outerRadius = min(screenWidthPx, screenHeightPx) / 2f
+        val outerRadius = min(screenWidthPx, screenHeightPx) / 2f - edgeInsetPx
         // 厚度吃穿半径时钳制：内缘不低于半径一半
         val innerRadius = max(outerRadius - thicknessPx, outerRadius / 2f)
         val textRadius = (outerRadius + innerRadius) / 2f

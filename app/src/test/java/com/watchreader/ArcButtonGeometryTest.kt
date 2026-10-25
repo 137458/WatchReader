@@ -6,12 +6,12 @@ import org.junit.Test
 import kotlin.math.abs
 
 /**
- * 弧形贴边按钮几何测试：环形扇带完全贴住圆屏边缘
+ * 弧形胶囊按钮几何测试：按钮为两端圆头的弧形胶囊，外缘悬离屏幕圆周一段距离
  *
- * 背景约束：底部操作条由「直线胶囊靠边」改为「环形扇带」——
- * 1. 外缘半径 = 屏幕半径（0dp 齐边，不越过圆弧），内缘 = 外缘 − 径向厚度，两侧边沿半径方向；
- * 2. 槽位角度沿用既有口径：单键 90°，双键 125°/55°，三键 125°/90°/55°；
- * 3. 相邻扇带之间保留间隙角，单键扇带半跨度有固定上限；
+ * 背景约束：底部操作条由「环形扇带贴死圆边」改为「弧形胶囊离边悬浮」——
+ * 1. 外缘半径 = 屏幕半径 − 离边 inset（不触圆弧），内缘 = 外缘 − 径向厚度；
+ * 2. 槽位角度沿用既有口径：单键 90°，双键 125°/55°，三键 140°/90°/40°；
+ * 3. 相邻按钮之间保留间隙角，单键半跨度有固定上限；
  * 4. 文字沿弧逐字排布：阅读方向沿屏幕 +x（向右），底部弧上向右行进角度递减，
  *    整段文字按累计字宽在中点角两侧对称展开。
  */
@@ -21,6 +21,7 @@ class ArcButtonGeometryTest {
         const val SCREEN = 466f
         const val THICKNESS = 26f
         const val GAP = 6f
+        const val EDGE_INSET = 6f
     }
 
     // ── 槽位角度 ──────────────────────────────────────────────
@@ -29,7 +30,7 @@ class ArcButtonGeometryTest {
     fun testAnglesMatchLegacyLayout() {
         assertEquals(listOf(90f), ArcButtonGeometry.slotAnglesDeg(1))
         assertEquals(listOf(125f, 55f), ArcButtonGeometry.slotAnglesDeg(2))
-        assertEquals(listOf(125f, 90f, 55f), ArcButtonGeometry.slotAnglesDeg(3))
+        assertEquals(listOf(140f, 90f, 40f), ArcButtonGeometry.slotAnglesDeg(3))
     }
 
     @Test
@@ -38,17 +39,31 @@ class ArcButtonGeometryTest {
         assertEquals(listOf(90f), ArcButtonGeometry.slotAnglesDeg(9))
     }
 
-    // ── 扇带几何：齐边与厚度 ──────────────────────────────────
+    // ── 胶囊几何：离边 inset 与厚度 ──────────────────────────
 
     @Test
-    fun testOuterEdgeFlushWithScreenRadius() {
-        val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP)
-        // 外缘 = 屏幕半径，按钮任何像素都不越过圆弧
-        assertTrue(sectors.all { abs(it.outerRadiusPx - SCREEN / 2f) < 0.01f })
+    fun testOuterEdgeSitsAtEdgeInset() {
+        val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP, EDGE_INSET)
+        // 外缘 = 屏幕半径 − 离边距离，按钮悬空不触圆弧
+        assertTrue(sectors.all { abs(it.outerRadiusPx - (SCREEN / 2f - EDGE_INSET)) < 0.01f })
         // 内缘 = 外缘 − 径向厚度
-        assertTrue(sectors.all { abs(it.innerRadiusPx - (SCREEN / 2f - THICKNESS)) < 0.01f })
+        assertTrue(sectors.all { abs(it.innerRadiusPx - (SCREEN / 2f - EDGE_INSET - THICKNESS)) < 0.01f })
         // 内缘必须为正（厚度不得吃穿半径）
         assertTrue(sectors.all { it.innerRadiusPx > 0f })
+    }
+
+    @Test
+    fun testDefaultInsetIsZero() {
+        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, THICKNESS, GAP)
+        assertTrue(sectors.all { abs(it.outerRadiusPx - SCREEN / 2f) < 0.01f })
+    }
+
+    @Test
+    fun testInsetClampStillHolds() {
+        // 厚度吃穿半径时钳制语义在带 inset 时同样成立
+        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, thicknessPx = 400f, gapDeg = GAP, edgeInsetPx = EDGE_INSET)
+        val outer = SCREEN / 2f - EDGE_INSET
+        assertEquals(outer / 2f, sectors[0].innerRadiusPx, 0.01f)
     }
 
     @Test
@@ -64,7 +79,7 @@ class ArcButtonGeometryTest {
     fun testSectorSpanCenteredOnSlotAngle() {
         val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP)
         val centers = sectors.map { (it.startAngleDeg + it.endAngleDeg) / 2f }
-        assertEquals(listOf(125f, 90f, 55f), centers)
+        assertEquals(listOf(140f, 90f, 40f), centers)
     }
 
     @Test
@@ -87,8 +102,8 @@ class ArcButtonGeometryTest {
     fun testTripleButtonSpanFitsBetweenNeighbors() {
         val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP)
         val span = sectors[1].endAngleDeg - sectors[1].startAngleDeg
-        // 三键：中心距 35°，去 6° 间隙后每槽 29°
-        assertEquals(29f, span, 0.01f)
+        // 三键：中心距 50°（140/90/40），去 6° 间隙后每槽 44°，未触 32° 上限
+        assertEquals(44f, span, 0.01f)
     }
 
     @Test
@@ -160,7 +175,7 @@ class ArcButtonGeometryTest {
 
     @Test
     fun testTextRadiusSitsAtBandMiddle() {
-        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, THICKNESS, GAP)
-        assertEquals(SCREEN / 2f - THICKNESS / 2f, sectors[0].textRadiusPx, 0.01f)
+        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, THICKNESS, GAP, EDGE_INSET)
+        assertEquals(SCREEN / 2f - EDGE_INSET - THICKNESS / 2f, sectors[0].textRadiusPx, 0.01f)
     }
 }
