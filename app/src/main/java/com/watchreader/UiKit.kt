@@ -2,6 +2,7 @@ package com.watchreader
 
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateFloat
@@ -384,7 +385,18 @@ fun PillButton(
     val tick = rememberTickHaptic()
     val interaction = remember { MutableInteractionSource() }
     val colors = MaterialTheme.colorScheme
-    val (containerColor, contentColor) = pillColors(emphasis, active, enabled)
+    val (containerTarget, contentTarget) = pillColors(emphasis, active, enabled)
+    // 强调级 / 选中 / 禁用切换时容器与内容色按 swap 档时长平滑过渡，避免状态直切闪变
+    val containerColor by animateColorAsState(
+        targetValue = containerTarget,
+        animationSpec = tween(WatchMotion.DUR_SWAP_IN, easing = WatchMotion.EnterEasing),
+        label = "pillContainer"
+    )
+    val contentColor by animateColorAsState(
+        targetValue = contentTarget,
+        animationSpec = tween(WatchMotion.DUR_SWAP_IN, easing = WatchMotion.EnterEasing),
+        label = "pillContent"
+    )
     Box(
         modifier = modifier
             .heightIn(min = 48.dp)
@@ -445,8 +457,8 @@ class EdgeButtonSpec(
  * 描 primary 细边。透明热区按径向 48dp 深、弧向不小于 48dp 宽独立放置，
  * 不限制视觉胶囊大小。
  *
- * [gapDeg] 缺省 −1 表示按键数自动：两键 24°（端帽外凸后中缝仍明显分开，
- * 呈两个独立胶囊），其余键数 6°（三键邻距小，再大会挤掉标签空间）。
+ * [gapDeg] 缺省 −1 表示按键数自动：两键 24°、三键及以上 16°（端帽外凸后
+ * 中缝仍明显分开，呈独立胶囊），其余键数 6°。
  */
 @Composable
 fun EdgeActionBar(
@@ -466,8 +478,13 @@ fun EdgeActionBar(
         val edgeInsetPx = with(density) { edgeInset.toPx() }
         val charGapPx = with(density) { 1.dp.toPx() }
         val hitDepthPx = with(density) { 48.dp.toPx() }
-        // 端帽半径 = 厚度/2，帽沿弧向外凸 asin(帽半径/中线半径)；两键需大间隙角才呈两个独立胶囊
-        val effectiveGapDeg = if (gapDeg >= 0f) gapDeg else if (buttons.size == 2) 24f else 6f
+        // 端帽半径 = 厚度/2，帽沿弧向外凸 asin(帽半径/中线半径)；两键/三键需大间隙角才呈独立胶囊
+        val effectiveGapDeg = when {
+            gapDeg >= 0f -> gapDeg
+            buttons.size == 2 -> 24f
+            buttons.size >= 3 -> 16f
+            else -> 6f
+        }
         val sectors = remember(widthPx.roundToInt(), heightPx.roundToInt(), thicknessPx.roundToInt(), effectiveGapDeg, edgeInsetPx.roundToInt(), buttons.size) {
             ArcButtonGeometry.sectors(buttons.size, widthPx, heightPx, thicknessPx, effectiveGapDeg, edgeInsetPx)
         }

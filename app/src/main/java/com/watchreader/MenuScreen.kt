@@ -3,6 +3,8 @@ package com.watchreader
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -54,6 +56,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -444,6 +449,18 @@ private fun ThemeOptionRow(
     val colors = MaterialTheme.colorScheme
     val scheme = watchColorSchemeOf(mode)
     val tick = rememberTickHaptic()
+    // 选中描边与标题色随选中态过渡（swap 档），替代硬切换；
+    // 未选中时描边透明化而非移除，BorderStroke 宽度恒定避免布局参数跳变
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) colors.primary else Color.Transparent,
+        animationSpec = tween(WatchMotion.DUR_SWAP_IN, easing = WatchMotion.EnterEasing),
+        label = "themeOptionBorder"
+    )
+    val titleColor by animateColorAsState(
+        targetValue = if (selected) colors.primary else colors.onSurface,
+        animationSpec = tween(WatchMotion.DUR_SWAP_IN, easing = WatchMotion.EnterEasing),
+        label = "themeOptionTitle"
+    )
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -459,7 +476,7 @@ private fun ThemeOptionRow(
         shape = RoundedCornerShape(WatchShapes.Row),
         colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerHigh),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = if (selected) BorderStroke(1.5.dp, colors.primary) else null
+        border = BorderStroke(1.5.dp, borderColor)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
@@ -486,7 +503,7 @@ private fun ThemeOptionRow(
                 text = mode.label,
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                color = if (selected) colors.primary else colors.onSurface
+                color = titleColor
             )
             Spacer(modifier = Modifier.weight(1f))
             RadioButton(selected = selected, onClick = null)
@@ -636,7 +653,7 @@ private fun WeekBars(days: Map<String, Long>) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.Bottom
     ) {
-        bars.forEach { bar ->
+        bars.forEachIndexed { index, bar ->
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(3.dp),
@@ -644,10 +661,21 @@ private fun WeekBars(days: Map<String, Long>) {
             ) {
                 val barHeight = if (bar.minutes <= 0) 3.dp
                 else (4f + 24f * bar.minutes / maxMinutes).dp
+                // 柱体自底部弹性生长，逐柱错峰；只在首次组合播放入场，
+                // 阅读时长 tick 引发的数据刷新不重放（remember 不随 bars 重建）
+                val grow = remember { Animatable(0f) }
+                LaunchedEffect(Unit) {
+                    delay(index * WatchMotion.STAGGER_STEP_MS)
+                    grow.animateTo(1f, WatchMotion.pressSpring())
+                }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(barHeight)
+                        .graphicsLayer {
+                            scaleY = grow.value
+                            transformOrigin = TransformOrigin(0.5f, 1f)
+                        }
                         .clip(RoundedCornerShape(3.dp))
                         // 非今日柱用中性表面色，今日柱用强调色——零 alpha 的两档语义
                         .background(if (bar.isToday) colors.primary else colors.surfaceVariant)
