@@ -21,8 +21,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Text
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -215,12 +216,12 @@ fun ReaderScreen(
         }
     }
 
-    val colorScheme = MiuixTheme.colorScheme
+    val colorScheme = MaterialTheme.colorScheme
     val bgColor = colorScheme.background.toArgb()
     val textColor = colorScheme.onBackground.toArgb()
     val titleColor = colorScheme.primary.toArgb()
-    val surfaceVariantColor = colorScheme.surfaceVariant.toArgb()
-    val onSurfaceVariantColor = colorScheme.onSurfaceVariantSummary.toArgb()
+    val surfaceVariantColor = colorScheme.surfaceContainerHigh.toArgb()
+    val onSurfaceVariantColor = colorScheme.onSurfaceVariant.toArgb()
 
     val currentChapterTitle = chapterContent?.title ?: ""
 
@@ -276,9 +277,10 @@ fun ReaderScreen(
                     ).apply {
                         setMargins(0, (4 * density).toInt(), 0, (14 * density).toInt())
                     }
+                    minimumHeight = (48 * density).toInt()
                     background = GradientDrawable().apply {
                         setColor(surfaceVariantColor)
-                        cornerRadius = 14 * density
+                        cornerRadius = 12 * density
                     }
                     setPadding((12 * density).toInt(), (12 * density).toInt(), (12 * density).toInt(), (12 * density).toInt())
                     isClickable = true
@@ -331,9 +333,10 @@ fun ReaderScreen(
                     ).apply {
                         setMargins(0, (14 * density).toInt(), 0, (20 * density).toInt())
                     }
+                    minimumHeight = (48 * density).toInt()
                     background = GradientDrawable().apply {
                         setColor(surfaceVariantColor)
-                        cornerRadius = 14 * density
+                        cornerRadius = 12 * density
                     }
                     setPadding((12 * density).toInt(), (12 * density).toInt(), (12 * density).toInt(), (12 * density).toInt())
                     isClickable = true
@@ -495,7 +498,7 @@ fun ReaderScreen(
                     tapSuppressed
                 }
 
-                // 表冠物理旋转监听：自动滚屏中可动态调速，未开启时按固定步进翻页并触发齿轮微振
+                // 表冠物理旋转监听：自动滚屏中可动态调速，未开启时按系统列表口径连续滚动并触发齿轮微振
                 scrollView.setOnGenericMotionListener { v, event ->
                     if (CrownScrollHelper.isCrownScrollEvent(event)) {
                         resetInactivityKeepScreenOn()
@@ -511,7 +514,7 @@ fun ReaderScreen(
                             }
                             return@setOnGenericMotionListener true
                         }
-                        // 常规阅读：统一走表冠管线（固定单格步进 + 24px 门限齿轮微振），
+                        // 常规阅读：统一走表冠管线（系统滚动系数 × 0.5 连续下发 + 距离门限齿轮微振），
                         // 替代原先落给原生 ScrollView 的裸滚动（无振感且步进随系统滚动系数漂移）
                         if (abs(delta) > 0.001f) {
                             CrownScrollHelper.dispatchScroll(delta, scrollView, ctx, v)
@@ -666,7 +669,7 @@ fun ReaderScreen(
             // 9 点与 3 点方向贴边弧形排布的竖排电量与时间
             CurvedSideStatusBar(
                 modifier = Modifier.fillMaxSize(),
-                textColor = colorScheme.onSurfaceVariantSummary
+                textColor = colorScheme.onSurfaceVariant
             )
 
             val bottomProgressAlpha by androidx.compose.animation.core.animateFloatAsState(
@@ -696,39 +699,27 @@ fun ReaderScreen(
                 }
                 Text(
                     text = progressText,
-                    style = TextStyle(
-                        fontSize = 10.5.sp,
+                    style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.Medium,
-                        color = colorScheme.onSurfaceVariantSummary
+                        color = colorScheme.onSurfaceVariant
                     ),
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 10.dp)
+                        // 自动滚屏胶囊贴住下缘时，进度字上移让位，避免两层文字叠在一起
+                        .padding(bottom = if (isAutoScrolling) 58.dp else 10.dp)
                         .graphicsLayer { alpha = bottomProgressAlpha }
                 )
             }
 
-            // 自动滚屏运行时右下角轻量胶囊状态提示（统一 WatchShapes.Pill + 无水波纹点击，与全应用按压语义一致）
+            // 自动滚屏运行时底部弧形贴边按钮：扇带外缘与屏幕圆周齐边
             if (isAutoScrolling) {
-                val capsuleInteraction = remember { MutableInteractionSource() }
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 18.dp)
-                        .clip(WatchShapes.Pill)
-                        .background(colorScheme.surfaceVariant)
-                        .clickable(
-                            interactionSource = capsuleInteraction,
-                            indication = null
-                        ) { onAutoScrollToggle() }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = "▶ 自动滚屏 ${autoScrollSpeed.toInt()} px/s",
-                        style = TextStyle(fontSize = 10.5.sp, fontWeight = FontWeight.Bold),
-                        color = colorScheme.primary
+                EdgeActionBar(
+                    EdgeButtonSpec(
+                        label = "自动滚屏 ${autoScrollSpeed.toInt()} px/s",
+                        active = true,
+                        onClick = onAutoScrollToggle
                     )
-                }
+                )
             }
 
             // F-05 表盘边缘弧形快速寻道滑块（贴圆屏边缘交互，松手即跳）

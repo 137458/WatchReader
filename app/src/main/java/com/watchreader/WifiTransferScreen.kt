@@ -7,14 +7,14 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
-import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
-import top.yukonga.miuix.kmp.squircle.squircleSurface
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -36,6 +37,7 @@ import android.graphics.Bitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.math.min
 
 /**
  * 腕上无线传书界面 — 扫码直传极简排版
@@ -62,7 +64,7 @@ fun WifiTransferScreen(
     onToggleServer: () -> Unit,
     onBack: () -> Unit
 ) {
-    val colorScheme = MiuixTheme.colorScheme
+    val colorScheme = MaterialTheme.colorScheme
     val tick = rememberTickHaptic()
 
     // 传输中返回两步确认（与书架删书同款 3.2s 节奏）：右滑退出在传输中已被禁用，
@@ -88,9 +90,17 @@ fun WifiTransferScreen(
         tick()
     }
 
-    // 表冠空转反馈：页面无滚动内容，按系统 app 惯例每档给出齿轮微振，杜绝表冠完全无响应
+    // 表冠焦点轮选：页面无可滚动内容，复刻系统设置「对齐模式」——单事件钳 ±79px、
+    // 累积满 120px 焦点移动一格并给一次 302 齿轮微振
+    val focusCount = if (isServerRunning) 1 else 2
+    var focusedIndex by remember { mutableStateOf(0) }
+    val focusStepper = remember { CrownFocusStepper(scrollFactorPxPerUnit = CrownScrollHelper.scrollFactorPxPerUnit) }
     rememberCrownScrollTarget(Unit) { delta ->
-        CrownScrollHelper.dispatchIdleTick(delta, null)
+        val step = focusStepper.feed(delta)
+        if (step != 0) {
+            focusedIndex = (focusedIndex + step).mod(focusCount)
+            tick()
+        }
         true
     }
 
@@ -115,17 +125,13 @@ fun WifiTransferScreen(
             },
         contentAlignment = Alignment.Center
     ) {
-        // 1. 沿屏幕边缘的极简纯色环形进度条（原生 CircularProgressIndicator，仅在传输时呈现）
+        // 1. 沿屏幕边缘的 MD3 环形进度（贴圆屏边沿，仅在传输时呈现）
         if (isTransferring) {
-                CircularProgressIndicator(
-                    progress = animatedProgress,
-                    modifier = Modifier.fillMaxSize(),
-                    colors = ProgressIndicatorDefaults.progressIndicatorColors(
-                        foregroundColor = colorScheme.primary,
-                        backgroundColor = colorScheme.dividerLine
-                    ),
-                    strokeWidth = 3.dp
-                )
+            EdgeProgressRing(
+                progress = animatedProgress,
+                color = colorScheme.primary,
+                trackColor = colorScheme.outlineVariant
+            )
         }
 
         // 2. 视图 A：极简传输进度展示
@@ -143,7 +149,7 @@ fun WifiTransferScreen(
             ) {
                 Text(
                     text = "$progressPercent%",
-                    style = MiuixTheme.textStyles.title1.copy(fontFamily = FontFamily.Monospace),
+                    style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace),
                     color = colorScheme.primary
                 )
 
@@ -151,8 +157,7 @@ fun WifiTransferScreen(
 
                 Text(
                     text = if (transferFileName.isNotEmpty()) transferFileName else "正在接收…",
-                    style = TextStyle(
-                        fontSize = 11.5.sp,
+                    style = MaterialTheme.typography.bodySmall.copy(
                         fontWeight = FontWeight.Medium,
                         color = colorScheme.onSurface
                     ),
@@ -165,9 +170,8 @@ fun WifiTransferScreen(
 
                 Text(
                     text = if (progressPercent >= 99) "已存入书架" else "传输中…",
-                    style = TextStyle(
-                        fontSize = 10.5.sp,
-                        color = colorScheme.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        color = colorScheme.onSurfaceVariant
                     ),
                     textAlign = TextAlign.Center
                 )
@@ -176,8 +180,7 @@ fun WifiTransferScreen(
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = "再按一次返回键将中断传输",
-                        style = TextStyle(
-                            fontSize = 10.5.sp,
+                        style = MaterialTheme.typography.labelSmall.copy(
                             color = colorScheme.error
                         ),
                         textAlign = TextAlign.Center
@@ -198,7 +201,7 @@ fun WifiTransferScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 30.dp, vertical = 4.dp)
-                    .padding(top = 34.dp),
+                    .padding(top = 34.dp, bottom = 36.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -212,31 +215,31 @@ fun WifiTransferScreen(
                 } else {
                     OfflinePanel()
                 }
+            }
+        }
 
-                Spacer(modifier = Modifier.height(9.dp))
-
-                // 底部操作行（服务运行中仅保留返回，避免双胶囊挤出圆屏下缘弧线）
-                Row(
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (!isServerRunning) {
-                        PillButton(
+        // 底部弧形贴边操作条：扇带处处贴合圆屏下缘；表冠轮选焦点高亮，点击确认
+        if (!isTransferring) {
+            val specs = buildList {
+                if (!isServerRunning) {
+                    add(
+                        EdgeButtonSpec(
                             label = "重启服务",
-                            verticalPadding = 6.dp,
+                            focused = focusedIndex == 0,
                             onClick = onToggleServer
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
-                    }
-
-                    PillButton(
-                        label = "‹ 返回书架",
-                        emphasis = PillEmphasis.Primary,
-                        verticalPadding = 6.dp,
-                        onClick = onBack
                     )
                 }
+                add(
+                    EdgeButtonSpec(
+                        label = "‹ 返回书架",
+                        emphasis = PillEmphasis.Primary,
+                        focused = focusedIndex == focusCount - 1,
+                        onClick = onBack
+                    )
+                )
             }
+            EdgeActionBar(*specs.toTypedArray())
         }
 
         // 顶部弧形标题
@@ -257,8 +260,8 @@ private fun QrCodePanel(
     accessToken: String?,
     uploadedCount: Int
 ) {
-    val primaryColor = MiuixTheme.colorScheme.primary
-    val onSurfaceVariant = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
 
     // 二维码载荷携带访问令牌：网页与全部接口调用均凭 token 鉴权，
     // 防止同网段未授权设备或网页直接访问传书服务
@@ -294,7 +297,8 @@ private fun QrCodePanel(
         Box(
             modifier = Modifier
                 .size(86.dp)
-                .squircleSurface(WatchFixed.QrPanelBackground, 9.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(WatchFixed.QrPanelBackground)
                 .padding(4.dp),
             contentAlignment = Alignment.Center
         ) {
@@ -317,15 +321,14 @@ private fun QrCodePanel(
     Box(
         modifier = Modifier
             .clip(WatchShapes.Pill)
-            .background(MiuixTheme.colorScheme.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             .padding(horizontal = 10.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = "http://${ipAddress}:$port",
-                style = TextStyle(
-                    fontSize = 11.sp,
+                style = MaterialTheme.typography.labelMedium.copy(
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     color = primaryColor
@@ -336,8 +339,7 @@ private fun QrCodePanel(
             if (!accessToken.isNullOrEmpty()) {
                 Text(
                     text = "令牌 $accessToken",
-                    style = TextStyle(
-                        fontSize = 10.sp,
+                    style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = FontFamily.Monospace,
                         color = onSurfaceVariant
                     ),
@@ -356,7 +358,40 @@ private fun QrCodePanel(
         Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = if (uploadedCount > 0) "已接收 $uploadedCount 本 · 等待扫码" else "服务已开启 · 等待手机扫码",
-            style = TextStyle(fontSize = 11.sp, color = onSurfaceVariant)
+            style = MaterialTheme.typography.labelSmall.copy(color = onSurfaceVariant)
+        )
+    }
+}
+
+/**
+ * 贴圆屏边沿的 MD3 环形进度：细轨 + 圆头进度弧，仅传输时呈现。
+ * 纯 Canvas 绘制，进度值在绘制阶段读取，不触发页面重组。
+ */
+@Composable
+private fun EdgeProgressRing(
+    progress: Float,
+    color: Color,
+    trackColor: Color
+) {
+    val strokeWidth = 3.dp
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val strokePx = strokeWidth.toPx()
+        val radius = min(size.width, size.height) / 2f - strokePx / 2f
+        val center = Offset(size.width / 2f, size.height / 2f)
+        drawCircle(
+            color = trackColor,
+            radius = radius,
+            center = center,
+            style = Stroke(width = strokePx)
+        )
+        drawArc(
+            color = color,
+            startAngle = -90f,
+            sweepAngle = progress.coerceIn(0f, 1f) * 360f,
+            useCenter = false,
+            topLeft = Offset(center.x - radius, center.y - radius),
+            size = Size(radius * 2f, radius * 2f),
+            style = Stroke(width = strokePx, cap = StrokeCap.Round)
         )
     }
 }
@@ -366,15 +401,14 @@ private fun QrCodePanel(
  */
 @Composable
 private fun OfflinePanel() {
-    val colorScheme = MiuixTheme.colorScheme
+    val colorScheme = MaterialTheme.colorScheme
 
     Row(verticalAlignment = Alignment.CenterVertically) {
         StaticDot(color = colorScheme.error)
         Spacer(modifier = Modifier.width(5.dp))
         Text(
             text = "Wi-Fi 未连接",
-            style = TextStyle(
-                fontSize = 11.sp,
+            style = MaterialTheme.typography.labelMedium.copy(
                 fontWeight = FontWeight.SemiBold,
                 color = colorScheme.error
             )
@@ -386,7 +420,8 @@ private fun OfflinePanel() {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .squircleSurface(colorScheme.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM), WatchShapes.Row)
+            .clip(RoundedCornerShape(WatchShapes.Row))
+            .background(colorScheme.surfaceContainerHigh)
             .padding(horizontal = 12.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -396,18 +431,16 @@ private fun OfflinePanel() {
         ) {
             Text(
                 text = "请在手表设置中连接 Wi-Fi",
-                style = TextStyle(
-                    fontSize = 11.sp,
+                style = MaterialTheme.typography.bodySmall.copy(
                     fontWeight = FontWeight.Medium,
-                    color = colorScheme.onSurfaceVariantSummary
+                    color = colorScheme.onSurfaceVariant
                 ),
                 textAlign = TextAlign.Center
             )
             Text(
                 text = "与手机处于同个局域网即可扫码传书",
-                style = TextStyle(
-                    fontSize = 10.sp,
-                    color = colorScheme.onSurfaceVariantSummary
+                style = MaterialTheme.typography.labelSmall.copy(
+                    color = colorScheme.onSurfaceVariant
                 ),
                 textAlign = TextAlign.Center
             )

@@ -11,9 +11,12 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -24,16 +27,24 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import top.yukonga.miuix.kmp.squircle.squircleBorder
-import top.yukonga.miuix.kmp.squircle.squircleSurface
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -93,12 +105,12 @@ fun MenuScreen(
     onLetterSpacingChange: (Int) -> Unit = {}
 ) {
     BackHandler(onBack = onBack)
-    val colors = MiuixTheme.colorScheme
+    val colors = MaterialTheme.colorScheme
     val scrollState = rememberScrollState()
     // 主题选择浮层：配色一步直达，替代逐档循环点按
     var showThemePicker by remember { mutableStateOf(false) }
 
-    // 表冠滚动目标注册：Activity 顶层管线直接寻址菜单滚动（正向线性步进 + 齿轮微振）
+    // 表冠滚动目标注册：Activity 顶层管线直接寻址菜单滚动（连续跟手 + 距离门限微振）
     val context = LocalContext.current
     rememberCrownScrollTarget(scrollState) { delta ->
         CrownScrollHelper.dispatchScroll(delta, scrollState, context)
@@ -129,34 +141,40 @@ fun MenuScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 24.dp, vertical = 44.dp),
+                .padding(horizontal = 24.dp)
+                .padding(top = 44.dp, bottom = 84.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             SectionLabel("阅读控制", modifier = Modifier.staggeredEnter(0), color = colors.primary)
 
-            // ── 当前章节主卡 ──
-            Column(
+            // ── 当前章节主卡（MD3 primaryContainer 强调卡） ──
+            Card(
                 modifier = Modifier
                     .staggeredEnter(1)
-                    .fillMaxWidth()
-                    .squircleSurface(colors.primary, WatchShapes.Card)
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(WatchShapes.Card),
+                colors = CardDefaults.cardColors(containerColor = colors.primaryContainer),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
-                AnimatedValue(chapterTitle.ifBlank { "当前章节" }) { title ->
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    AnimatedValue(chapterTitle.ifBlank { "当前章节" }) { title ->
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colors.onPrimaryContainer,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                     Text(
-                        text = title,
-                        style = MiuixTheme.textStyles.title3.copy(fontSize = 16.sp),
-                        color = colors.onPrimary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        text = ReadDurationFormatter.format(readDurationSec),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onPrimaryContainer
                     )
                 }
-                Text(
-                    text = ReadDurationFormatter.format(readDurationSec),
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = colors.onPrimary
-                )
             }
 
             // ── 章节导航 ──
@@ -172,18 +190,21 @@ fun MenuScreen(
                 }
             }
 
-            // ── 快捷操作 ──
-            // 四键收紧内边距：圆屏最窄弦宽下并排四枚胶囊与「显示」分区同规则，防整排溢出
-            Row(
+            // ── 快捷操作（2×2 网格：每键约 88×48dp，满足 Google 48dp 触控基线） ──
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .staggeredEnter(3),
-                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                PillButton("书签", Modifier.weight(1f), verticalPadding = 10.dp, horizontalPadding = 4.dp, onClick = onAddBookmark)
-                PillButton("速读", Modifier.weight(1f), verticalPadding = 10.dp, horizontalPadding = 4.dp, onClick = onOpenRsvp)
-                PillButton("目录", Modifier.weight(1f), verticalPadding = 10.dp, horizontalPadding = 4.dp, onClick = onChapterListClick)
-                PillButton("搜索", Modifier.weight(1f), verticalPadding = 10.dp, horizontalPadding = 4.dp, onClick = onOpenSearch)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillButton("书签", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onAddBookmark)
+                    PillButton("速读", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onOpenRsvp)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    PillButton("目录", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onChapterListClick)
+                    PillButton("搜索", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onOpenSearch)
+                }
             }
 
             // ── 滚动分区 ──
@@ -247,12 +268,16 @@ fun MenuScreen(
                         )
                     }
                     HairlineDivider()
-                    // 四档并排最窄处每键仅 ~37dp，必须紧凑内边距才能完整容纳"系统"两字
-                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        PillButton("系统", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(BrightnessManager.BRIGHTNESS_SYSTEM_DEFAULT) }
-                        PillButton("暗", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(BrightnessManager.LEVEL_ULTRA_DARK) }
-                        PillButton("中", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(BrightnessManager.LEVEL_2_MEDIUM) }
-                        PillButton("亮", Modifier.weight(1f), verticalPadding = 8.dp, horizontalPadding = 5.dp) { onBrightnessChange(BrightnessManager.LEVEL_3_STRONG) }
+                    // 亮度预设 2×2 网格：避免四键并排把单键压到 48dp 以下
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PillButton("系统", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(BrightnessManager.BRIGHTNESS_SYSTEM_DEFAULT) }
+                            PillButton("暗", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(BrightnessManager.LEVEL_ULTRA_DARK) }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            PillButton("中", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(BrightnessManager.LEVEL_2_MEDIUM) }
+                            PillButton("亮", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(BrightnessManager.LEVEL_3_STRONG) }
+                        }
                     }
                 }
             }
@@ -297,8 +322,8 @@ fun MenuScreen(
                     AnimatedValue(weekSummaryLabel(readDays, finishedCount)) { summary ->
                         Text(
                             text = summary,
-                            style = MiuixTheme.textStyles.footnote2,
-                            color = colors.onSurfaceVariantSummary
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.onSurfaceVariant
                         )
                     }
                     HairlineDivider()
@@ -317,31 +342,32 @@ fun MenuScreen(
                             )
                             Text(
                                 text = "今日 $todayMinutes / $readGoalMinutes 分钟",
-                                style = MiuixTheme.textStyles.footnote2,
-                                color = colors.onSurfaceVariantSummary
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.onSurfaceVariant
                             )
                         }
                     }
                 }
             }
 
-            // ── 底部主导航 ──
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .staggeredEnter(8),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                PillButton("书架", Modifier.weight(1f), verticalPadding = 12.dp, onClick = onHome)
-                PillButton(
-                    "继续阅读",
-                    Modifier.weight(1.4f),
-                    emphasis = PillEmphasis.Primary,
-                    verticalPadding = 12.dp,
-                    onClick = onBack
-                )
-            }
         }
+
+        // 底部羽化渐隐：压在滚动内容之上、贴边操作条之下，避免内容与胶囊硬叠
+        EdgeFadeMask(
+            edge = Alignment.Bottom,
+            modifier = Modifier.align(Alignment.BottomCenter),
+            height = 56.dp
+        )
+
+        // ── 底部弧形贴边主导航：扇带处处贴合圆屏下缘 ──
+        EdgeActionBar(
+            EdgeButtonSpec("书架", onClick = onHome),
+            EdgeButtonSpec(
+                "继续阅读",
+                emphasis = PillEmphasis.Primary,
+                onClick = onBack
+            )
+        )
 
         // 顶部羽化渐隐（统一 EdgeFadeMask 基元 + 全应用统一 48dp 顶部高度）
         EdgeFadeMask(
@@ -407,7 +433,7 @@ fun MenuScreen(
 
 /**
  * 配色选择浮层单行：主题底色胶囊内嵌强调色圆点作色样（所见即所得），
- * 选中行强调描边 + 高亮文字；行热区 ≥44dp
+ * 选中行强调描边 + 高亮文字；行热区 ≥48dp
  */
 @Composable
 private fun ThemeOptionRow(
@@ -415,55 +441,55 @@ private fun ThemeOptionRow(
     selected: Boolean,
     onSelect: () -> Unit
 ) {
-    val colors = MiuixTheme.colorScheme
-    val scheme = watchColorsOf(mode)
-    val interaction = remember { MutableInteractionSource() }
+    val colors = MaterialTheme.colorScheme
+    val scheme = watchColorSchemeOf(mode)
     val tick = rememberTickHaptic()
-    Row(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .pressScale(interaction, pressedScale = 0.985f)
-            .squircleSurface(colors.surfaceVariant, WatchShapes.Row)
-            .then(
-                if (selected) {
-                    Modifier.squircleBorder(1.dp, colors.primary.copy(alpha = WatchAlpha.ACCENT_BORDER), WatchShapes.Row)
-                } else {
-                    Modifier
-                }
-            )
-            .clickable(interactionSource = interaction, indication = null) {
-                tick()
-                onSelect()
-            }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .heightIn(min = 48.dp)
+            .selectable(
+                selected = selected,
+                onClick = {
+                    tick()
+                    onSelect()
+                },
+                role = Role.RadioButton
+            ),
+        shape = RoundedCornerShape(WatchShapes.Row),
+        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerHigh),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = if (selected) BorderStroke(1.5.dp, colors.primary) else null
     ) {
-        // 色样：底色胶囊 + 强调色圆点
-        Box(
-            modifier = Modifier
-                .size(width = 34.dp, height = 22.dp)
-                .clip(WatchShapes.Pill)
-                .background(scheme.background)
-                .border(1.dp, colors.outline.copy(alpha = WatchAlpha.HAIRLINE), WatchShapes.Pill),
-            contentAlignment = Alignment.Center
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            // 色样：底色胶囊 + 强调色圆点
             Box(
                 modifier = Modifier
-                    .size(10.dp)
-                    .clip(androidx.compose.foundation.shape.CircleShape)
-                    .background(scheme.primary)
+                    .size(width = 34.dp, height = 22.dp)
+                    .clip(CircleShape)
+                    .background(scheme.background)
+                    .border(1.dp, colors.outline, CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .clip(CircleShape)
+                        .background(scheme.primary)
+                )
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = mode.label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                color = if (selected) colors.primary else colors.onSurface
             )
-        }
-        Spacer(modifier = Modifier.width(10.dp))
-        Text(
-            text = mode.label,
-            fontSize = 13.sp,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            color = if (selected) colors.primary else colors.onSurface
-        )
-        Spacer(modifier = Modifier.weight(1f))
-        if (selected) {
-            Text("●", color = colors.primary, fontSize = 11.sp)
+            Spacer(modifier = Modifier.weight(1f))
+            RadioButton(selected = selected, onClick = null)
         }
     }
 }
@@ -486,12 +512,12 @@ private fun AnimatedValue(value: String, content: @Composable (String) -> Unit) 
 private fun SettingLine(label: String, value: String, trailing: @Composable () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(label, color = MiuixTheme.colorScheme.onSurface, fontSize = 13.sp)
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
             AnimatedValue(value) { current ->
                 Text(
                     text = current,
-                    color = MiuixTheme.colorScheme.primary,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
                     maxLines = 1,
                     overflow = TextOverflow.Visible
                 )
@@ -508,25 +534,26 @@ private fun SettingLine(label: String, value: String, trailing: @Composable () -
  */
 @Composable
 private fun Stepper(onMinus: () -> Unit, onPlus: () -> Unit) {
-    val colors = MiuixTheme.colorScheme
-    Row(
-        modifier = Modifier
-            .clip(WatchShapes.Pill)
-            .background(colors.surfaceVariant.copy(alpha = WatchAlpha.SUBTLE_SCRIM))
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        shape = CircleShape,
+        color = colors.surfaceContainerHigh
     ) {
-        StepperKey("−", colors, onMinus)
-        Box(
-            modifier = Modifier
-                .width(1.dp)
-                .height(22.dp)
-                .background(colors.dividerLine)
-        )
-        StepperKey("+", colors, onPlus)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StepperKey("−", colors, onMinus)
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(22.dp)
+                    .background(colors.outlineVariant)
+            )
+            StepperKey("+", colors, onPlus)
+        }
     }
 }
 
 @Composable
-private fun StepperKey(symbol: String, colors: top.yukonga.miuix.kmp.theme.Colors, onClick: () -> Unit) {
+private fun StepperKey(symbol: String, colors: ColorScheme, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     LaunchedEffect(pressed) {
@@ -541,9 +568,15 @@ private fun StepperKey(symbol: String, colors: top.yukonga.miuix.kmp.theme.Color
     }
     Box(
         modifier = Modifier
+            .heightIn(min = 48.dp)
+            .widthIn(min = 48.dp)
             .pressScale(interaction, pressedScale = 0.9f)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 13.dp, vertical = 5.dp),
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick
+            ),
         contentAlignment = Alignment.Center
     ) {
         Text(symbol, color = colors.primary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
@@ -552,15 +585,20 @@ private fun StepperKey(symbol: String, colors: top.yukonga.miuix.kmp.theme.Color
 
 @Composable
 private fun CycleLine(label: String, value: String, onClick: () -> Unit) {
-    val colors = MiuixTheme.colorScheme
+    val colors = MaterialTheme.colorScheme
     val interaction = remember { MutableInteractionSource() }
     val tick = rememberTickHaptic()
     // 行热区垂直内边距：13sp 文本裸行仅 ~18dp，密集相邻行腕上必误触邻行
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .pressScale(interaction, pressedScale = 0.985f)
-            .clickable(interactionSource = interaction, indication = null) {
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                role = Role.Button
+            ) {
                 tick()
                 onClick()
             }
@@ -568,13 +606,18 @@ private fun CycleLine(label: String, value: String, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, color = colors.onSurface, fontSize = 13.sp)
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface)
         Row(verticalAlignment = Alignment.CenterVertically) {
             AnimatedValue(value) { current ->
-                Text(current, color = colors.primary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(current, style = MaterialTheme.typography.labelMedium, color = colors.primary)
             }
             Spacer(Modifier.width(4.dp))
-            Text("›", color = colors.onSurfaceVariantSummary, fontSize = 13.sp)
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = colors.onSurfaceVariant,
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }
@@ -584,7 +627,7 @@ private fun CycleLine(label: String, value: String, onClick: () -> Unit) {
  */
 @Composable
 private fun WeekBars(days: Map<String, Long>) {
-    val colors = MiuixTheme.colorScheme
+    val colors = MaterialTheme.colorScheme
     val today = remember { java.time.LocalDate.now() }
     val bars = remember(days, today) { ReadingStats.weekBars(today, days) }
     val maxMinutes = bars.maxOf { it.minutes }.coerceAtLeast(1)
@@ -606,13 +649,13 @@ private fun WeekBars(days: Map<String, Long>) {
                         .fillMaxWidth()
                         .height(barHeight)
                         .clip(RoundedCornerShape(3.dp))
-                        // 非今日柱用次级墨（灰），今日柱用强调色——全主题零 alpha 的两档语义
-                        .background(if (bar.isToday) colors.primary else colors.onSurfaceVariantSummary)
+                        // 非今日柱用中性表面色，今日柱用强调色——零 alpha 的两档语义
+                        .background(if (bar.isToday) colors.primary else colors.surfaceVariant)
                 )
                 Text(
                     text = bar.label,
-                    style = MiuixTheme.textStyles.footnote2,
-                    color = if (bar.isToday) colors.primary else colors.onSurfaceVariantSummary
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (bar.isToday) colors.primary else colors.onSurfaceVariant
                 )
             }
         }

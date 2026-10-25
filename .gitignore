@@ -52,3 +52,7 @@ AGENTS.md
 
 # Local agent workspace config
 .zcode/
+
+# Local tooling dirs
+Python/
+.kotlin/

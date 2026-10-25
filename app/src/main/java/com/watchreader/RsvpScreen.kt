@@ -9,8 +9,8 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Text
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,7 +68,7 @@ fun RsvpScreen(
 
     val tick = rememberTickHaptic()
 
-    val colorScheme = MiuixTheme.colorScheme
+    val colorScheme = MaterialTheme.colorScheme
 
     // 分词并计算相对偏移
     val fullText = chapterContent?.formattedBody ?: ""
@@ -180,7 +180,7 @@ fun RsvpScreen(
             // 3. 侧边弧形电量与时间
             CurvedSideStatusBar(
                 modifier = Modifier.fillMaxSize(),
-                textColor = colorScheme.onSurfaceVariantSummary
+                textColor = colorScheme.onSurfaceVariant
             )
 
         // 4. 屏幕正中心 RSVP 闪读文字呈现区（轻触中央切换 暂停/继续，ORP 焦点高亮）
@@ -213,10 +213,10 @@ fun RsvpScreen(
                 val orp = currentToken.orpIndex.coerceIn(0, maxOf(0, tokenText.length - 1))
                 val annotatedString = remember(currentToken, colorScheme) {
                     buildAnnotatedString {
-                        // ORP 焦点字前后的非焦点部分用次级墨角色（onBackgroundVariant）：
+                        // ORP 焦点字前后的非焦点部分用次级墨角色（onSurfaceVariant）：
                         // 视觉降调由角色承担，不再运行时叠 alpha
                         if (orp > 0) {
-                            withStyle(SpanStyle(color = colorScheme.onBackgroundVariant, fontWeight = FontWeight.Normal)) {
+                            withStyle(SpanStyle(color = colorScheme.onSurfaceVariant, fontWeight = FontWeight.Normal)) {
                                 append(tokenText.substring(0, orp))
                             }
                         }
@@ -226,7 +226,7 @@ fun RsvpScreen(
                             }
                         }
                         if (orp + 1 < tokenText.length) {
-                            withStyle(SpanStyle(color = colorScheme.onBackgroundVariant, fontWeight = FontWeight.Normal)) {
+                            withStyle(SpanStyle(color = colorScheme.onSurfaceVariant, fontWeight = FontWeight.Normal)) {
                                 append(tokenText.substring(orp + 1))
                             }
                         }
@@ -235,7 +235,7 @@ fun RsvpScreen(
 
                 Text(
                     text = annotatedString,
-                    style = TextStyle(
+                    style = MaterialTheme.typography.displayMedium.copy(
                         fontSize = 36.sp,
                         letterSpacing = 1.sp,
                         textAlign = TextAlign.Center
@@ -245,7 +245,7 @@ fun RsvpScreen(
             } else {
                 Text(
                     text = if (fullText.isEmpty()) "加载中…" else "全章阅读完毕",
-                    style = TextStyle(fontSize = 16.sp, color = colorScheme.onSurfaceVariantSummary)
+                    style = MaterialTheme.typography.titleLarge.copy(color = colorScheme.onSurfaceVariant)
                 )
             }
 
@@ -268,32 +268,22 @@ fun RsvpScreen(
 
             Text(
                 text = "${currentIndex + 1}/${tokens.size} · $progressPercent%",
-                style = TextStyle(fontSize = 11.sp, color = colorScheme.onSurfaceVariantSummary)
+                style = MaterialTheme.typography.labelSmall.copy(color = colorScheme.onSurfaceVariant)
             )
         }
 
-        // 5. 底部极简操作胶囊（边距 30dp，彻底规避 466x466 圆屏底弧裁切）
-        Row(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 30.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        // 5. 底部弧形贴边操作条：扇带处处贴合圆屏下缘
+        EdgeActionBar(
             // ‹ 退出
-            PillButton(
+            EdgeButtonSpec(
                 label = "‹ 退出",
-                verticalPadding = 6.dp,
                 onClick = onBack
-            )
+            ),
 
-            Spacer(modifier = Modifier.width(10.dp))
-
-            // 速度/播放状态胶囊（点击可循环切换预设档位，旋转表冠可任意线性微调）
-            PillButton(
-                label = if (isPlaying) "⚡ ${wordsPerMinute.toInt()}字/分" else "▶ 点击继续",
+            // 速度/播放状态扇带（点击可循环切换预设档位，旋转表冠可任意线性微调）
+            EdgeButtonSpec(
+                label = if (isPlaying) "${wordsPerMinute.toInt()} 字/分" else "继续",
                 emphasis = PillEmphasis.Outline,
-                verticalPadding = 6.dp,
                 onClick = {
                     // 点击循环档位：250 -> 350 -> 450 -> 600 -> 800 -> 250
                     val nextSpeed = when {
@@ -306,7 +296,7 @@ fun RsvpScreen(
                     onSpeedChange(nextSpeed)
                 }
             )
-        }
+        )
     }
 }
 

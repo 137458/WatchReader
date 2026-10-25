@@ -4,16 +4,9 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.EaseInCubic
-import androidx.compose.animation.core.EaseOutCubic
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -21,7 +14,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,14 +23,27 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -48,87 +54,101 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlin.math.abs
-import top.yukonga.miuix.kmp.basic.HorizontalDivider
-import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
-import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.squircle.squircleBorder
-import top.yukonga.miuix.kmp.squircle.squircleClip
-import top.yukonga.miuix.kmp.squircle.squircleSurface
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
- * WatchReader 腕上设计系统
+ * WatchReader 腕上设计系统（Material 3）
  *
  * 动效与质感基线：
  * 1. 全部连续动画仅在 graphicsLayer / 绘制阶段读取状态，逐帧失效不引发重组，杜绝高刷滚动 GC 抖动；
  * 2. 统一入场编排（错峰上浮 + 轻缩放）与按压反馈（弹簧缩放），营造沉稳高级的腕上触感；
- * 3. 层次表达以发丝描边（hairline border）代替阴影与色块堆叠，契合 OLED 纯黑与羊皮纸双主题。
+ * 3. 层次表达以 MD3 tonal surface（surfaceContainer 系列）代替阴影与色块堆叠，
+ *    契合 OLED 纯黑与浅色双档；描边一律使用 outlineVariant 角色，不再运行时叠 alpha。
  */
 
-/** 统一动效令牌：时长、缓动与弹簧参数 */
+/** 统一动效令牌：时长、缓动与弹簧参数（对齐 M3 motion tokens + emphasized 曲线） */
 object WatchMotion {
-    const val DUR_ENTER = 340
+    /** M3 medium2：页面级入场 */
+    const val DUR_ENTER = 300
+
+    /** M3 short4：页面淡入 */
     const val DUR_FADE = 200
-    const val DUR_FADE_OUT = 160
+
+    /** M3 short3：页面淡出 */
+    const val DUR_FADE_OUT = 150
 
     // 微内容切换（数值轮换 / Tab 填充 / 局部淡入淡出）：比页面级淡入淡出更快一档，
-    // 全应用所有小面积状态切换统一走这一对时长，杜绝各页自定 120/180/190/200 漂移
-    const val DUR_SWAP_IN = 180
-    const val DUR_SWAP_OUT = 120
+    // 全应用所有小面积状态切换统一走这一对时长（M3 short4 / short2），
+    // 杜绝各页自定 120/180/190/200 漂移
+    const val DUR_SWAP_IN = 200
+    const val DUR_SWAP_OUT = 100
 
     const val STAGGER_STEP_MS = 36L
     const val MAX_STAGGER = 8
 
-    val EnterEasing = FastOutSlowInEasing
-    val ExitEasing = CubicBezierEasing(0.4f, 0f, 0.6f, 1f)
+    /** M3 emphasized decelerate / accelerate */
+    val EnterEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
+    val ExitEasing = CubicBezierEasing(0.3f, 0f, 1f, 1f)
 
     /** 按压回弹：快速沉稳，不过弹 */
     fun <T> pressSpring() = spring<T>(dampingRatio = 0.75f, stiffness = Spring.StiffnessMedium)
 }
 
 /**
- * 统一低透明度令牌：强调描边 / 轻量衬底在三类主题下的共享 alpha。
- * 分隔线与进度轨已升级为 outlineVariant 预混弱档角色（不再运行时叠透明度）。
+ * 统一低透明度令牌：仅用于纯装饰的微光 / 阴影，不得用于文字或结构线。
+ * 结构线与分隔线已升级为 outlineVariant / outline 角色（MD3）。
  */
 object WatchAlpha {
-    /** 卡片发丝描边 */
-    const val HAIRLINE = 0.16f
-
-    /** 主色强调描边（outline 胶囊 / 角标徽章） */
+    /** 弧形寻道微光与选中描边（装饰豁免） */
     const val ACCENT_BORDER = 0.45f
-
-    /** 轻量衬底（地址胶囊 / 步进器底） */
-    const val SUBTLE_SCRIM = 0.55f
 }
 
 /**
- * 统一圆角体系：Card / Row / Badge 为超椭圆平滑圆角半径（squircleClip/squircleBorder，
- * API 33 以下自动降级 RoundedCornerShape）；Pill 为全弧 stadium 胶囊——半径即半高，
- * 超椭圆连续曲率在整条边均为圆弧的形态上无增益，保留百分比圆角（记录在案的豁免）
+ * 统一圆角体系：卡片 / 行 / 角标映射 MD3 shape scale；Pill 为全弧胶囊（手表触控友好）
  */
 object WatchShapes {
-    val Card = 18.dp
-    val Row = 14.dp
-    val Pill = RoundedCornerShape(50)
-    val Badge = 6.dp
+    val Card = 16.dp
+    val Row = 12.dp
+    val Pill = CircleShape
+    val Badge = RoundedCornerShape(6.dp)
 }
 
 /**
@@ -162,7 +182,7 @@ fun rememberTickHaptic(): () -> Unit {
 }
 
 /**
- * 表冠滚动目标注册：Activity 顶层管线直接寻址页面滚动（正向线性步进 + 齿轮微振），
+ * 表冠滚动目标注册：Activity 顶层管线直接寻址页面滚动（连续跟手 + 距离门限微振），
  * 替代依赖原生焦点存活的 1dp 隐形锚点——后者在焦点迁移后会使表冠事件丢失。
  * [key] 变化时重新注册（如滚动状态对象更换）；离开组合自动注销。
  */
@@ -222,8 +242,6 @@ fun Modifier.swipeDismissBack(
 ): Modifier {
     // 视觉位移只有一个来源：拖拽期 spec 为 snap 逐帧跟手，松手后切 spring（弹回）
     // 或 tween（滑出），滑出结束由 finishedListener 回调 onDismiss。
-    // awaitEachGesture 是 @RestrictsSuspension 作用域，内部不得挂起 Animatable，
-    // 故全程零协程、只写普通状态。
     var dragging by remember { mutableStateOf(false) }
     var dismissing by remember { mutableStateOf(false) }
     var targetPx by remember { mutableFloatStateOf(0f) }
@@ -297,30 +315,60 @@ fun Modifier.swipeDismissBack(
 }
 
 /**
- * 发丝描边卡片：surface + 1dp 低透明度轮廓描边，构成腕上卡片层次基元
- * （直绘 squircleSurface+squircleBorder：填充与裁切共用同一超椭圆轮廓，
- * 配套描边严格走 squircleBorder，杜绝圆角抗锯齿破缝）
+ * MD3 卡片：默认 filled card（surfaceContainer 底、零阴影、圆角走 shape scale）。
+ * 传 [borderWidth] > 0 时追加 outline 描边，供需要明确边界的浮层使用。
  */
 @Composable
 fun SurfaceCard(
     modifier: Modifier = Modifier,
     cornerRadius: Dp = WatchShapes.Card,
-    containerColor: Color = MiuixTheme.colorScheme.surface,
-    borderColor: Color = MiuixTheme.colorScheme.dividerLine,
-    borderWidth: Dp = 1.dp,
+    containerColor: Color = MaterialTheme.colorScheme.surfaceContainer,
+    borderColor: Color = Color.Transparent,
+    borderWidth: Dp = 0.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Column(
-        modifier = modifier
-            .squircleSurface(containerColor, cornerRadius)
-            .squircleBorder(borderWidth, borderColor, cornerRadius),
-        content = content
-    )
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(cornerRadius),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        border = if (borderWidth > 0.dp) BorderStroke(borderWidth, borderColor) else null
+    ) {
+        content()
+    }
+}
+
+/** 胶囊按钮三档强调级共用的容器 / 内容色契约 */
+@Composable
+private fun pillColors(
+    emphasis: PillEmphasis,
+    active: Boolean,
+    enabled: Boolean
+): Pair<Color, Color> {
+    val colors = MaterialTheme.colorScheme
+    val isFilled = emphasis == PillEmphasis.Primary || active
+    val container = when {
+        !enabled -> colors.surfaceContainer
+        isFilled -> colors.primary
+        emphasis == PillEmphasis.Outline -> Color.Transparent
+        else -> colors.surfaceContainerHigh
+    }
+    val content = when {
+        !enabled -> colors.onSurfaceVariant
+        isFilled -> colors.onPrimary
+        emphasis == PillEmphasis.Outline -> colors.primary
+        else -> colors.onSurface
+    }
+    return container to content
 }
 
 /**
- * 胶囊按钮：tonal（次要）/ primary（主要）/ outline（主色容器底强调）三种强调级
- * 按压缩放 + 轻触感，无水波纹叠加，保持克制纯粹
+ * 胶囊按钮：primary（filled）/ tonal（surfaceContainerHigh）/ outline（描边）三种强调级。
+ *
+ * 不直接套 `Button` / 可点击 `Surface`：两者都会施加 Material 3 的最小交互尺寸
+ * （Button 内容层 58dp、Surface 48dp），而圆屏最窄弦宽下四键并排的可用宽度只有约 185dp，
+ * 必然溢出并被圆屏弧边裁切。本实现保留 M3 色彩角色、胶囊 shape、按压回弹与触觉反馈，
+ * 最小触控高度 48dp（Google 无障碍基线），宽度完全服从父布局权重。
  */
 @Composable
 fun PillButton(
@@ -333,31 +381,23 @@ fun PillButton(
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    val colors = MiuixTheme.colorScheme
-    val isFilled = emphasis == PillEmphasis.Primary || active
-    val container = when {
-        !enabled -> colors.surfaceVariant
-        isFilled -> colors.primary
-        emphasis == PillEmphasis.Outline -> colors.primaryContainer
-        else -> colors.surfaceVariant
-    }
-    val contentColor = when {
-        !enabled -> colors.disabledOnSurface
-        isFilled -> colors.onPrimary
-        emphasis == PillEmphasis.Outline -> colors.onPrimaryContainer
-        else -> colors.onSurface
-    }
-    val interaction = remember { MutableInteractionSource() }
     val tick = rememberTickHaptic()
+    val interaction = remember { MutableInteractionSource() }
+    val colors = MaterialTheme.colorScheme
+    val (containerColor, contentColor) = pillColors(emphasis, active, enabled)
     Box(
         modifier = modifier
-            .defaultMinSize(minHeight = 44.dp)
+            .heightIn(min = 48.dp)
             .pressScale(interaction)
             .clip(WatchShapes.Pill)
-            .background(container)
+            .background(containerColor)
             .then(
-                if (emphasis == PillEmphasis.Outline && enabled) {
-                    Modifier.border(1.dp, colors.primary.copy(alpha = WatchAlpha.ACCENT_BORDER), WatchShapes.Pill)
+                if (emphasis == PillEmphasis.Outline) {
+                    Modifier.border(
+                        1.dp,
+                        if (enabled) colors.outline else colors.outlineVariant,
+                        WatchShapes.Pill
+                    )
                 } else {
                     Modifier
                 }
@@ -365,28 +405,227 @@ fun PillButton(
             .clickable(
                 interactionSource = interaction,
                 indication = null,
-                enabled = enabled
+                enabled = enabled,
+                role = Role.Button
             ) {
                 tick()
                 onClick()
             }
-            .padding(horizontal = horizontalPadding, vertical = verticalPadding),
+            .padding(PaddingValues(horizontal = horizontalPadding, vertical = verticalPadding)),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = label,
-            style = MiuixTheme.textStyles.button,
+            style = MaterialTheme.typography.labelLarge,
             color = contentColor,
-            maxLines = 1
+            maxLines = 1,
+            textAlign = TextAlign.Center
         )
     }
+}
+
+/**
+ * 底部弧形贴边按钮规格：一条环形扇带的标签、外观与点击回调。
+ * [focused] 供表冠焦点轮选高亮，不参与点击态。
+ */
+class EdgeButtonSpec(
+    val label: String,
+    val emphasis: PillEmphasis = PillEmphasis.Tonal,
+    val active: Boolean = false,
+    val focused: Boolean = false,
+    val enabled: Boolean = true,
+    val onClick: () -> Unit
+)
+
+/**
+ * 底部弧形胶囊操作条：每个按钮是一条两端圆头的弧形胶囊——中线沿圆屏同心弧，
+ * 外缘悬离屏幕圆周 [edgeInset]，内缘 = 外缘 − [thickness]，端头为标准半圆帽
+ * （真胶囊），整体悬浮在下缘、处处跟随圆屏弧度。文字沿 [ArcButtonGeometry]
+ * 的文字轨道逐字排布并随弧线旋转。配色复用 [pillColors]；[focused] 键额外
+ * 描 primary 细边。透明热区按径向 48dp 深、弧向不小于 48dp 宽独立放置，
+ * 不限制视觉胶囊大小。
+ *
+ * [gapDeg] 缺省 −1 表示按键数自动：两键 24°（端帽外凸后中缝仍明显分开，
+ * 呈两个独立胶囊），其余键数 6°（三键邻距小，再大会挤掉标签空间）。
+ */
+@Composable
+fun EdgeActionBar(
+    vararg buttons: EdgeButtonSpec,
+    modifier: Modifier = Modifier,
+    thickness: Dp = 20.dp,
+    gapDeg: Float = -1f,
+    edgeInset: Dp = 6.dp
+) {
+    if (buttons.isEmpty()) return
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val density = LocalDensity.current
+        val widthPx = constraints.maxWidth.toFloat()
+        val heightPx = constraints.maxHeight.toFloat()
+        if (widthPx <= 0f || heightPx <= 0f) return@BoxWithConstraints
+        val thicknessPx = with(density) { thickness.toPx() }
+        val edgeInsetPx = with(density) { edgeInset.toPx() }
+        val charGapPx = with(density) { 1.dp.toPx() }
+        val hitDepthPx = with(density) { 48.dp.toPx() }
+        // 端帽半径 = 厚度/2，帽沿弧向外凸 asin(帽半径/中线半径)；两键需大间隙角才呈两个独立胶囊
+        val effectiveGapDeg = if (gapDeg >= 0f) gapDeg else if (buttons.size == 2) 24f else 6f
+        val sectors = remember(widthPx.roundToInt(), heightPx.roundToInt(), thicknessPx.roundToInt(), effectiveGapDeg, edgeInsetPx.roundToInt(), buttons.size) {
+            ArcButtonGeometry.sectors(buttons.size, widthPx, heightPx, thicknessPx, effectiveGapDeg, edgeInsetPx)
+        }
+        val colorScheme = MaterialTheme.colorScheme
+        val textStyle = MaterialTheme.typography.labelMedium
+        val textMeasurer = rememberTextMeasurer()
+        val tick = rememberTickHaptic()
+        val interactions = remember(buttons.size) { Array(buttons.size) { MutableInteractionSource() } }
+        val labelsKey = buttons.joinToString("\u0000") { it.label }
+        // 逐字排版：每字测量一次，沿文字轨道按 advance 推进得到各字中心角
+        val runs = remember(sectors, labelsKey, textMeasurer, charGapPx.roundToInt()) {
+            sectors.mapIndexed { index, sector ->
+                val label = buttons[index].label
+                val layouts = label.map { char -> textMeasurer.measure(AnnotatedString(char.toString()), textStyle) }
+                val advances = layouts.map { it.size.width.toFloat() + charGapPx }
+                val totalAdvance = advances.sum() - charGapPx
+                val angles = ArcButtonGeometry.charCenterAnglesDeg(totalAdvance, advances, sector.textRadiusPx, sector.centerAngleDeg)
+                ArcCharRun(layouts, angles)
+            }
+        }
+        val pressScales = buildList {
+            buttons.forEachIndexed { index, spec ->
+                val pressed by interactions[index].collectIsPressedAsState()
+                add(
+                    animateFloatAsState(
+                        targetValue = if (pressed && spec.enabled) 0.94f else 1f,
+                        animationSpec = spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMedium),
+                        label = "edgePress" + index
+                    ).value
+                )
+            }
+        }
+        val screenCenter = Offset(widthPx / 2f, heightPx / 2f)
+        // 扇带配色需读 MaterialTheme（@Composable），在绘制外统一解析
+        val colorPairs = buttons.map { spec -> pillColors(spec.emphasis, spec.active, spec.enabled) }
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            sectors.forEachIndexed { index, sector ->
+                val spec = buttons[index]
+                val (containerColor, contentColor) = colorPairs[index]
+                val sweep = sector.endAngleDeg - sector.startAngleDeg
+                val circleCenter = Offset(cx, cy)
+                // 弧形胶囊：中线沿同心弧，两端各接一个半圆帽（帽心在中线端点、半径 = 厚度/2）
+                val capRadius = (sector.outerRadiusPx - sector.innerRadiusPx) / 2f
+                val midRadius = (sector.outerRadiusPx + sector.innerRadiusPx) / 2f
+                val path = Path().apply {
+                    // 外弧 start → end
+                    arcTo(
+                        rect = Rect(center = circleCenter, radius = sector.outerRadiusPx),
+                        startAngleDegrees = sector.startAngleDeg,
+                        sweepAngleDegrees = sweep,
+                        forceMoveTo = true
+                    )
+                    // 右端帽：从外弧切点经远离按钮主体一侧转到内弧切点
+                    arcTo(
+                        rect = Rect(center = polarOffset(circleCenter, sector.endAngleDeg, midRadius), radius = capRadius),
+                        startAngleDegrees = sector.endAngleDeg,
+                        sweepAngleDegrees = 180f,
+                        forceMoveTo = false
+                    )
+                    // 内弧 end → start
+                    arcTo(
+                        rect = Rect(center = circleCenter, radius = sector.innerRadiusPx),
+                        startAngleDegrees = sector.endAngleDeg,
+                        sweepAngleDegrees = -sweep,
+                        forceMoveTo = false
+                    )
+                    // 左端帽：从内弧切点经远离按钮主体一侧转回外弧切点
+                    arcTo(
+                        rect = Rect(center = polarOffset(circleCenter, sector.startAngleDeg, midRadius), radius = capRadius),
+                        startAngleDegrees = sector.startAngleDeg + 180f,
+                        sweepAngleDegrees = 180f,
+                        forceMoveTo = false
+                    )
+                    close()
+                }
+                val trackPivot = polarOffset(Offset(cx, cy), sector.centerAngleDeg, sector.textRadiusPx)
+                scale(pressScales[index], pivot = trackPivot) {
+                    drawPath(path, containerColor)
+                    if (spec.emphasis == PillEmphasis.Outline) {
+                        drawPath(
+                            path,
+                            if (spec.enabled) colorScheme.outline else colorScheme.outlineVariant,
+                            style = Stroke(1.dp.toPx())
+                        )
+                    }
+                    if (spec.focused && spec.enabled) {
+                        drawPath(path, colorScheme.primary, style = Stroke(1.dp.toPx()))
+                    }
+                    val run = runs[index]
+                    run.layouts.forEachIndexed { charIndex, layout ->
+                        val angle = run.angles[charIndex]
+                        val pivot = polarOffset(Offset(cx, cy), angle, sector.textRadiusPx)
+                        rotate(degrees = angle - 90f, pivot = pivot) {
+                            drawText(
+                                textLayoutResult = layout,
+                                color = contentColor,
+                                topLeft = Offset(
+                                    pivot.x - layout.size.width / 2f,
+                                    pivot.y - layout.size.height / 2f
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        sectors.forEachIndexed { index, sector ->
+            val spec = buttons[index]
+            val hitMidRadius = sector.outerRadiusPx - hitDepthPx / 2f
+            val halfSpan = Math.toRadians(((sector.endAngleDeg - sector.startAngleDeg) / 2f).toDouble())
+            val arcWidthPx = 2f * hitMidRadius * sin(halfSpan).toFloat()
+            val hitWidthPx = max(arcWidthPx, hitDepthPx)
+            val hitCenter = polarOffset(screenCenter, sector.centerAngleDeg, hitMidRadius)
+            Box(
+                modifier = Modifier
+                    .offset {
+                        IntOffset(
+                            (hitCenter.x - hitWidthPx / 2f).roundToInt(),
+                            (hitCenter.y - hitDepthPx / 2f).roundToInt()
+                        )
+                    }
+                    .size(with(density) { hitWidthPx.toDp() }, with(density) { hitDepthPx.toDp() })
+                    .graphicsLayer { rotationZ = sector.centerAngleDeg - 90f }
+                    .semantics { contentDescription = spec.label }
+                    .clickable(
+                        interactionSource = interactions[index],
+                        indication = null,
+                        enabled = spec.enabled,
+                        role = Role.Button
+                    ) {
+                        tick()
+                        spec.onClick()
+                    }
+            )
+        }
+    }
+}
+
+private data class ArcCharRun(
+    val layouts: List<TextLayoutResult>,
+    val angles: List<Float>
+)
+
+private fun polarOffset(center: Offset, angleDeg: Float, radius: Float): Offset {
+    val rad = Math.toRadians(angleDeg.toDouble())
+    return Offset(
+        center.x + radius * cos(rad).toFloat(),
+        center.y + radius * sin(rad).toFloat()
+    )
 }
 
 enum class PillEmphasis { Tonal, Primary, Outline }
 
 /**
  * 浮层进出场统一档位：scale + fade，时长复用 WatchMotion 的微内容档
- * （180ms 进 / 160ms 出），全部条件浮层共用，杜绝各页自定 scale 与时长漂移
+ * （200ms 进 / 150ms 出），全部条件浮层共用，杜绝各页自定 scale 与时长漂移
  */
 object WatchOverlay {
     val Enter: EnterTransition = fadeIn(tween(WatchMotion.DUR_SWAP_IN)) +
@@ -396,42 +635,42 @@ object WatchOverlay {
         scaleOut(targetScale = 0.92f, animationSpec = tween(WatchMotion.DUR_FADE_OUT))
 }
 
-/** 分区小标题：加宽字距的克星级标签 */
+/** 分区小标题：MD3 labelMedium，加宽字距的克星级标签 */
 @Composable
 fun SectionLabel(
     text: String,
     modifier: Modifier = Modifier,
-    color: Color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+    color: Color = MaterialTheme.colorScheme.primary
 ) {
     Text(
         text = text,
         modifier = modifier,
-        style = MiuixTheme.textStyles.footnote2,
+        style = MaterialTheme.typography.labelMedium,
         color = color,
         letterSpacing = 1.4.sp
     )
 }
 
-/** 发丝分隔线（miuix HorizontalDivider，dividerLine 预混弱档，三主题免调） */
+/** 发丝分隔线（outlineVariant 预混弱档角色，双主题免调） */
 @Composable
 fun HairlineDivider(modifier: Modifier = Modifier) {
     HorizontalDivider(
         modifier = modifier,
         thickness = 1.dp,
-        color = MiuixTheme.colorScheme.dividerLine
+        color = MaterialTheme.colorScheme.outlineVariant
     )
 }
 
 /**
- * 细进度轨：miuix LinearProgressIndicator（圆头圆角轨，primary/弱档预混色）；
+ * 细进度轨：MD3 LinearProgressIndicator（圆头轨、无轨道间隙）；
  * 动画值经 animateFloatAsState 一次性推进（开卷/进度刷新等一次性场景）
  */
 @Composable
 fun ProgressTrack(
     progress: Float,
     modifier: Modifier = Modifier,
-    trackColor: Color = MiuixTheme.colorScheme.dividerLine,
-    fillColor: Color = MiuixTheme.colorScheme.primary,
+    trackColor: Color = MaterialTheme.colorScheme.surfaceVariant,
+    fillColor: Color = MaterialTheme.colorScheme.primary,
     height: Dp = 4.dp
 ) {
     val animated by animateFloatAsState(
@@ -439,15 +678,14 @@ fun ProgressTrack(
         animationSpec = tween(520, easing = WatchMotion.EnterEasing),
         label = "progress-track"
     )
-    // 高度只经组件参数下发（modifier 侧再 .height() 会形成双源指定，单改其一必漂移）
     LinearProgressIndicator(
-        progress = animated,
-        modifier = modifier.fillMaxWidth(),
-        colors = ProgressIndicatorDefaults.progressIndicatorColors(
-            foregroundColor = fillColor,
-            backgroundColor = trackColor
-        ),
-        height = height
+        progress = { animated },
+        modifier = modifier.fillMaxWidth().height(height),
+        color = fillColor,
+        trackColor = trackColor,
+        strokeCap = StrokeCap.Round,
+        gapSize = 0.dp,
+        drawStopIndicator = {}
     )
 }
 
@@ -468,7 +706,7 @@ fun Modifier.staggeredEnter(order: Int): Modifier {
     val progress = remember { Animatable(0f) }
     LaunchedEffect(order) {
         if (progress.value < 1f) {
-            delay(order.coerceAtMost(WatchMotion.MAX_STAGGER) * WatchMotion.STAGGER_STEP_MS)
+            delay(max(0, order.coerceAtMost(WatchMotion.MAX_STAGGER)) * WatchMotion.STAGGER_STEP_MS)
             progress.animateTo(1f, tween(WatchMotion.DUR_ENTER, easing = WatchMotion.EnterEasing))
         }
     }
@@ -480,79 +718,46 @@ fun Modifier.staggeredEnter(order: Int): Modifier {
     }
 }
 
-/**
- * 优雅加载指示：旋转圆弧（LinearEasing 匀速旋转，仅图层失效）+ 柔和呼吸
- */
+/** MD3 环形加载指示（indeterminate） */
 @Composable
 fun LoadingIndicator(
     modifier: Modifier = Modifier,
     size: Dp = 28.dp,
     strokeWidth: Dp = 2.4.dp,
-    color: Color = MiuixTheme.colorScheme.primary,
-    trackColor: Color = MiuixTheme.colorScheme.dividerLine
+    color: Color = MaterialTheme.colorScheme.primary,
+    trackColor: Color = MaterialTheme.colorScheme.surfaceVariant
 ) {
-    val transition = rememberInfiniteTransition(label = "loading-arc")
-    val rotation by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(1050, easing = LinearEasing)),
-        label = "loading-rotation"
+    CircularProgressIndicator(
+        modifier = modifier.size(size),
+        color = color,
+        strokeWidth = strokeWidth,
+        trackColor = trackColor,
+        strokeCap = StrokeCap.Round
     )
-    val breath by transition.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1050, easing = WatchMotion.EnterEasing), RepeatMode.Reverse),
-        label = "loading-breath"
-    )
-    Canvas(
-        modifier
-            .size(size)
-            .graphicsLayer {
-                rotationZ = rotation
-                alpha = breath
-            }
-    ) {
-        val stroke = strokeWidth.toPx()
-        drawArc(
-            color = color,
-            startAngle = -90f,
-            sweepAngle = 96f,
-            useCenter = false,
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-        drawArc(
-            color = trackColor,
-            startAngle = -90f + 96f + 18f,
-            sweepAngle = 360f - 96f - 18f,
-            useCenter = false,
-            style = Stroke(width = stroke, cap = StrokeCap.Round)
-        )
-    }
 }
 
 /**
- * 格式角标（TXT / EPUB）：容器角色底 + 发丝描边小徽章。
- * 填充走预混容器角色（primaryContainer/secondaryContainer 对），文字用配对内容色，
+ * 格式角标（TXT / EPUB）：MD3 tonal badge（容器底 + 配对内容色，无描边）。
+ * 填充走 MD3 容器角色（primaryContainer / secondaryContainer 对），
  * 替代旧版「同色 10% alpha 自底」——亮主题下自衬对不达标且产生影子令牌。
- * 描边是 onDrawBehind 语义：background 必须先于 squircleBorder，描边才能浮于填充之上。
  */
 @Composable
 fun TextBadge(
     text: String,
     modifier: Modifier = Modifier,
-    container: Color = MiuixTheme.colorScheme.primaryContainer,
-    content: Color = MiuixTheme.colorScheme.onPrimaryContainer
+    container: Color = MaterialTheme.colorScheme.primaryContainer,
+    content: Color = MaterialTheme.colorScheme.onPrimaryContainer
 ) {
-    Box(
-        modifier = modifier
-            .squircleClip(WatchShapes.Badge)
-            .background(container)
-            .squircleBorder(1.dp, content.copy(alpha = WatchAlpha.ACCENT_BORDER), WatchShapes.Badge)
-            .padding(horizontal = 5.dp, vertical = 1.dp)
+    Surface(
+        modifier = modifier,
+        shape = WatchShapes.Badge,
+        color = container,
+        contentColor = content
     ) {
         Text(
             text = text,
-            style = MiuixTheme.textStyles.footnote2,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
             color = content,
             letterSpacing = 0.6.sp
         )
@@ -563,20 +768,23 @@ fun TextBadge(
 @Composable
 fun PulsingDot(
     modifier: Modifier = Modifier,
-    color: Color = MiuixTheme.colorScheme.primary
+    color: Color = MaterialTheme.colorScheme.primary
 ) {
-    val transition = rememberInfiniteTransition(label = "pulse-dot")
+    val transition = androidx.compose.animation.core.rememberInfiniteTransition(label = "pulse-dot")
     val alpha by transition.animateFloat(
         initialValue = 0.35f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1200, easing = WatchMotion.EnterEasing), RepeatMode.Reverse),
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            tween(1200, easing = WatchMotion.EnterEasing),
+            androidx.compose.animation.core.RepeatMode.Reverse
+        ),
         label = "pulse-alpha"
     )
     Box(
         modifier = modifier
             .size(6.dp)
             .graphicsLayer { this.alpha = alpha }
-            .squircleClip(WatchShapes.Badge)
+            .clip(CircleShape)
             .background(color)
     )
 }
@@ -585,12 +793,12 @@ fun PulsingDot(
 @Composable
 fun StaticDot(
     modifier: Modifier = Modifier,
-    color: Color = MiuixTheme.colorScheme.primary
+    color: Color = MaterialTheme.colorScheme.primary
 ) {
     Box(
         modifier = modifier
             .size(6.dp)
-            .squircleClip(WatchShapes.Badge)
+            .clip(CircleShape)
             .background(color)
     )
 }
@@ -606,7 +814,7 @@ fun EdgeFadeMask(
     edge: Alignment.Vertical,
     modifier: Modifier = Modifier,
     height: Dp = 48.dp,
-    color: Color = MiuixTheme.colorScheme.background
+    color: Color = MaterialTheme.colorScheme.background
 ) {
     val brush = remember(color, edge) {
         if (edge == Alignment.Top) {
