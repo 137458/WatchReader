@@ -426,12 +426,9 @@ class MainActivity : ComponentActivity() {
                     },
                     onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
                     onBrightnessChange = { viewModel.updateAppBrightness(it) },
-                    onAddBookmark = {
-                        viewModel.addBookmark()
-                        viewModel.returnToReader()
-                    },
+                    onOpenBookmarks = { viewModel.navigateTo(Screen.ChapterList(bookmarkTab = true)) },
                     onOpenRsvp = { viewModel.openRsvp() },
-                    onChapterListClick = { viewModel.navigateTo(Screen.ChapterList) },
+                    onChapterListClick = { viewModel.navigateTo(Screen.ChapterList()) },
                     onOpenSearch = { viewModel.navigateTo(Screen.Search) },
                     onBack = { viewModel.returnToReader() },
                     onHome = { viewModel.closeBook() },
@@ -455,6 +452,7 @@ class MainActivity : ComponentActivity() {
                 )
 
                 is Screen.ChapterList -> ChapterListScreen(
+                    openBookmarkTab = current.bookmarkTab,
                     chapters = uiState.chapters,
                     currentChapterIndex = uiState.currentChapterIndex,
                     bookmarks = uiState.bookmarks,
@@ -467,6 +465,7 @@ class MainActivity : ComponentActivity() {
                     onDeleteBookmark = { bookmark ->
                         viewModel.removeBookmark(bookmark.id)
                     },
+                    onAddBookmark = { viewModel.addBookmark() },
                     onBack = { viewModel.returnToReader() }
                 )
 

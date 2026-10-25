@@ -85,7 +85,7 @@ fun MenuScreen(
     onToggleAutoScroll: () -> Unit,
     onAutoScrollSpeedChange: (Float) -> Unit,
     onBrightnessChange: (Float) -> Unit,
-    onAddBookmark: () -> Unit,
+    onOpenBookmarks: () -> Unit,
     onOpenRsvp: () -> Unit,
     onChapterListClick: () -> Unit,
     onOpenSearch: () -> Unit = {},
@@ -203,7 +203,7 @@ fun MenuScreen(
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PillButton("书签", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onAddBookmark)
+                    PillButton("书签", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onOpenBookmarks)
                     PillButton("速读", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onOpenRsvp)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

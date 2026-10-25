@@ -106,15 +106,17 @@ fun generateChapterRanges(totalCount: Int): List<ChapterRange> {
  */
 @Composable
 fun ChapterListScreen(
+    openBookmarkTab: Boolean = false,
     chapters: List<Chapter>,
     currentChapterIndex: Int,
     bookmarks: List<Bookmark> = emptyList(),
     onChapterClick: (Int) -> Unit,
     onBookmarkClick: (Bookmark) -> Unit = {},
     onDeleteBookmark: (Bookmark) -> Unit = {},
+    onAddBookmark: () -> Unit = {},
     onBack: () -> Unit
 ) {
-    var selectedTab by remember { mutableStateOf(0) } // 0: 目录, 1: 书签
+    var selectedTab by remember { mutableStateOf(if (openBookmarkTab) 1 else 0) } // 0: 目录, 1: 书签
     var showRangePicker by remember { mutableStateOf(false) }
 
     BackHandler(onBack = {
@@ -229,7 +231,7 @@ fun ChapterListScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "暂无书签\n可在阅读菜单中点击“存为书签”",
+                        text = "暂无书签\n点击下方“存为书签”保存当前位置",
                         style = MaterialTheme.typography.bodyMedium,
                         color = colorScheme.onSurfaceVariant,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -313,9 +315,13 @@ fun ChapterListScreen(
             TabCapsule("书签 (${bookmarks.size})", selected = selectedTab == 1) { selectedTab = 1 }
         }
 
-        // 底部弧形贴边操作条：扇带处处贴合圆屏下缘（按钮数随 Tab 动态 2~3）
+        // 底部弧形贴边操作条：扇带处处贴合圆屏下缘（目录 Tab 1~3 键，书签 Tab 2 键）
         val barSpecs = buildList {
             add(EdgeButtonSpec(label = "‹ 返回", onClick = onBack))
+
+            if (selectedTab == 1) {
+                add(EdgeButtonSpec(label = "存为书签", onClick = onAddBookmark))
+            }
 
             if (selectedTab == 0 && chapters.isNotEmpty()) {
                 add(

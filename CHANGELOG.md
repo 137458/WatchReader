@@ -3,6 +3,7 @@
 ## [未发布]
 
 ### 变更
+- 阅读菜单"书签"按钮改为直接打开书签列表（目录页书签 Tab）：`Screen.ChapterList` 增加书签 Tab 参数，菜单入口直达书签列表；"存为书签"动作移至书签 Tab 底部弧形操作条第二键（返回 / 存为书签），保存后停留列表即时可见新书签，空态提示同步改为指向该键。
 - 全应用 UI 回归 Google Material 3：移除 miuix / HyperOS 组件树，改用 Material 3 的 `Card`、`OutlinedTextField`、`LinearProgressIndicator` / `CircularProgressIndicator`、`RadioButton` 与 `HorizontalDivider`；卡片改为 tonal surface 层次，按钮保留应用级 `PillButton` 薄封装（M3 色彩角色 + 48dp 胶囊），输入框与主题选择浮层按 MD3 状态语义重做。决策见 ADR-018。
 - 主题由五档收敛为 MD3 亮 / 暗双档：`ThemeMode.LIGHT(0)` / `DARK(1)`，历史值 0/4 → 浅色、1/2/3 → 深色，DataStore 读写与备份恢复统一归一，旧安装与旧备份仍可读取。暗档保留 AMOLED 纯黑背景，卡片与浮层经 `surfaceContainer` 系列逐档提亮。
 - 色板改为全量自持的 Material 3 `ColorScheme`：品牌蓝 / 格式绿 / 书签琥珀分别绑定 `primary` / `secondary` / `tertiary`，亮暗两档逐角色显式赋值；排版为 MD3 type scale 的腕上收敛版（页面标题 20sp、正文 14sp、按钮 12sp），形状采用 6/10/16/22/28dp 圆角标度。
