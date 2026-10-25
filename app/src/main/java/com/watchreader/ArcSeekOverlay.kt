@@ -9,9 +9,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import top.yukonga.miuix.kmp.squircle.squircleBackground
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Text
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -114,7 +115,7 @@ fun ArcSeekOverlay(
 ) {
     if (chapters.size <= 1) return
 
-    val primaryColor = MiuixTheme.colorScheme.primary
+    val primaryColor = MaterialTheme.colorScheme.primary
     val totalChapters = chapters.size
 
     // 纯绘制组件：手势识别由阅读页原生触摸管线（ArcSeekGestureRecognizer）承担，
@@ -181,13 +182,14 @@ fun ArcSeekOverlay(
             Box(
                 modifier = Modifier
                     .padding(horizontal = 32.dp)
-                    .squircleBackground(WatchFixed.HudScrim, 18.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(WatchFixed.HudScrim)
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = label,
-                    // 恒黑胶囊配固定柔白字：主题 primary 为纸底设计，羊皮纸档黑底上仅 2.8:1
+                    // 恒黑胶囊配固定柔白字：主题 primary 为表面设计，浅色档黑底上对比不足
                     color = WatchFixed.HudInk,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,

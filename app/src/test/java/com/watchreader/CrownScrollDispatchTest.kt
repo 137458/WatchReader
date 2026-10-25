@@ -2,25 +2,28 @@ package com.watchreader
 
 import androidx.compose.foundation.ScrollState
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 表冠 → Compose 滚动分发回归测试（对齐阅读页原生 smoothScrollBy(+px) 的方向语义）
+ * 表冠 → 滚动分发回归测试（对齐系统设置 / 桌面列表内核的连续滚动口径）
  *
- * 背景：菜单 / 书架曾通过 dispatchRawDelta(-pixels) 分发表冠增量，而 ScrollState 的
- * 滚动语义是 value += delta（正 = 向下翻页），与阅读页 smoothScrollBy(+pixels) 恰好相反。
- * 结果是 Compose 页面页顶顺时针被钳制为完全无响应、逆时针反向滚动，手感灵敏度错乱，
- * 用户感知为"表冠处理有问题、振动与灵敏度不对"。
- *
- * 本测试锁定三条铁律（单位标定：12 单位 = 一个物理档位 = 系统滚动系数，见 scrollFactorPxPerUnit）：
+ * 本测试锁定四条铁律：
  * 1. 表冠顺时针（+）必须使 ScrollState.value 增大（向下翻页），与阅读页一致；
- * 2. 每档位移必须触发一次齿轮微振；
- * 3. 滚动余量耗尽时静默钳制：不越界、不响齿轮微振、也不响任何边界振感（产品决策：到底不反馈）。
+ * 2. 每个事件按「系统滚动系数 × 0.5」连续下发，允许亚像素输入补足 1px，不做档位量子跳跃；
+ * 3. 齿轮微振按实际滚动像素累积，满 crown_vibrator_instance（默认 24px）才触发一次；
+ * 4. 滚动余量耗尽时静默钳制：不越界、不响齿轮微振、也不响任何边界振感（产品决策：到底不反馈）。
  */
 class CrownScrollDispatchTest {
+
+    private fun prepare(factor: Float = 2f, time: Long = 1000L) {
+        CrownScrollHelper.resetFeedbackGatesForTest()
+        CrownScrollHelper.scrollFactorPxPerUnit = factor
+        CrownScrollHelper.timeSourceMs = { time }
+    }
 
     /** 模拟已布局的滚动容器：maxValue 的 setter 是 foundation 模块内符号（JVM 层公有） */
     private fun newScrollState(maxValue: Int = 4000): ScrollState {
@@ -33,90 +36,57 @@ class CrownScrollDispatchTest {
 
     @Test
     fun crownClockwiseScrollsDown() {
+        prepare()
         val state = newScrollState()
-        CrownScrollHelper.dispatchScroll(12f, state, null, null) // 顺时针一档（12 单位）
-        assertEquals(40, state.value)
+        CrownScrollHelper.dispatchScroll(6f, state, null, null) // 6 单位 × 2 × 0.5 = 6px
+        assertEquals(6, state.value)
     }
 
     @Test
     fun crownCounterClockwiseScrollsUp() {
+        prepare()
         val state = newScrollState()
-        CrownScrollHelper.dispatchScroll(24f, state, null, null) // 向下两档
-        assertEquals(80, state.value)
-        CrownScrollHelper.dispatchScroll(-12f, state, null, null) // 逆时针一档回退
-        assertEquals(40, state.value)
+        CrownScrollHelper.dispatchScroll(12f, state, null, null) // 12px
+        assertEquals(12, state.value)
+        CrownScrollHelper.dispatchScroll(-6f, state, null, null) // -6px
+        assertEquals(6, state.value)
     }
 
     @Test
-    fun belowThresholdDoesNotScrollOrVibrate() {
-        CrownScrollHelper.resetFeedbackGatesForTest()
+    fun subPixelRotationStillMovesOnePixel() {
+        prepare()
+        val state = newScrollState()
+        CrownScrollHelper.dispatchScroll(0.1f, state, null, null)
+        assertEquals("亚像素转动必须补足 1px，不得被吞掉", 1, state.value)
+        CrownScrollHelper.dispatchScroll(-0.1f, state, null, null)
+        assertEquals(0, state.value)
+    }
+
+    @Test
+    fun continuousRotationDoesNotQuantumJump() {
+        prepare()
+        val state = newScrollState()
+        // 旧档位模型下 1 单位两次都不会移动；新模型每个事件都应跟手
+        CrownScrollHelper.dispatchScroll(1f, state, null, null)
+        assertEquals(1, state.value)
+        CrownScrollHelper.dispatchScroll(1f, state, null, null)
+        assertEquals(2, state.value)
+    }
+
+    @Test
+    fun vibrationAccumulatesByScrollDistanceNotNotch() {
+        prepare()
         val state = newScrollState()
         var ticks = 0
         CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
         try {
-            CrownScrollHelper.dispatchScroll(6f, state, null, null) // 不足一档（12 单位）
-            assertEquals("未满足一档门限绝不触发界面滚动", 0, state.value)
-            assertEquals("未满足一档门限绝不触发齿轮微振", 0, ticks)
-        } finally {
-            CrownScrollHelper.gearTickProbe = null
-        }
-    }
-
-    @Test
-    fun accumulatingToThresholdTriggersScrollAndVibrate() {
-        CrownScrollHelper.resetFeedbackGatesForTest()
-        val state = newScrollState()
-        var ticks = 0
-        CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
-        try {
-            CrownScrollHelper.dispatchScroll(6f, state, null, null) // 累积 6 单位
-            assertEquals(0, state.value)
+            // 系统列表 mDelta 语义：门限判断在累加之前，满 24px 后由下一次事件触发并清零
+            repeat(4) { CrownScrollHelper.dispatchScroll(6f, state, null, null) }
+            assertEquals(24, state.value)
             assertEquals(0, ticks)
 
-            CrownScrollHelper.dispatchScroll(6f, state, null, null) // 补齐 12 单位（满 1 档）
-            assertEquals("满 1 档必须分发一次标准步进滚动", 40, state.value)
-            assertEquals("满 1 档必须 1:1 触发一次齿轮微振", 1, ticks)
-        } finally {
-            CrownScrollHelper.gearTickProbe = null
-        }
-    }
-
-    @Test
-    fun idleTimeoutResetsAccumulator() {
-        CrownScrollHelper.resetFeedbackGatesForTest()
-        var now = 1000L
-        CrownScrollHelper.timeSourceMs = { now }
-        val state = newScrollState()
-        var ticks = 0
-        CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
-        try {
-            CrownScrollHelper.dispatchScroll(6f, state, null, null) // 累积 6 单位
-            assertEquals(0, state.value)
-
-            now += 300L // 停顿 300ms（超过 250ms 空闲超时）
-            CrownScrollHelper.dispatchScroll(6f, state, null, null) // 前次余量已回弹清零，本次独立仍未满一档
-            assertEquals("空闲超时后余量重置，不应越时拼接滚动", 0, state.value)
-            assertEquals("空闲超时后不应误触微振", 0, ticks)
-        } finally {
-            CrownScrollHelper.gearTickProbe = null
-        }
-    }
-
-    @Test
-    fun oppositeRotationRollsBackRemainder() {
-        CrownScrollHelper.resetFeedbackGatesForTest()
-        val state = newScrollState(maxValue = 1000)
-        var ticks = 0
-        CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
-        try {
-            CrownScrollHelper.dispatchScroll(8f, state, null, null) // 顺时针累积 8 单位，未达门限
-            assertEquals(0, state.value)
-
-            CrownScrollHelper.dispatchScroll(-4f, state, null, null) // 逆时针回退 4 单位，余量回落为 4 单位
-            assertEquals(0, state.value)
-
-            CrownScrollHelper.dispatchScroll(8f, state, null, null) // 再顺时针 8 单位，4 + 8 = 12 单位（满 1 档）
-            assertEquals(40, state.value)
+            CrownScrollHelper.dispatchScroll(6f, state, null, null)
+            assertEquals(30, state.value)
             assertEquals(1, ticks)
         } finally {
             CrownScrollHelper.gearTickProbe = null
@@ -124,84 +94,63 @@ class CrownScrollDispatchTest {
     }
 
     @Test
-    fun highResolutionStreamQuantizesToNotchesAndRetainsRemainder() {
-        CrownScrollHelper.resetFeedbackGatesForTest()
+    fun signedGateCancelsOppositeRotation() {
+        // 系统列表用有符号累积：反向转动会抵消余量，不会各转一半就各响一次
+        prepare()
         val state = newScrollState()
         var ticks = 0
         CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
         try {
-            // 快甩单事件 55 单位：4 档（48 单位）+ 7 单位余量
-            CrownScrollHelper.dispatchScroll(55f, state, null, null)
-            assertEquals("55 单位应量子化为 4 档位移（4 * 40 = 160）", 160, state.value)
-            assertEquals("快甩 4 档触发微振", 1, ticks)
-
-            // 后续小微动 5 单位：余量 7 + 5 = 12 单位，补齐第 5 档
-            CrownScrollHelper.dispatchScroll(5f, state, null, null)
-            assertEquals("余量补齐后滚动到第 5 档（5 * 40 = 200）", 200, state.value)
-            assertEquals(2, ticks)
+            repeat(3) { CrownScrollHelper.dispatchScroll(6f, state, null, null) } // +18
+            repeat(3) { CrownScrollHelper.dispatchScroll(-6f, state, null, null) } // 回到 0
+            assertEquals(0, ticks)
+            assertEquals(0, state.value)
         } finally {
             CrownScrollHelper.gearTickProbe = null
         }
     }
 
     @Test
-    fun gearTickFiresPerNotch() {
-        CrownScrollHelper.resetFeedbackGatesForTest()
-        val state = newScrollState()
+    fun idleTickFiresPerDistanceOnNonScrollablePage() {
+        prepare()
         var ticks = 0
         CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
         try {
-            CrownScrollHelper.dispatchScroll(12f, state, null, null)
-            CrownScrollHelper.dispatchScroll(12f, state, null, null)
+            repeat(5) { CrownScrollHelper.dispatchIdleTick(6f, null, null) } // 满 24px 后下一次事件触发
         } finally {
             CrownScrollHelper.gearTickProbe = null
         }
-        assertEquals(2, ticks)
-        assertEquals(80, state.value)
+        assertEquals("空转页按系统滚动距离门限振一次", 1, ticks)
     }
 
     @Test
     fun bottomEdgeClampsSilently() {
-        CrownScrollHelper.resetFeedbackGatesForTest()
-        val state = newScrollState(maxValue = 80)
-        CrownScrollHelper.dispatchScroll(24f, state, null, null) // 到达底部
-        assertEquals(80, state.value)
+        prepare()
+        val state = newScrollState(maxValue = 10)
+        CrownScrollHelper.dispatchScroll(100f, state, null, null) // 到达底部
+        assertEquals(10, state.value)
 
         var ticks = 0
         CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
         try {
-            CrownScrollHelper.dispatchScroll(12f, state, null, null) // 底部继续向下
+            CrownScrollHelper.dispatchScroll(100f, state, null, null) // 底部继续向下
         } finally {
             CrownScrollHelper.gearTickProbe = null
         }
         assertEquals("触边后不应再走齿轮微振", 0, ticks)
-        assertEquals("触边后不应越界滚动", 80, state.value)
-    }
-
-    @Test
-    fun idleTickFiresPerNotchOnNonScrollablePage() {
-        CrownScrollHelper.resetFeedbackGatesForTest()
-        var ticks = 0
-        CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
-        try {
-            CrownScrollHelper.dispatchIdleTick(12f, null, null)
-            CrownScrollHelper.dispatchIdleTick(12f, null, null)
-        } finally {
-            CrownScrollHelper.gearTickProbe = null
-        }
-        assertEquals("空转每档应给出齿轮微振", 2, ticks)
+        assertEquals("触边后不应越界滚动", 10, state.value)
     }
 
     @Test
     fun adjustTickFiresPerDetent() {
         // 调速档位微振：每物理档位（12 单位）恰好一振，杜绝调速时逐事件连震
-        CrownScrollHelper.resetFeedbackGatesForTest()
+        prepare()
         var ticks = 0
         CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
         try {
             repeat(6) { CrownScrollHelper.dispatchAdjustTick(2f, null, null) } // 12 单位 → 1 振
             assertEquals(1, ticks)
-            CrownScrollHelper.dispatchAdjustTick(-11f, null, null) // 11 单位不足一档，余量跨事件保留
+            CrownScrollHelper.dispatchAdjustTick(-11f, null, null) // 不足一档，余量跨事件保留
             assertEquals(1, ticks)
             CrownScrollHelper.dispatchAdjustTick(2f, null, null) // 11 + 2 → 1 振
             assertEquals(2, ticks)
@@ -212,9 +161,7 @@ class CrownScrollDispatchTest {
 
     @Test
     fun adjustTickCoalescesFastFlickToSingleTick() {
-        // 快甩单事件 ±50+ 单位：门限内合并为一次微振（与滚动页防粘连契约一致），
-        // 余量 50 % 12 = 2 单位跨事件保留，后续小额转动补齐门限后再次响振
-        CrownScrollHelper.resetFeedbackGatesForTest()
+        prepare()
         var ticks = 0
         CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
         try {
@@ -229,10 +176,10 @@ class CrownScrollDispatchTest {
 
     @Test
     fun flingVelocityEstimateMatchesLauncherFormula() {
-        // 惯性速度估计（逆向 HeyLauncher）：速度 = 窗口累计位移 × 700 / 窗口毫秒数，钳制 ±2000
+        // 惯性速度估计：速度 = 窗口累计位移 × 700 / 窗口毫秒数，钳制 ±2000
         assertEquals(1050f, CrownScrollHelper.computeFlingVelocity(300f, 200L), 0.01f)
         assertEquals(-700f, CrownScrollHelper.computeFlingVelocity(-100f, 100L), 0.01f)
-        // 慢速滚动不应达到起振门限（500）：60Hz × 5.33px 稳态 ≈ 223
+        // 慢速滚动不应达到起振门限（500）
         assertTrue(CrownScrollHelper.computeFlingVelocity(640f, 2000L) < CrownScrollHelper.FLING_MIN_VELOCITY_PX_S)
         // 快甩钳制在 ±2000
         assertEquals(2000f, CrownScrollHelper.computeFlingVelocity(1000f, 100L), 0.01f)
@@ -243,47 +190,41 @@ class CrownScrollDispatchTest {
     }
 
     @Test
-    fun slowSingleNotchNeverTriggersFling() {
-        CrownScrollHelper.resetFeedbackGatesForTest()
+    fun slowRotationNeverTriggersFling() {
         var now = 1000L
-        CrownScrollHelper.timeSourceMs = { now }
+        prepare(time = now)
         val state = newScrollState()
         var flingFired = false
         CrownScrollHelper.flingStartProbe = { _ -> flingFired = true }
         try {
-            // 慢转 1 档（12 单位 = 40px）：未达最小位移门限（120px）
-            CrownScrollHelper.dispatchScroll(12f, state, null, null)
-            assertEquals(40, state.value)
-
-            // 停顿超过 settle 延时，执行 settle 检查
-            now += 50L
-            CrownScrollHelper.triggerSettleForTest()
-            assertTrue("单档或微小位移绝对不应触发惯性滑动", !flingFired)
+            // 20ms 间隔慢转 3 次：累计 6px / 40ms，速度约 105px/s，低于 500 门限
+            CrownScrollHelper.dispatchScroll(2f, state, null, null)
+            now += 20L
+            CrownScrollHelper.timeSourceMs = { now }
+            CrownScrollHelper.dispatchScroll(2f, state, null, null)
+            now += 20L
+            CrownScrollHelper.timeSourceMs = { now }
+            CrownScrollHelper.dispatchScroll(2f, state, null, null)
+            assertFalse("慢转绝对不应触发惯性滑动", flingFired)
         } finally {
             CrownScrollHelper.flingStartProbe = null
         }
     }
 
     @Test
-    fun fastFlickTriggersFlingWhenDisplacementAndVelocitySufficient() {
-        CrownScrollHelper.resetFeedbackGatesForTest()
+    fun fastFlickTriggersFlingWhenVelocitySufficient() {
         var now = 1000L
-        CrownScrollHelper.timeSourceMs = { now }
+        prepare(time = now)
         val state = newScrollState()
         var flingVelocity = 0f
         CrownScrollHelper.flingStartProbe = { v -> flingVelocity = v }
         try {
-            // 快速甩动：在 40ms 内连续转动 36 单位（3 档 = 120px）
-            CrownScrollHelper.dispatchScroll(18f, state, null, null)
+            // 20ms 内两次 20px：累计 40px / 20ms = 1400px/s，达标立即起振
+            CrownScrollHelper.dispatchScroll(20f, state, null, null)
             now += 20L
-            CrownScrollHelper.dispatchScroll(18f, state, null, null)
-            now += 20L
-            assertEquals(120, state.value)
-
-            // 松手后经过 settle 延时
-            now += 40L
-            CrownScrollHelper.triggerSettleForTest()
-            assertTrue("快甩且位移达标时必须触发惯性滑动", flingVelocity >= CrownScrollHelper.FLING_MIN_VELOCITY_PX_S)
+            CrownScrollHelper.timeSourceMs = { now }
+            CrownScrollHelper.dispatchScroll(20f, state, null, null)
+            assertTrue("快甩且速度达标时必须触发惯性滑动", flingVelocity >= CrownScrollHelper.FLING_MIN_VELOCITY_PX_S)
         } finally {
             CrownScrollHelper.flingStartProbe = null
         }
@@ -292,25 +233,25 @@ class CrownScrollDispatchTest {
     @Test
     fun continuedSpinAtBottomEdgeStaysSilentlyClamped() {
         // 安全边界：触底后持续同向空转，完全静默钳制（无齿轮微振、无越界、无任何边界振感）
-        CrownScrollHelper.resetFeedbackGatesForTest()
         var now = 1000L
-        CrownScrollHelper.timeSourceMs = { now }
-        val state = newScrollState(maxValue = 80)
-        CrownScrollHelper.dispatchScroll(24f, state, null, null) // 到达底部
-        assertEquals(80, state.value)
+        prepare(time = now)
+        val state = newScrollState(maxValue = 10)
+        CrownScrollHelper.dispatchScroll(100f, state, null, null) // 到达底部
+        assertEquals(10, state.value)
 
         var ticks = 0
         CrownScrollHelper.gearTickProbe = { _, _ -> ticks++ }
         try {
             repeat(6) {
-                now += 50 // 持续转动
+                now += 50
+                CrownScrollHelper.timeSourceMs = { now }
                 CrownScrollHelper.dispatchScroll(12f, state, null, null)
             }
         } finally {
             CrownScrollHelper.gearTickProbe = null
         }
         assertEquals("空转不得触发齿轮微振", 0, ticks)
-        assertEquals("触底后不应越界滚动", 80, state.value)
+        assertEquals("触底后不应越界滚动", 10, state.value)
     }
 
     @Test
@@ -334,6 +275,7 @@ class CrownScrollDispatchTest {
 
     @Test
     fun registryTargetReceivesNormalizedDelta() {
+        prepare()
         var received = 0f
         val state = newScrollState()
         val target = CrownScrollTarget { delta ->
@@ -343,9 +285,9 @@ class CrownScrollDispatchTest {
         }
         CrownScrollTargetRegistry.activate(target)
         try {
-            CrownScrollTargetRegistry.active?.onCrownDelta(12f)
-            assertEquals(12f, received, 0.001f)
-            assertEquals(40, state.value)
+            CrownScrollTargetRegistry.active?.onCrownDelta(6f)
+            assertEquals(6f, received, 0.001f)
+            assertEquals(6, state.value)
         } finally {
             CrownScrollTargetRegistry.deactivate(target)
         }

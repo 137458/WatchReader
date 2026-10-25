@@ -2,5 +2,5 @@
 <resources>
     <!-- 仅保留被 themes.xml 引用的启动底色；
          其余主题色一律以 Compose 令牌为准（Theme.kt），此处不再维护平行色值 -->
-    <color name="paper_background">#FFF7F4EB</color>
+    <color name="md_light_background">#FFF8F9FF</color>
 </resources>

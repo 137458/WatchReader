@@ -209,8 +209,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun toggleDarkMode() {
         val current = ThemeMode.fromValue(_uiState.value.themeMode)
-        // 按主题自身明暗属性定向：亮色档（羊皮纸 / 晴空蓝）一律去极光黑，反之回羊皮纸
-        setThemeMode(if (current.isDark) ThemeMode.PARCHMENT else ThemeMode.DARK)
+        setThemeMode(if (current.isDark) ThemeMode.LIGHT else ThemeMode.DARK)
     }
 
     /**
@@ -1265,7 +1264,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * 设置主题模式 (0: 羊皮纸/浅色, 1: 极光黑/深色, 2: 纯黑深红夜视)
+     * 设置主题模式（0: 浅色, 1: 深色；历史值经 [ThemeMode.fromValue] 归一）
      */
     fun setThemeMode(mode: Int) {
         setThemeMode(ThemeMode.fromValue(mode))

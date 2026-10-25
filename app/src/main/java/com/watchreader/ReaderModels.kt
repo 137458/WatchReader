@@ -3,30 +3,31 @@ package com.watchreader
 import kotlin.math.abs
 
 /**
- * 主题模式（枚举名为持久化标识，显示一律走 [label]）
+ * 主题模式（Material 3 亮 / 暗双档，持久化值为 Int）
+ *
+ * 历史值兼容：0 羊皮纸 / 4 晴空蓝 → LIGHT；1 极光黑 / 2 红光夜视 / 3 深空蓝 → DARK。
+ * 非法值回落 LIGHT（与旧版回落羊皮纸的明色取向一致）。
  */
 enum class ThemeMode(val value: Int) {
-    PARCHMENT(0),
-    DARK(1),
-    RED_NIGHT(2),
-    MIUIX(3),
-    MIUIX_LIGHT(4);
+    LIGHT(0),
+    DARK(1);
 
-    /** 是否属于深色系（极光黑 / 红光夜视 / 深空蓝）—— 由主题本身派生，杜绝第二个"深色"状态量 */
-    val isDark: Boolean get() = this == DARK || this == RED_NIGHT || this == MIUIX
+    /** 是否属于深色系——由主题本身派生，杜绝第二个"深色"状态量 */
+    val isDark: Boolean get() = this == DARK
 
-    /** 主题显示名：按配色命名（深空蓝 = 深灰底蓝强调，晴空蓝 = 白底蓝强调） */
+    /** 主题显示名 */
     val label: String
         get() = when (this) {
-            PARCHMENT -> "羊皮纸"
-            DARK -> "极光黑"
-            RED_NIGHT -> "红光夜视"
-            MIUIX -> "深空蓝"
-            MIUIX_LIGHT -> "晴空蓝"
+            LIGHT -> "浅色"
+            DARK -> "深色"
         }
 
     companion object {
-        fun fromValue(value: Int): ThemeMode = entries.firstOrNull { it.value == value } ?: PARCHMENT
+        fun fromValue(value: Int): ThemeMode = when (value) {
+            0, 4 -> LIGHT
+            1, 2, 3 -> DARK
+            else -> LIGHT
+        }
     }
 }
 

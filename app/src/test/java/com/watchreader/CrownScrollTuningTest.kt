@@ -6,34 +6,56 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 表冠手感调校测试：单位线性换算 + 24px 距离门限齿轮微振节流
+ * 表冠手感调校测试：系统列表同款连续滚动换算 + 距离门限微振
  *
  * 背景约束一（换算）：oplus_crown 上报高分辨率相对滚轮单位流（慢转 ~56 事件/s、值 1~5，
- * 快甩单事件 ±50+），约 12 单位 = 一个物理档位；任何按事件绝对值分档/透传的启发式
- * 都与本机编码不匹配（历史上曾导致调步进常量无效、慢转爬行快甩飞滚），必须全量线性。
- * 背景约束二（振感）：原先每个表冠事件无条件触发一次微振，快速转动时事件密集导致振感粘连、
- * 慢速微小转动时又逐事件乱振；OPPO 原生 crown_vibrator_instance 以固定位移门限计振，
- * 因此统一改为按滚动距离累积触发，保证不同转速下振感节奏一致。
+ * 快甩单事件 ±50+）。本机系统设置 / 桌面的列表内核按「系统滚动系数 × 0.5」逐事件连续下发，
+ * 不足 1px 时按方向补 1px；不再按 12 单位一档做量子化跳跃。
+ * 背景约束二（振感）：OPPO 原生 crown_vibrator_instance 以实际滚动像素累积计振（默认 24px），
+ * 因此统一按滚动距离触发，保证不同转速下振感节奏一致。
  */
 class CrownScrollTuningTest {
 
+    private fun resetWithFactor(factor: Float = 2f) {
+        CrownScrollHelper.resetFeedbackGatesForTest()
+        CrownScrollHelper.scrollFactorPxPerUnit = factor
+    }
+
     @Test
-    fun testNormalizeScalesUnitsLinearlyToPixels() {
-        // 线性标定：12 单位 = 一档 = 40px（40/12 ≈ 3.33px/单位）
-        assertEquals(40f, CrownScrollHelper.normalizeToPixels(12f), 0.01f)
-        assertEquals(20f, CrownScrollHelper.normalizeToPixels(6f), 0.01f)
-        assertEquals(-43.33f, CrownScrollHelper.normalizeToPixels(-13f), 0.01f)
-        assertEquals(0f, CrownScrollHelper.normalizeToPixels(0f), 0.01f)
-        // 快甩大值同样线性，不再透传跳变
-        assertEquals(183.33f, CrownScrollHelper.normalizeToPixels(55f), 0.01f)
+    fun testScrollPixelsMatchSystemListFormula() {
+        resetWithFactor(2f)
+        // round(units × 2) 后再 × 0.5：6 单位 → 6px，3 单位 → 3px
+        assertEquals(6, CrownScrollHelper.scrollPixelsFor(6f))
+        assertEquals(3, CrownScrollHelper.scrollPixelsFor(3f))
+        assertEquals(-13, CrownScrollHelper.scrollPixelsFor(-13f))
+        assertEquals(55, CrownScrollHelper.scrollPixelsFor(55f))
+        assertEquals(0, CrownScrollHelper.scrollPixelsFor(0f))
+    }
+
+    @Test
+    fun testSubPixelRotationGetsOnePixel() {
+        resetWithFactor(2f)
+        // 系统列表内核：Math.round 后不足 1px 时按方向补足 1px，微小转动也跟手
+        assertEquals(1, CrownScrollHelper.scrollPixelsFor(0.1f))
+        assertEquals(-1, CrownScrollHelper.scrollPixelsFor(-0.1f))
+    }
+
+    @Test
+    fun testScrollFactorIsHalfDamped() {
+        resetWithFactor(4f)
+        // 6 单位 × 4 = 24 → × 0.5 = 12px
+        assertEquals(12, CrownScrollHelper.scrollPixelsFor(6f))
+        resetWithFactor(1f)
+        // 6 单位 × 1 = 6 → × 0.5 = 3px
+        assertEquals(3, CrownScrollHelper.scrollPixelsFor(6f))
     }
 
     @Test
     fun testGateEmitsSingleTickPerThresholdDistance() {
         val gate = CrownTickGate()
-        // 单格 40px 步进：每格恰好一次微振
-        assertTrue(gate.onScroll(40f))
-        assertTrue(gate.onScroll(40f))
+        // 每满 24px 门限触发一次微振，余量跨调用保留
+        assertTrue(gate.onScroll(24f))
+        assertTrue(gate.onScroll(24f))
     }
 
     @Test
@@ -90,42 +112,21 @@ class CrownScrollTuningTest {
     }
 
     @Test
-    fun testCrownStepGateNotchQuantizationAndRemainder() {
-        val gate = CrownStepGate(thresholdUnits = 12f, idleTimeoutMs = 250L)
-        var now = 1000L
-
-        // 未满 1 档返回 0
-        assertEquals(0, gate.onDelta(5f, now))
-        assertEquals(0, gate.onDelta(5f, now))
-
-        // 累积 5 + 5 + 4 = 14 单位，满 1 档（12 单位），余量 2 单位
-        assertEquals(1, gate.onDelta(4f, now))
-
-        // 快甩 24 单位：余量 2 + 24 = 26 单位，满 2 档（24 单位），余量 2 单位
-        assertEquals(2, gate.onDelta(24f, now))
-
-        // 补齐 10 单位达到 1 档（余量 2 + 10 = 12 单位）
-        assertEquals(1, gate.onDelta(10f, now))
+    fun testSignedGateMatchesSystemMDelta() {
+        // 系统列表：门限判断先于累加，满 24px 后下一次事件触发并整体清零
+        val gate = CrownTickGate(thresholdPx = 24f, signed = true)
+        repeat(4) { assertFalse(gate.onScroll(6f)) } // 累计 24px
+        assertTrue(gate.onScroll(6f)) // 第 5 次触发
+        assertFalse(gate.onScroll(6f)) // 清零后重新累计
     }
 
     @Test
-    fun testCrownStepGateBidirectionalAndIdleReset() {
-        val gate = CrownStepGate(thresholdUnits = 12f, idleTimeoutMs = 250L)
-        var now = 1000L
-
-        // 顺时针累加 7 单位
-        assertEquals(0, gate.onDelta(7f, now))
-
-        // 逆时针回退 3 单位，余量回落为 4 单位
-        assertEquals(0, gate.onDelta(-3f, now))
-
-        // 逆时针连续 -16 单位：4 + (-16) = -12 单位（满逆向 1 档）
-        assertEquals(-1, gate.onDelta(-16f, now))
-
-        // 停顿超过 250ms 空闲超时，余量清零
-        now += 300L
-        assertEquals(0, gate.onDelta(6f, now))
-        now += 300L
-        assertEquals(0, gate.onDelta(6f, now)) // 前次过期清零，本次独立仍未满 1 档
+    fun testSignedGateCancelsOppositeRotation() {
+        val gate = CrownTickGate(thresholdPx = 24f, signed = true)
+        repeat(3) { assertFalse(gate.onScroll(6f)) } // +18
+        repeat(3) { assertFalse(gate.onScroll(-6f)) } // 抵消回 0
+        repeat(3) { assertFalse(gate.onScroll(6f)) } // 再 +18，仍未满
+        assertFalse(gate.onScroll(6f)) // 累计 24
+        assertTrue(gate.onScroll(6f)) // 下一次触发
     }
 }

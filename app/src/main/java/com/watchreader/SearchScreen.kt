@@ -22,10 +22,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.basic.TextFieldDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,7 +62,7 @@ fun SearchScreen(
 ) {
     BackHandler(onBack = onBack)
 
-    val colorScheme = MiuixTheme.colorScheme
+    val colorScheme = MaterialTheme.colorScheme
     val bgColor = colorScheme.background.toArgb()
 
     // 搜索词由 VM 持有（与结果同生命周期）：返回后再进本页仍可微调关键词重查
@@ -77,24 +80,27 @@ fun SearchScreen(
                 .padding(horizontal = 24.dp, vertical = 52.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            TextField(
+            OutlinedTextField(
                 value = query,
                 onValueChange = onQueryChange,
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                label = "搜索正文关键词",
-                useLabelAsPlaceholder = true,
-                textStyle = MiuixTheme.textStyles.body1.copy(fontSize = 12.sp),
-                cornerRadius = WatchShapes.Row,
+                placeholder = {
+                    Text("搜索正文关键词", style = MaterialTheme.typography.bodyMedium)
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        tint = colorScheme.onSurfaceVariant
+                    )
+                },
+                textStyle = MaterialTheme.typography.bodyMedium,
+                shape = MaterialTheme.shapes.large,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = {
                     if (query.isNotBlank()) onSearch(query)
-                }),
-                colors = TextFieldDefaults.textFieldColors(
-                    backgroundColor = colorScheme.surfaceVariant,
-                    labelColor = colorScheme.onSurfaceVariantSummary,
-                    borderColor = colorScheme.primary
-                )
+                })
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -123,8 +129,8 @@ fun SearchScreen(
                             if (searchResults.size >= BookSearchEngine.MAX_RESULTS) append("（已达上限）")
                             if (isSearching) append(" · 扫描 $scannedChapters/$totalChapters 章")
                         },
-                        style = MiuixTheme.textStyles.footnote2,
-                        color = colorScheme.onSurfaceVariantSummary
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorScheme.onSurfaceVariant
                     )
                     SearchHitListView(
                         hits = searchResults,
@@ -143,8 +149,8 @@ fun SearchScreen(
                         LoadingIndicator(size = 26.dp, strokeWidth = 2.4.dp)
                         Text(
                             text = "正在扫描 $scannedChapters/$totalChapters 章…",
-                            style = MiuixTheme.textStyles.footnote2,
-                            color = colorScheme.onSurfaceVariantSummary
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -156,13 +162,13 @@ fun SearchScreen(
                     ) {
                         Text(
                             text = "未找到“${query.trim()}”",
-                            style = MiuixTheme.textStyles.body1.copy(fontSize = 12.sp),
-                            color = colorScheme.onSurfaceVariantSummary
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colorScheme.onSurfaceVariant
                         )
                         Text(
                             text = "换个关键词试试",
-                            style = MiuixTheme.textStyles.footnote2,
-                            color = colorScheme.onSurfaceVariantSummary
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -192,7 +198,7 @@ private fun SearchHitListView(
     onHitClick: (SearchHit) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val colorScheme = MiuixTheme.colorScheme
+    val colorScheme = MaterialTheme.colorScheme
     AndroidView(
         modifier = modifier,
         factory = { context ->
@@ -232,7 +238,7 @@ private fun SearchHitListView(
 
 private class SearchHitListAdapter(
     var hits: List<SearchHit>,
-    var colorScheme: top.yukonga.miuix.kmp.theme.Colors,
+    var colorScheme: ColorScheme,
     val density: Float,
     val onHitClick: (SearchHit) -> Unit
 ) : BaseAdapter() {
@@ -252,7 +258,7 @@ private class SearchHitListAdapter(
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
             background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(colorScheme.surfaceVariant.toArgb())
+                setColor(colorScheme.surfaceContainerHigh.toArgb())
                 cornerRadius = 12 * density
             }
             setPadding((10 * density).toInt(), (8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt())

@@ -41,7 +41,7 @@ data class AppInitialConfig(
     val lastScreen: String,
     val lastUri: Uri?,
     val lastCharOffset: Int,
-    val themeMode: Int = 0, // 0: 羊皮纸, 1: 极光黑, 2: 纯黑深红
+    val themeMode: Int = 0, // 0: 浅色, 1: 深色（历史值由 ThemeMode.fromValue 归一）
     val tapPageArea: Int = 0, // 0: 上下翻页, 1: 左右翻页, 2: 关闭点按
     val cleanTypography: Boolean = true,
     val fontType: Int = 0, // 0: 黑体, 1: 宋体/衬线
@@ -66,7 +66,7 @@ object DataStoreManager {
     val KEY_DARK_MODE = booleanPreferencesKey("is_dark_mode")
     val KEY_AUTO_SCROLL_SPEED = floatPreferencesKey("auto_scroll_speed")
     val KEY_APP_BRIGHTNESS = floatPreferencesKey("app_brightness") // -1.0f: 跟随系统, 0.01f ~ 1.0f: 自定义亮度
-    val KEY_THEME_MODE = intPreferencesKey("theme_mode") // 0: 羊皮纸, 1: 极光黑, 2: 纯黑深红
+    val KEY_THEME_MODE = intPreferencesKey("theme_mode") // 0: 浅色, 1: 深色（历史值归一）
     val KEY_TAP_PAGE_AREA = intPreferencesKey("tap_page_area") // 0: 上下翻页, 1: 左右翻页, 2: 关闭点按
     val KEY_CLEAN_TYPOGRAPHY = booleanPreferencesKey("clean_typography") // 智能排版净化
     val KEY_FONT_TYPE = intPreferencesKey("font_type") // 0: 黑体, 1: 宋体/衬线
@@ -109,8 +109,11 @@ object DataStoreManager {
             }
         } else null
         val lastCharOffset = prefs[KEY_LAST_CHAR_OFFSET] ?: 0
-        // 主题是配色的唯一状态源；KEY_DARK_MODE 仅作旧版遗留数据的迁移输入（老版本只写这个键）
-        val themeMode = prefs[KEY_THEME_MODE] ?: (if (prefs[KEY_DARK_MODE] == true) 1 else 0)
+        // 主题是配色的唯一状态源；KEY_DARK_MODE 仅作旧版遗留数据的迁移输入（老版本只写这个键）。
+        // 历史五档值在此统一归一为 Material 3 亮 / 暗双档（ADR-018）
+        val themeMode = ThemeMode.fromValue(
+            prefs[KEY_THEME_MODE] ?: (if (prefs[KEY_DARK_MODE] == true) 1 else 0)
+        ).value
         val tapPageArea = prefs[KEY_TAP_PAGE_AREA] ?: 0
         val cleanTypography = prefs[KEY_CLEAN_TYPOGRAPHY] ?: true
         val fontType = prefs[KEY_FONT_TYPE] ?: 0
@@ -143,9 +146,10 @@ object DataStoreManager {
     }
 
     suspend fun saveThemeMode(context: Context, mode: Int) {
+        val normalized = ThemeMode.fromValue(mode).value
         context.dataStore.edit { prefs ->
-            prefs[KEY_THEME_MODE] = mode
-            prefs[KEY_DARK_MODE] = (mode != 0)
+            prefs[KEY_THEME_MODE] = normalized
+            prefs[KEY_DARK_MODE] = (normalized != ThemeMode.LIGHT.value)
         }
     }
 
@@ -223,7 +227,9 @@ object DataStoreManager {
                 totalReadSec = prefs[KEY_READ_DURATION_SEC] ?: 0L,
                 readDays = parseReadDays(prefs[KEY_READ_DAYS_JSON]),
                 fontSize = prefs[KEY_FONT_SIZE] ?: DEFAULT_FONT_SIZE,
-                themeMode = prefs[KEY_THEME_MODE] ?: (if (prefs[KEY_DARK_MODE] == true) 1 else 0),
+                themeMode = ThemeMode.fromValue(
+                    prefs[KEY_THEME_MODE] ?: (if (prefs[KEY_DARK_MODE] == true) 1 else 0)
+                ).value,
                 autoScrollSpeed = prefs[KEY_AUTO_SCROLL_SPEED] ?: DEFAULT_AUTO_SCROLL_SPEED,
                 appBrightness = prefs[KEY_APP_BRIGHTNESS] ?: DEFAULT_BRIGHTNESS,
                 tapPageArea = prefs[KEY_TAP_PAGE_AREA] ?: 0,
@@ -248,8 +254,9 @@ object DataStoreManager {
             prefs[KEY_READ_DURATION_SEC] = payload.totalReadSec
             prefs[KEY_READ_DAYS_JSON] = serializeReadDays(payload.readDays)
             prefs[KEY_FONT_SIZE] = payload.fontSize
-            prefs[KEY_THEME_MODE] = payload.themeMode
-            prefs[KEY_DARK_MODE] = payload.themeMode != 0
+            val restoredTheme = ThemeMode.fromValue(payload.themeMode).value
+            prefs[KEY_THEME_MODE] = restoredTheme
+            prefs[KEY_DARK_MODE] = restoredTheme != ThemeMode.LIGHT.value
             prefs[KEY_AUTO_SCROLL_SPEED] = payload.autoScrollSpeed
             prefs[KEY_APP_BRIGHTNESS] = payload.appBrightness
             prefs[KEY_TAP_PAGE_AREA] = payload.tapPageArea

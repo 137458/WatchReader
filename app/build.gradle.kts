@@ -54,7 +54,7 @@ android {
 }
 
 dependencies {
-    // Compose BOM — 统一管理 Compose 版本（升级至 Kotlin 2.4 同期稳定线，满足 miuix 基线）
+    // Compose BOM — 统一管理 Compose 版本
     val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
 
@@ -62,11 +62,17 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-text")
     implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.foundation:foundation")
+
+    // Material 3 — 应用唯一组件与设计令牌来源（ADR-018）
+    implementation("androidx.compose.material3:material3")
+    // 基础图标集：仅使用 core 的少量字形，避免引入体积巨大的 extended
+    implementation("androidx.compose.material:material-icons-core")
 
     // Activity Compose
     implementation("androidx.activity:activity-compose:1.13.0")
 
-    // Lifecycle（与 miuix 0.9.4 传递基线对齐）
+    // Lifecycle（Compose 生命周期感知状态收集）
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
 
@@ -81,9 +87,6 @@ dependencies {
 
     // ZXing Core — 超轻量二维码生成引擎（纯 Java，R8 裁剪后体积极小）
     implementation("com.google.zxing:core:3.5.3")
-
-    // miuix — HyperOS 设计语言 Compose 组件库（主题 / 基础件，纯 Android 产物）
-    implementation("top.yukonga.miuix.kmp:miuix-ui-android:0.9.4")
 
     // 调试工具
     debugImplementation("androidx.compose.ui:ui-tooling")

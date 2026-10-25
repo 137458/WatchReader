@@ -43,8 +43,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.theme.MiuixTheme
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import kotlin.math.abs
 
 /**
@@ -116,8 +116,9 @@ class MainActivity : ComponentActivity() {
             RotaryHapticManager.initOplusLinearmotor(applicationContext)
         }
 
-        // 读取系统表冠滚动系数（与 HeyLauncher 同源），保证灵敏度与系统应用一致
+        // 读取系统表冠滚动系数与振感门限（与系统设置 / 桌面的列表内核同源）
         CrownScrollHelper.ensureSystemScrollFactor(applicationContext)
+        CrownScrollHelper.ensureSystemHapticThreshold(applicationContext)
 
         // 全屏沉浸式
         @Suppress("DEPRECATION")
@@ -128,7 +129,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsState()
-            val colors = watchColorsOf(ThemeMode.fromValue(uiState.themeMode))
+            val colorScheme = watchColorSchemeOf(ThemeMode.fromValue(uiState.themeMode))
 
             // 动态同步 Window 底层 DecorView 背景色与硬件独立屏幕亮度。
             // 底色必须带变更守卫：无守卫时每次重组（搜索逐键 / 亮度步进 / 阅读时长 tick）
@@ -136,18 +137,19 @@ class MainActivity : ComponentActivity() {
             val lastDecorBackground = remember { intArrayOf(Int.MIN_VALUE) }
             SideEffect {
                 BrightnessManager.applyToWindow(this@MainActivity, uiState.appBrightness)
-                val bgArgb = colors.background.toArgb()
+                val bgArgb = colorScheme.background.toArgb()
                 if (bgArgb != lastDecorBackground[0]) {
                     lastDecorBackground[0] = bgArgb
                     window.decorView.setBackgroundColor(bgArgb)
                 }
             }
 
-            // 主题根节点：应用自持 ThemeMode（DataStore 持久化），显式注入色板与排版，
-            // 不走 ThemeController 的系统明暗 / 动态取色管线
-                MiuixTheme(
-                    colors = colors,
-                    textStyles = WatchTextStyles
+            // 主题根节点：应用自持 ThemeMode（DataStore 持久化），显式注入 MD3 色板、
+            // 腕上排版与 shape scale，不走系统动态取色管线
+                MaterialTheme(
+                    colorScheme = colorScheme,
+                    typography = WatchTypography,
+                    shapes = WatchShapesM3
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         AppContent(uiState)
@@ -188,13 +190,13 @@ class MainActivity : ComponentActivity() {
                                     ) {
                                         Text(
                                             text = "恢复备份？",
-                                            style = MiuixTheme.textStyles.title3,
-                                            color = colors.onBackground
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
                                         Text(
                                             text = "将载入 $lastRestoreCount 本书的书架快照，并覆盖当前书架与全部阅读设置。",
-                                            style = MiuixTheme.textStyles.body1.copy(fontSize = 11.sp),
-                                            color = colors.onSurfaceVariantSummary,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                         )
                                         Row(
