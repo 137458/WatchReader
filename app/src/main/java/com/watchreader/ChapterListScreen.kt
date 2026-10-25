@@ -164,8 +164,9 @@ fun ChapterListScreen(
                     val density = context.resources.displayMetrics.density
                     val padH = (20 * density).toInt()
                     // padTop 与顶部 Tab 胶囊（44dp 起 + 48dp 高 + 内边距）对齐，列表内容不被 Tab 压住
+                    // padBottom 避让底部弧形操作条热区（径向深入屏缘 48dp + 悬离 6dp = 54dp），留 72dp 冗余
                     val padTop = (100 * density).toInt()
-                    val padBottom = (56 * density).toInt()
+                    val padBottom = (72 * density).toInt()
 
                     val listView = ListView(context).apply {
                         layoutParams = ViewGroup.LayoutParams(
@@ -244,8 +245,9 @@ fun ChapterListScreen(
                         val density = context.resources.displayMetrics.density
                         val padH = (18 * density).toInt()
                         // 与目录模式一致：避让顶部 Tab 胶囊（44dp 起 + 48dp 高 + 内边距）
+                        // padBottom 避让底部弧形操作条热区（深入 54dp），留 72dp 冗余
                         val padTop = (100 * density).toInt()
-                        val padBottom = (56 * density).toInt()
+                        val padBottom = (72 * density).toInt()
 
                         val bookmarkListView = ListView(context).apply {
                             layoutParams = ViewGroup.LayoutParams(

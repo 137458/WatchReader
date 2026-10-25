@@ -88,6 +88,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.max
@@ -600,16 +601,44 @@ fun EdgeActionBar(
             val arcWidthPx = 2f * hitMidRadius * sin(halfSpan).toFloat()
             val hitWidthPx = max(arcWidthPx, hitDepthPx)
             val hitCenter = polarOffset(screenCenter, sector.centerAngleDeg, hitMidRadius)
+            // 热区 = 弦长矩形的轴对齐外接框（不旋转）；是否命中以扇带极坐标判定为准。
+            // 外接框只负责接住触摸：扇带外的点击静默丢弃，既不误触按钮也不透传底层列表
+            // （此前旋转矩形热区与 clipToPadding=false 滚入底部的列表行重叠，会吞行触发返回）
+            val theta = (sector.centerAngleDeg - 90f) * (PI / 180f).toFloat()
+            val cosT = abs(cos(theta))
+            val sinT = abs(sin(theta))
+            val hitHalfW = hitWidthPx / 2f
+            val hitHalfH = hitDepthPx / 2f
+            val bboxHalfW = hitHalfW * cosT + hitHalfH * sinT
+            val bboxHalfH = hitHalfW * sinT + hitHalfH * cosT
+            val downPos = remember { mutableStateOf(Offset.Zero) }
+            val hasDown = remember { mutableStateOf(false) }
+            fun inSector(): Boolean = ArcButtonGeometry.hitTest(
+                x = hitCenter.x - bboxHalfW + downPos.value.x,
+                y = hitCenter.y - bboxHalfH + downPos.value.y,
+                centerX = screenCenter.x,
+                centerY = screenCenter.y,
+                startAngleDeg = sector.startAngleDeg,
+                endAngleDeg = sector.endAngleDeg,
+                outerRadiusPx = sector.outerRadiusPx,
+                hitDepthPx = hitDepthPx
+            )
             Box(
                 modifier = Modifier
                     .offset {
                         IntOffset(
-                            (hitCenter.x - hitWidthPx / 2f).roundToInt(),
-                            (hitCenter.y - hitDepthPx / 2f).roundToInt()
+                            (hitCenter.x - bboxHalfW).roundToInt(),
+                            (hitCenter.y - bboxHalfH).roundToInt()
                         )
                     }
-                    .size(with(density) { hitWidthPx.toDp() }, with(density) { hitDepthPx.toDp() })
-                    .graphicsLayer { rotationZ = sector.centerAngleDeg - 90f }
+                    .size(with(density) { (2 * bboxHalfW).toDp() }, with(density) { (2 * bboxHalfH).toDp() })
+                    .pointerInput(sector) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            downPos.value = down.position
+                            hasDown.value = true
+                        }
+                    }
                     .semantics { contentDescription = spec.label }
                     .clickable(
                         interactionSource = interactions[index],
@@ -617,8 +646,14 @@ fun EdgeActionBar(
                         enabled = spec.enabled,
                         role = Role.Button
                     ) {
-                        tick()
-                        spec.onClick()
+                        // 无触摸 DOWN 的语义点击（表冠确认、无障碍激活）始终放行；
+                        // 触摸点击仅在扇带内触发
+                        val tracked = hasDown.value
+                        hasDown.value = false
+                        if (!tracked || inSector()) {
+                            tick()
+                            spec.onClick()
+                        }
                     }
             )
         }

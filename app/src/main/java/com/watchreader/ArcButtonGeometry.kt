@@ -1,8 +1,10 @@
 package com.watchreader
 
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * 弧形贴边按钮几何：环形扇带完全贴住圆屏边缘的纯数学。
@@ -81,6 +83,36 @@ object ArcButtonGeometry {
                 textRadiusPx = textRadius
             )
         }
+    }
+
+    /**
+     * 热区扇带命中判定：命中 = 点在径向环带 [outerRadiusPx − hitDepthPx, outerRadiusPx]
+     * 且角向落在 [startAngleDeg, endAngleDeg]（含边界，支持跨 180° 环绕）。
+     *
+     * 用于弧形操作条热区的极坐标门控：外接框仅负责接住触摸事件，
+     * 是否真正触发按钮以扇带判定为准，避免热区角部越界或吞掉底层列表。
+     */
+    fun hitTest(
+        x: Float,
+        y: Float,
+        centerX: Float,
+        centerY: Float,
+        startAngleDeg: Float,
+        endAngleDeg: Float,
+        outerRadiusPx: Float,
+        hitDepthPx: Float
+    ): Boolean {
+        val dx = x - centerX
+        val dy = y - centerY
+        val radius = sqrt(dx * dx + dy * dy)
+        if (radius < outerRadiusPx - hitDepthPx || radius > outerRadiusPx) return false
+
+        // atan2 值域 (-180°,180°]：把点角折进 [start, start+360°) 再比较，天然支持跨 180° 环绕
+        var angle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
+        var end = endAngleDeg
+        while (angle < startAngleDeg) angle += 360f
+        while (end < startAngleDeg) end += 360f
+        return angle <= end
     }
 
     /**

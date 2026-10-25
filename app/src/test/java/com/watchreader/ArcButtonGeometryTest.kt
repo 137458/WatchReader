@@ -1,9 +1,12 @@
 package com.watchreader
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * 弧形胶囊按钮几何测试：按钮为两端圆头的弧形胶囊，外缘悬离屏幕圆周一段距离
@@ -22,6 +25,7 @@ class ArcButtonGeometryTest {
         const val THICKNESS = 26f
         const val GAP = 6f
         const val EDGE_INSET = 6f
+        const val CENTER = 233f
     }
 
     // ── 槽位角度 ──────────────────────────────────────────────
@@ -177,5 +181,87 @@ class ArcButtonGeometryTest {
     fun testTextRadiusSitsAtBandMiddle() {
         val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, THICKNESS, GAP, EDGE_INSET)
         assertEquals(SCREEN / 2f - EDGE_INSET - THICKNESS / 2f, sectors[0].textRadiusPx, 0.01f)
+    }
+
+    // ── 热区扇带命中判定 ─────────────────────────────────────
+
+    /** 从屏心出发，按屏幕坐标（0°=右，90°=下）取极坐标点 */
+    private fun hitPoint(angleDeg: Float, radius: Float): Pair<Float, Float> {
+        val rad = Math.toRadians(angleDeg.toDouble())
+        return Pair(CENTER + radius * cos(rad).toFloat(), CENTER + radius * sin(rad).toFloat())
+    }
+
+    private fun hit(sector: Pair<Float, Float>, angleDeg: Float, radius: Float): Boolean {
+        val (x, y) = hitPoint(angleDeg, radius)
+        return ArcButtonGeometry.hitTest(
+            x, y, CENTER, CENTER,
+            startAngleDeg = sector.first, endAngleDeg = sector.second,
+            outerRadiusPx = 227f, hitDepthPx = 48f
+        )
+    }
+
+    @Test
+    fun testHitInsideBandTriggers() {
+        // 单键扇带 [58°,122°]，热区径向带 = [外缘−48, 外缘] = [179,227]；半径 203 在带正中
+        val (x, y) = hitPoint(90f, 203f)
+        assertTrue(
+            ArcButtonGeometry.hitTest(x, y, CENTER, CENTER, 58f, 122f, 227f, 48f)
+        )
+    }
+
+    @Test
+    fun testHitRejectsScreenCenterAndInnerArea() {
+        // 屏心与热区内缘以内（列表区）都不命中——列表行不再被热区吞掉
+        val (x1, y1) = hitPoint(90f, 0f)
+        val (x2, y2) = hitPoint(90f, 67f)
+        assertFalse(ArcButtonGeometry.hitTest(x1, y1, CENTER, CENTER, 58f, 122f, 227f, 48f))
+        assertFalse(ArcButtonGeometry.hitTest(x2, y2, CENTER, CENTER, 58f, 122f, 227f, 48f))
+    }
+
+    @Test
+    fun testHitRejectsBeyondOuterEdge() {
+        // 出了外缘（屏幕圆周方向）不命中
+        val (x1, y1) = hitPoint(90f, 229f)
+        val (x2, y2) = hitPoint(90f, 240f)
+        assertFalse(ArcButtonGeometry.hitTest(x1, y1, CENTER, CENTER, 58f, 122f, 227f, 48f))
+        assertFalse(ArcButtonGeometry.hitTest(x2, y2, CENTER, CENTER, 58f, 122f, 227f, 48f))
+    }
+
+    @Test
+    fun testHitBandBoundaryInclusive() {
+        val sector = Pair(58f, 122f)
+        // 内缘 179 与外缘 227 均含边界
+        assertTrue(hit(sector, 90f, 179f))
+        assertTrue(hit(sector, 90f, 227f))
+    }
+
+    @Test
+    fun testHitAngularBoundaryInclusive() {
+        val sector = Pair(58f, 122f)
+        // 角向边界 58°/122° 含边界；50°/130° 在扇带外
+        assertTrue(hit(sector, 58f, 203f))
+        assertTrue(hit(sector, 122f, 203f))
+        assertFalse(hit(sector, 50f, 203f))
+        assertFalse(hit(sector, 130f, 203f))
+    }
+
+    @Test
+    fun testHitThreeKeyBackAndSelectSectors() {
+        // 三键布局：返回 [123°,157°]（140° 槽），选卷 [23°,57°]（40° 槽）
+        val back = Pair(123f, 157f)
+        val select = Pair(23f, 57f)
+        assertTrue(hit(back, 140f, 203f))
+        assertFalse(hit(back, 110f, 203f))
+        assertTrue(hit(select, 40f, 203f))
+        assertFalse(hit(select, 70f, 203f))
+    }
+
+    @Test
+    fun testHitHandlesWrapAround180() {
+        // 跨 180° 环绕扇带 [170°,190°]：185° 命中，165°/195° 不命中
+        val sector = Pair(170f, 190f)
+        assertTrue(hit(sector, 185f, 200f))
+        assertFalse(hit(sector, 165f, 200f))
+        assertFalse(hit(sector, 195f, 200f))
     }
 }
