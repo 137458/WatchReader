@@ -349,18 +349,19 @@ class MainActivity : ComponentActivity() {
      */
     @Composable
     private fun ScreenSlot(uiState: ReaderUiState, screen: Screen) {
-        // 页面级切换过渡。阅读页槽位为空 Box，切换零成本；书架 / 菜单自带错峰入场
-        // （staggeredEnter 逐卡淡入上浮），父层淡入只是与其重叠的重复劳动，一并瞬时切换。
-        // 其余页面保留纯 alpha 淡入淡出（不用 scale：缩放会逐帧重建全屏离屏缓冲并重采样）
+        // 页面级切换过渡。只有两类边界瞬时切换，其余页面保留纯 alpha 淡入淡出
+        // （不用 scale：缩放会逐帧重建全屏离屏缓冲并重采样）：
+        // 1. 目标页自带入场动效 —— 书架 / 菜单的逐卡 staggeredEnter，父层淡入与其重叠；
+        // 2. 参与过渡的页面主体是原生视图 —— 阅读页正文常驻在原生层、目录页主体是原生 ListView，
+        //    Compose 的 alpha 过渡对原生视图无效，淡入只会让周边 chrome 单独闪烁。
         AnimatedContent(
             targetState = screen,
             contentKey = { it::class },
             transitionSpec = {
-                val instantSwitch = initialState is Screen.Reader ||
-                    targetState is Screen.Reader ||
-                    targetState is Screen.Menu ||
-                    targetState is Screen.Home
-                if (instantSwitch) {
+                val targetSelfAnimated = targetState is Screen.Menu || targetState is Screen.Home
+                val nativeSurface = initialState is Screen.Reader || targetState is Screen.Reader ||
+                    initialState is Screen.ChapterList || targetState is Screen.ChapterList
+                if (targetSelfAnimated || nativeSurface) {
                     EnterTransition.None togetherWith ExitTransition.None
                 } else {
                     fadeIn(tween(WatchMotion.DUR_FADE, easing = WatchMotion.EnterEasing)) togetherWith
