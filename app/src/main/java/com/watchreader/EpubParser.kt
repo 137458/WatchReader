@@ -4,10 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import android.util.LruCache
-import org.xmlpull.v1.XmlPullParser
-import org.xmlpull.v1.XmlPullParserFactory
 import java.io.*
-import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -47,26 +44,12 @@ data class EpubMetadata(
  *    - 元数据缓存 (ConcurrentHashMap)；
  *    - 正文排版 LRU 内存缓存 (LruCache)，章节切换 0ms 瞬间呈现。
  * 3. 0 第三方依赖：仅使用 Android 原生标准库，包体积 0 增加。
+ * 4. 模块切分：本 object 只做编排（双模解析、元数据组装、缓存、归档访问），
+ *    容器/OPF 见 [EpubOpf]，目录见 [EpubToc]，HTML → 纯文本见 [EpubTextExtractor]。
  */
 object EpubParser {
 
     private const val TAG = "EpubParser"
-
-    // 预编译全局静态正则表达式（避免在章节提取循环中重复编译产生 GC 压力）
-    private val REGEX_HEAD = Regex("""(?is)<head\b[^>]*>.*?</head>""")
-    private val REGEX_STYLE = Regex("""(?is)<style\b[^>]*>.*?</style>""")
-    private val REGEX_SCRIPT = Regex("""(?is)<script\b[^>]*>.*?</script>""")
-    private val REGEX_SVG = Regex("""(?is)<svg\b[^>]*>.*?</svg>""")
-    private val REGEX_NAV = Regex("""(?is)<nav\b[^>]*>.*?</nav>""")
-    private val REGEX_COMMENTS = Regex("""(?s)<!--.*?-->""")
-    private val REGEX_BR = Regex("""(?i)<br\s*/?>""")
-    private val REGEX_HR = Regex("""(?i)<hr\s*/?>""")
-    private val REGEX_BLOCK_TAGS = Regex("""(?i)</?(?:p|div|h[1-6]|tr|li|blockquote|section|article|pre|header|footer)\b[^>]*>""")
-    private val REGEX_ALL_TAGS = Regex("""<[^>]+>""")
-    private val REGEX_TITLE = Regex("""(?i)<title[^>]*>(.*?)</title>""")
-    private val REGEX_H_TAG = Regex("""(?i)<h[1-3][^>]*>(.*?)</h[1-3]>""")
-    private val REGEX_DECIMAL_ENTITY = Regex("""&#(\d+);""")
-    private val REGEX_HEX_ENTITY = Regex("""&#x([0-9a-fA-F]+);""")
 
     // 内存元数据缓存（以 uri+size 为 Key，秒开秒读）
     private val metadataCache = ConcurrentHashMap<String, EpubMetadata>()
@@ -148,20 +131,6 @@ object EpubParser {
     }
 
     /**
-     * 创建轻量级 XmlPullParser
-     */
-    private fun createPullParser(): XmlPullParser {
-        return try {
-            val kxmlClass = Class.forName("org.kxml2.io.KXmlParser")
-            kxmlClass.getDeclaredConstructor().newInstance() as XmlPullParser
-        } catch (_: Throwable) {
-            val factory = XmlPullParserFactory.newInstance()
-            factory.isNamespaceAware = false
-            factory.newPullParser()
-        }
-    }
-
-    /**
      * 解析 EPUB 完整结构并生成章节目录与元数据（基于 URI 与 Context）
      */
     fun parseEpub(context: Context, uri: Uri): EpubMetadata {
@@ -198,7 +167,7 @@ object EpubParser {
                 ?: throw IllegalStateException("EPUB 格式错误: 未找到 META-INF/container.xml")
 
             val containerXml = zipFile.getInputStream(containerEntry).bufferedReader(Charsets.UTF_8).readText()
-            val opfPath = parseOpfPathFromContainer(containerXml)
+            val opfPath = EpubOpf.parseOpfPathFromContainer(containerXml)
                 ?: throw IllegalStateException("EPUB 格式错误: 未找到 OPF rootfile 路径")
 
             val opfDir = if (opfPath.contains('/')) opfPath.substringBeforeLast('/') + "/" else ""
@@ -208,7 +177,7 @@ object EpubParser {
                 ?: throw IllegalStateException("EPUB 格式错误: 无法找到 OPF 描述文件 $opfPath")
 
             val opfXml = zipFile.getInputStream(opfEntry).bufferedReader(Charsets.UTF_8).readText()
-            val opfInfo = parseOpf(opfXml, opfDir)
+            val opfInfo = EpubOpf.parseOpf(opfXml, opfDir)
 
             // 3. 解析章节列表 (NCX -> Nav -> Spine)
             var chapterEntries = emptyList<EpubChapterEntry>()
@@ -218,7 +187,7 @@ object EpubParser {
                 if (ncxEntry != null) {
                     val ncxXml = zipFile.getInputStream(ncxEntry).bufferedReader(Charsets.UTF_8).readText()
                     val ncxDir = if (opfInfo.ncxPath.contains('/')) opfInfo.ncxPath.substringBeforeLast('/') + "/" else ""
-                    chapterEntries = parseNcxToc(ncxXml, ncxDir)
+                    chapterEntries = EpubToc.parseNcxToc(ncxXml, ncxDir)
                 }
             }
 
@@ -227,7 +196,7 @@ object EpubParser {
                 if (navEntry != null) {
                     val navXml = zipFile.getInputStream(navEntry).bufferedReader(Charsets.UTF_8).readText()
                     val navDir = if (opfInfo.navPath.contains('/')) opfInfo.navPath.substringBeforeLast('/') + "/" else ""
-                    chapterEntries = parseNavToc(navXml, navDir)
+                    chapterEntries = EpubToc.parseNavToc(navXml, navDir)
                 }
             }
 
@@ -253,7 +222,7 @@ object EpubParser {
         ZipInputStream(BufferedInputStream(openStream(), 65536)).use { zis ->
             var entry: ZipEntry? = zis.nextEntry
             while (entry != null) {
-                val norm = normalizePath(entry.name).lowercase()
+                val norm = EpubOpf.normalizePath(entry.name).lowercase()
                 if (norm.endsWith(".xml") || norm.endsWith(".opf") || norm.endsWith(".ncx") ||
                     norm.endsWith(".xhtml") || norm.endsWith(".html") || norm.endsWith(".htm") ||
                     norm.contains("container")
@@ -268,7 +237,7 @@ object EpubParser {
                         val read = zis.bufferedReader(Charsets.UTF_8).read(buf)
                         if (read > 0) String(buf, 0, read) else ""
                     }
-                    entriesMap[normalizePath(entry.name)] = text
+                    entriesMap[EpubOpf.normalizePath(entry.name)] = text
                 }
                 entry = zis.nextEntry
             }
@@ -278,7 +247,7 @@ object EpubParser {
         val containerXml = findMapEntry(entriesMap, "META-INF/container.xml")
             ?: throw IllegalStateException("EPUB 格式错误: 未找到 META-INF/container.xml")
 
-        val opfPath = parseOpfPathFromContainer(containerXml)
+        val opfPath = EpubOpf.parseOpfPathFromContainer(containerXml)
             ?: throw IllegalStateException("EPUB 格式错误: 未找到 OPF rootfile 路径")
 
         val opfDir = if (opfPath.contains('/')) opfPath.substringBeforeLast('/') + "/" else ""
@@ -287,7 +256,7 @@ object EpubParser {
         val opfXml = findMapEntry(entriesMap, opfPath)
             ?: throw IllegalStateException("EPUB 格式错误: 无法找到 OPF 描述文件 $opfPath")
 
-        val opfInfo = parseOpf(opfXml, opfDir)
+        val opfInfo = EpubOpf.parseOpf(opfXml, opfDir)
 
         // 3. 解析章节列表
         var chapterEntries = emptyList<EpubChapterEntry>()
@@ -296,7 +265,7 @@ object EpubParser {
             val ncxXml = findMapEntry(entriesMap, opfInfo.ncxPath)
             if (!ncxXml.isNullOrEmpty()) {
                 val ncxDir = if (opfInfo.ncxPath.contains('/')) opfInfo.ncxPath.substringBeforeLast('/') + "/" else ""
-                chapterEntries = parseNcxToc(ncxXml, ncxDir)
+                chapterEntries = EpubToc.parseNcxToc(ncxXml, ncxDir)
             }
         }
 
@@ -304,7 +273,7 @@ object EpubParser {
             val navXml = findMapEntry(entriesMap, opfInfo.navPath)
             if (!navXml.isNullOrEmpty()) {
                 val navDir = if (opfInfo.navPath.contains('/')) opfInfo.navPath.substringBeforeLast('/') + "/" else ""
-                chapterEntries = parseNavToc(navXml, navDir)
+                chapterEntries = EpubToc.parseNavToc(navXml, navDir)
             }
         }
 
@@ -415,7 +384,7 @@ object EpubParser {
 
         // rawHtml 在上面的 lambda 里赋值，Kotlin 不做智能转换：显式收敛为非空值
         val html = rawHtml ?: return null
-        val plainBody = extractFormattedTextFromHtml(html, currentEntry?.anchor ?: "", nextAnchor, cleanTypography)
+        val plainBody = EpubTextExtractor.extractFormattedTextFromHtml(html, currentEntry?.anchor ?: "", nextAnchor, cleanTypography)
 
         val startOffset = currentChap.charOffset
         val endOffset = if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else metadata.totalChars
@@ -445,23 +414,15 @@ object EpubParser {
     //  内部 XML 与 ZIP 解析优化实现
     // ═════════════════════════════════════════════════════════════════════
 
-    private data class OpfInfo(
-        val title: String,
-        val author: String,
-        val ncxPath: String?,
-        val navPath: String?,
-        val spinePaths: List<String>
-    )
-
     private fun findZipEntry(zipFile: ZipFile, path: String): ZipEntry? {
-        val norm = normalizePath(path)
+        val norm = EpubOpf.normalizePath(path)
         zipFile.getEntry(norm)?.let { return it }
         zipFile.getEntry(path)?.let { return it }
         // 忽略大小写查找
         val entries = zipFile.entries()
         while (entries.hasMoreElements()) {
             val e = entries.nextElement()
-            if (normalizePath(e.name).equals(norm, ignoreCase = true)) {
+            if (EpubOpf.normalizePath(e.name).equals(norm, ignoreCase = true)) {
                 return e
             }
         }
@@ -469,281 +430,13 @@ object EpubParser {
     }
 
     private fun findMapEntry(map: Map<String, String>, path: String): String? {
-        val norm = normalizePath(path)
+        val norm = EpubOpf.normalizePath(path)
         map[norm]?.let { return it }
         map[path]?.let { return it }
         for ((k, v) in map) {
             if (k.equals(norm, ignoreCase = true)) return v
         }
         return null
-    }
-
-    private fun parseOpfPathFromContainer(containerXml: String): String? {
-        return try {
-            val parser = createPullParser()
-            parser.setInput(StringReader(containerXml))
-            var eventType = parser.eventType
-            while (eventType != XmlPullParser.END_DOCUMENT) {
-                if (eventType == XmlPullParser.START_TAG && parser.name.equals("rootfile", ignoreCase = true)) {
-                    for (i in 0 until parser.attributeCount) {
-                        if (parser.getAttributeName(i).equals("full-path", ignoreCase = true)) {
-                            return normalizePath(parser.getAttributeValue(i))
-                        }
-                    }
-                }
-                eventType = parser.next()
-            }
-            null
-        } catch (e: Throwable) {
-            Log.w(TAG, "Failed to parse container.xml", e)
-            null
-        }
-    }
-
-    private fun parseOpf(opfXml: String, opfDir: String): OpfInfo {
-        var title = ""
-        var author = ""
-        var ncxId: String? = null
-        var navHref: String? = null
-        var ncxHref: String? = null
-
-        val manifestItems = mutableMapOf<String, String>()
-        val spineIdRefs = mutableListOf<String>()
-
-        try {
-            val parser = createPullParser()
-            parser.setInput(StringReader(opfXml))
-
-            var eventType = parser.eventType
-            var currentTag = ""
-
-            while (eventType != XmlPullParser.END_DOCUMENT) {
-                when (eventType) {
-                    XmlPullParser.START_TAG -> {
-                        currentTag = parser.name.lowercase()
-                        when (currentTag) {
-                            "item" -> {
-                                var id = ""
-                                var href = ""
-                                var mediaType = ""
-                                var properties = ""
-
-                                for (i in 0 until parser.attributeCount) {
-                                    val attrName = parser.getAttributeName(i).lowercase()
-                                    val attrVal = parser.getAttributeValue(i)
-                                    when (attrName) {
-                                        "id" -> id = attrVal
-                                        "href" -> href = attrVal
-                                        "media-type" -> mediaType = attrVal
-                                        "properties" -> properties = attrVal
-                                    }
-                                }
-
-                                if (id.isNotEmpty() && href.isNotEmpty()) {
-                                    val decodedHref = try { URLDecoder.decode(href, "UTF-8") } catch (_: Exception) { href }
-                                    manifestItems[id] = decodedHref
-
-                                    if (mediaType.equals("application/x-dtbncx+xml", ignoreCase = true) || id.equals("ncx", ignoreCase = true)) {
-                                        ncxHref = decodedHref
-                                    }
-                                    if (properties.contains("nav", ignoreCase = true)) {
-                                        navHref = decodedHref
-                                    }
-                                }
-                            }
-                            "spine" -> {
-                                for (i in 0 until parser.attributeCount) {
-                                    if (parser.getAttributeName(i).equals("toc", ignoreCase = true)) {
-                                        ncxId = parser.getAttributeValue(i)
-                                    }
-                                }
-                            }
-                            "itemref" -> {
-                                for (i in 0 until parser.attributeCount) {
-                                    if (parser.getAttributeName(i).equals("idref", ignoreCase = true)) {
-                                        spineIdRefs.add(parser.getAttributeValue(i))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    XmlPullParser.TEXT -> {
-                        val text = parser.text.trim()
-                        if (text.isNotEmpty()) {
-                            if (currentTag == "dc:title" || currentTag == "title") {
-                                if (title.isEmpty()) title = text
-                            } else if (currentTag == "dc:creator" || currentTag == "creator") {
-                                if (author.isEmpty()) author = text
-                            }
-                        }
-                    }
-                    XmlPullParser.END_TAG -> {
-                        currentTag = ""
-                    }
-                }
-                eventType = parser.next()
-            }
-
-            if (ncxHref == null && ncxId != null) {
-                ncxHref = manifestItems[ncxId]
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "Error parsing OPF package XML", e)
-        }
-
-        val fullNcxPath = ncxHref?.let { resolvePath(opfDir, it) }
-        val fullNavPath = navHref?.let { resolvePath(opfDir, it) }
-        val spinePaths = spineIdRefs.mapNotNull { id ->
-            manifestItems[id]?.let { resolvePath(opfDir, it) }
-        }
-
-        return OpfInfo(
-            title = title,
-            author = author,
-            ncxPath = fullNcxPath,
-            navPath = fullNavPath,
-            spinePaths = spinePaths
-        )
-    }
-
-    private fun parseNcxToc(ncxXml: String, ncxDir: String): List<EpubChapterEntry> {
-        val list = mutableListOf<EpubChapterEntry>()
-        try {
-            val parser = createPullParser()
-            parser.setInput(StringReader(ncxXml))
-
-            var eventType = parser.eventType
-            var currentTitle = ""
-            var inText = false
-
-            while (eventType != XmlPullParser.END_DOCUMENT) {
-                when (eventType) {
-                    XmlPullParser.START_TAG -> {
-                        val tagName = parser.name.lowercase()
-                        if (tagName == "text") {
-                            inText = true
-                        } else if (tagName == "content") {
-                            var src = ""
-                            for (i in 0 until parser.attributeCount) {
-                                if (parser.getAttributeName(i).equals("src", ignoreCase = true)) {
-                                    src = parser.getAttributeValue(i)
-                                    break
-                                }
-                            }
-                            if (src.isNotEmpty()) {
-                                val decodedSrc = try { URLDecoder.decode(src, "UTF-8") } catch (_: Exception) { src }
-                                val parts = decodedSrc.split('#', limit = 2)
-                                val path = resolvePath(ncxDir, parts[0])
-                                val anchor = if (parts.size > 1) parts[1] else ""
-                                val title = currentTitle.trim().ifEmpty { "第 ${list.size + 1} 章" }
-                                list.add(
-                                    EpubChapterEntry(
-                                        index = list.size,
-                                        title = title,
-                                        entryPath = path,
-                                        anchor = anchor
-                                    )
-                                )
-                                currentTitle = ""
-                            }
-                        }
-                    }
-                    XmlPullParser.TEXT -> {
-                        if (inText) {
-                            currentTitle += parser.text
-                        }
-                    }
-                    XmlPullParser.END_TAG -> {
-                        val tagName = parser.name.lowercase()
-                        if (tagName == "text") {
-                            inText = false
-                        }
-                    }
-                }
-                eventType = parser.next()
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "Error parsing NCX TOC XML", e)
-        }
-
-        return list
-    }
-
-    private fun parseNavToc(navXml: String, navDir: String): List<EpubChapterEntry> {
-        val list = mutableListOf<EpubChapterEntry>()
-        try {
-            val parser = createPullParser()
-            parser.setInput(StringReader(navXml))
-
-            var eventType = parser.eventType
-            var inAnchor = false
-            var inIgnoredNav = false
-            var currentHref = ""
-            var currentTitle = ""
-
-            while (eventType != XmlPullParser.END_DOCUMENT) {
-                when (eventType) {
-                    XmlPullParser.START_TAG -> {
-                        val tagName = parser.name.lowercase()
-                        if (tagName == "nav") {
-                            var epubType = ""
-                            for (i in 0 until parser.attributeCount) {
-                                if (parser.getAttributeName(i).contains("type", ignoreCase = true)) {
-                                    epubType = parser.getAttributeValue(i)
-                                    break
-                                }
-                            }
-                            if (epubType.isNotEmpty() && !epubType.contains("toc", ignoreCase = true)) {
-                                inIgnoredNav = true
-                            }
-                        } else if (!inIgnoredNav && tagName == "a") {
-                            inAnchor = true
-                            currentTitle = ""
-                            currentHref = ""
-                            for (i in 0 until parser.attributeCount) {
-                                if (parser.getAttributeName(i).equals("href", ignoreCase = true)) {
-                                    currentHref = parser.getAttributeValue(i)
-                                    break
-                                }
-                            }
-                        }
-                    }
-                    XmlPullParser.TEXT -> {
-                        if (inAnchor) {
-                            currentTitle += parser.text
-                        }
-                    }
-                    XmlPullParser.END_TAG -> {
-                        val tagName = parser.name.lowercase()
-                        if (tagName == "nav") {
-                            inIgnoredNav = false
-                        } else if (!inIgnoredNav && tagName == "a") {
-                            inAnchor = false
-                            if (currentHref.isNotEmpty()) {
-                                val decodedHref = try { URLDecoder.decode(currentHref, "UTF-8") } catch (_: Exception) { currentHref }
-                                val parts = decodedHref.split('#', limit = 2)
-                                val path = resolvePath(navDir, parts[0])
-                                val anchor = if (parts.size > 1) parts[1] else ""
-                                val title = currentTitle.trim().ifEmpty { "第 ${list.size + 1} 章" }
-                                list.add(
-                                    EpubChapterEntry(
-                                        index = list.size,
-                                        title = title,
-                                        entryPath = path,
-                                        anchor = anchor
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-                eventType = parser.next()
-            }
-        } catch (e: Throwable) {
-            Log.w(TAG, "Error parsing EPUB3 Nav TOC XML", e)
-        }
-
-        return list
     }
 
     private fun createSpineChaptersWithZipFile(zipFile: ZipFile, spinePaths: List<String>): List<EpubChapterEntry> {
@@ -756,7 +449,7 @@ object EpubParser {
                 val read = r.read(buf)
                 if (read > 0) String(buf, 0, read) else ""
             }
-            val title = extractTitleFromHtml(content).ifBlank { "第 ${idx + 1} 节" }
+            val title = EpubTextExtractor.extractTitleFromHtml(content).ifBlank { "第 ${idx + 1} 节" }
             list.add(
                 EpubChapterEntry(
                     index = idx,
@@ -773,7 +466,7 @@ object EpubParser {
         val list = mutableListOf<EpubChapterEntry>()
         for ((idx, path) in spinePaths.withIndex()) {
             val content = findMapEntry(map, path) ?: continue
-            val title = extractTitleFromHtml(content).ifBlank { "第 ${idx + 1} 节" }
+            val title = EpubTextExtractor.extractTitleFromHtml(content).ifBlank { "第 ${idx + 1} 节" }
             list.add(
                 EpubChapterEntry(
                     index = idx,
@@ -786,141 +479,28 @@ object EpubParser {
         return list
     }
 
-    private fun extractTitleFromHtml(html: String): String {
-        val titleMatch = REGEX_TITLE.find(html)
-        if (titleMatch != null) {
-            val t = titleMatch.groupValues[1].trim()
-            if (t.isNotEmpty()) return decodeHtmlEntities(t)
-        }
-        val h1Match = REGEX_H_TAG.find(html)
-        if (h1Match != null) {
-            val t = stripTags(h1Match.groupValues[1]).trim()
-            if (t.isNotEmpty()) return decodeHtmlEntities(t)
-        }
-        return ""
-    }
+    // ═════════════════════════════════════════════════════════════════════
+    //  对外委托：HTML → 纯文本（实现在 EpubTextExtractor，此处只保留入口）
+    // ═════════════════════════════════════════════════════════════════════
 
+    /** 见 [EpubTextExtractor.extractFormattedTextFromHtml]；外部调用方（BookTextConverter / 测试）不变。 */
     fun extractFormattedTextFromHtml(
         html: String,
         targetAnchor: String = "",
         nextAnchor: String = "",
         cleanTypography: Boolean = true
-    ): String {
-        if (html.isEmpty()) return ""
+    ): String = EpubTextExtractor.extractFormattedTextFromHtml(html, targetAnchor, nextAnchor, cleanTypography)
 
-        var content = html
-
-        // 1. 若有起始锚点定位
-        if (targetAnchor.isNotEmpty()) {
-            val anchorPattern = Regex("""(?i)(?:id|name)\s*=\s*["']${Regex.escape(targetAnchor)}["']""")
-            val match = anchorPattern.find(content)
-            if (match != null) {
-                content = content.substring(match.range.first)
-            }
-        }
-
-        // 2. 若有下一章节的结束锚点
-        if (nextAnchor.isNotEmpty() && nextAnchor != targetAnchor) {
-            val nextPattern = Regex("""(?i)(?:id|name)\s*=\s*["']${Regex.escape(nextAnchor)}["']""")
-            val matchNext = nextPattern.find(content)
-            if (matchNext != null && matchNext.range.first > 0) {
-                content = content.substring(0, matchNext.range.first)
-            }
-        }
-
-        // 3. 剔除 HTML 注释与干扰标签
-        content = REGEX_COMMENTS.replace(content, "")
-        content = REGEX_HEAD.replace(content, "")
-        content = REGEX_STYLE.replace(content, "")
-        content = REGEX_SCRIPT.replace(content, "")
-        content = REGEX_SVG.replace(content, "")
-        content = REGEX_NAV.replace(content, "")
-
-        // 4. 将分割线和块级换行标签标准化为换行符
-        content = REGEX_HR.replace(content, "\n—— ——\n")
-        content = REGEX_BR.replace(content, "\n")
-        content = REGEX_BLOCK_TAGS.replace(content, "\n")
-
-        // 5. 剥离所有其余内联 HTML 标签
-        content = REGEX_ALL_TAGS.replace(content, "")
-
-        // 6. 解码 HTML 实体
-        content = decodeHtmlEntities(content)
-
-        // 7. 中文段落排版。净化态：剥离行尾空白与各类缩进、压缩连续空行，统一补标准全角双空格；
-        //    原样态：保留提取文本的行结构（换行、空行与源缩进）逐字呈现，仅归一化换行符
-        if (!cleanTypography) {
-            return content.replace("\r\n", "\n").replace('\r', '\n')
-        }
-
-        val sb = java.lang.StringBuilder(content.length + 64)
-        val lines = content.split('\n')
-        for (rawLine in lines) {
-            val line = rawLine.trim { it <= ' ' || it == '\u3000' }
-            if (line.isNotEmpty()) {
-                if (sb.isNotEmpty()) {
-                    sb.append("\n\n")
-                }
-                sb.append("\u3000\u3000").append(line)
-            }
-        }
-
-        return sb.toString()
-    }
-
-    private fun stripTags(text: String): String {
-        return REGEX_ALL_TAGS.replace(text, "")
-    }
-
-    fun decodeHtmlEntities(input: String): String {
-        if (!input.contains('&')) return input
-
-        var text = input
-            .replace("&nbsp;", " ")
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&apos;", "'")
-            .replace("&mdash;", "—")
-            .replace("&ndash;", "–")
-            .replace("&hellip;", "…")
-            .replace("&lsquo;", "‘")
-            .replace("&rsquo;", "’")
-            .replace("&ldquo;", "“")
-            .replace("&rdquo;", "”")
-            .replace("&middot;", "·")
-            .replace("&yen;", "¥")
-            .replace("&copy;", "©")
-
-        text = REGEX_DECIMAL_ENTITY.replace(text) { match ->
-            try {
-                val code = match.groupValues[1].toInt()
-                code.toChar().toString()
-            } catch (_: Exception) {
-                match.value
-            }
-        }
-
-        text = REGEX_HEX_ENTITY.replace(text) { match ->
-            try {
-                val code = match.groupValues[1].toInt(16)
-                code.toChar().toString()
-            } catch (_: Exception) {
-                match.value
-            }
-        }
-
-        return text
-    }
+    /** 见 [EpubTextExtractor.decodeHtmlEntities]；外部调用方（BookTextConverter / 测试）不变。 */
+    fun decodeHtmlEntities(input: String): String = EpubTextExtractor.decodeHtmlEntities(input)
 
     private fun readZipEntryString(openStream: () -> InputStream, entryPath: String): String? {
-        val target = normalizePath(entryPath)
+        val target = EpubOpf.normalizePath(entryPath)
         try {
             ZipInputStream(BufferedInputStream(openStream(), 65536)).use { zis ->
                 var entry: ZipEntry? = zis.nextEntry
                 while (entry != null) {
-                    val currentName = normalizePath(entry.name)
+                    val currentName = EpubOpf.normalizePath(entry.name)
                     if (currentName.equals(target, ignoreCase = true)) {
                         return zis.bufferedReader(Charsets.UTF_8).readText()
                     }
@@ -933,33 +513,4 @@ object EpubParser {
         return null
     }
 
-    private fun normalizePath(path: String): String {
-        val normalized = path.replace('\\', '/').trimStart('/')
-        if (!normalized.contains("..") && !normalized.contains("./")) {
-            return normalized
-        }
-
-        val segments = normalized.split('/')
-        val stack = mutableListOf<String>()
-        for (seg in segments) {
-            when (seg) {
-                "", "." -> {}
-                ".." -> if (stack.isNotEmpty()) stack.removeAt(stack.size - 1)
-                else -> stack.add(seg)
-            }
-        }
-        return stack.joinToString("/")
-    }
-
-    private fun resolvePath(baseDir: String, relativePath: String): String {
-        val trimmed = relativePath.trim()
-        if (trimmed.startsWith("/")) {
-            return normalizePath(trimmed)
-        }
-        val cleanBase = baseDir.replace('\\', '/').trimStart('/')
-        val combined = if (cleanBase.isEmpty()) trimmed else {
-            if (cleanBase.endsWith('/')) cleanBase + trimmed else "$cleanBase/$trimmed"
-        }
-        return normalizePath(combined)
-    }
 }
