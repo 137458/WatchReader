@@ -24,10 +24,10 @@ class ArcButtonGeometryTest {
     private companion object {
         const val SCREEN = 466f
 
-        /** 与 EdgeActionBar 默认径向厚度对齐（UiKit.kt:468：thickness = 20.dp） */
+        /** 与 EdgeActionBar 默认径向厚度对齐（EdgeActionBar.kt:87：thickness = 20.dp） */
         const val THICKNESS = 20f
 
-        /** 与 EdgeActionBar 缺省间隙角自动值对齐（UiKit.kt:483-488） */
+        /** 与 EdgeActionBar 缺省间隙角自动值对齐（EdgeActionBar.kt:102-107：缺省 −1 时按按键数取 24°/16°/6°） */
         const val GAP_SINGLE_KEY = 6f
         const val GAP_TWO_KEY = 24f
         const val GAP_THREE_KEY = 16f

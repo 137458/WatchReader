@@ -136,20 +136,35 @@ fun BookshelfScreen(
         true
     }
 
+    val insets = rememberWatchSafeInsets()
     // 右滑关闭应用：Wear 对顶层视图的定义即「左→右滑动关闭当前视图」，
     // 书架是应用根页，右滑与系统返回同义
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .swipeDismissBack(onDismiss = onExitApp)
+    WatchScreenScaffold(
+        onDismiss = onExitApp,
+        fades = WatchScreenFades(top = 48.dp, bottom = 56.dp),
+        actionBar = {
+            // ── 备份与恢复：弧形扇带贴合圆屏下缘；空态时表冠轮选焦点高亮 ──
+            EdgeActionBar(
+                EdgeButtonSpec(
+                    "备份",
+                    focused = isBookshelfEmpty && focusedIndex == 0,
+                    onClick = onBackup
+                ),
+                EdgeButtonSpec(
+                    "恢复",
+                    focused = isBookshelfEmpty && focusedIndex == 1,
+                    onClick = onRestore
+                )
+            )
+        }
     ) {
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp),
+                .padding(horizontal = insets.horizontal),
             // 上下留白随内容滚动（与旧的 padding 在 verticalScroll 内同语义）
-            contentPadding = PaddingValues(top = 44.dp, bottom = 84.dp),
+            contentPadding = PaddingValues(top = insets.top, bottom = insets.bottom),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
@@ -439,32 +454,6 @@ fun BookshelfScreen(
 
         }
 
-        // 顶部/底部羽化渐隐：压在滚动内容之上、贴边操作条之下，
-        // 避免主卡文字与胶囊硬叠（此前遮罩先于内容绘制，实际被内容盖住）
-        EdgeFadeMask(
-            edge = Alignment.Top,
-            modifier = Modifier.align(Alignment.TopCenter),
-            height = 48.dp
-        )
-        EdgeFadeMask(
-            edge = Alignment.Bottom,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            height = 56.dp
-        )
-
-        // ── 备份与恢复：弧形扇带贴合圆屏下缘；空态时表冠轮选焦点高亮 ──
-        EdgeActionBar(
-            EdgeButtonSpec(
-                "备份",
-                focused = isBookshelfEmpty && focusedIndex == 0,
-                onClick = onBackup
-            ),
-            EdgeButtonSpec(
-                "恢复",
-                focused = isBookshelfEmpty && focusedIndex == 1,
-                onClick = onRestore
-            )
-        )
     }
 }
 

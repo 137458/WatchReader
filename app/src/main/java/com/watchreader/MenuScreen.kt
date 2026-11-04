@@ -23,6 +23,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -134,20 +135,88 @@ fun MenuScreen(
     // 右滑退出：菜单页右滑回阅读页；配色浮层开启期由浮层自己接管右滑，此处停摆
     val backTick = rememberTickHaptic()
     // 底色由 Window decorView 统一承载，此处不再整屏填充（少一层全屏 overdraw）
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .swipeDismissBack(enabled = !showThemePicker) {
-                backTick()
-                onBack()
+    val insets = rememberWatchSafeInsets()
+    // 配色选择浮层：全屏单选列表（底色 + 强调色色样直达观感），点击即换并关闭；
+    // 进出场走 scale + fade（微内容时长档），右滑则内容跟手滑出后关闭；
+    // 返回键先关浮层；浮层期表冠滚动注册抢占，直接寻址浮层列表
+    // 浮层必须以 overlay 槽交给壳：留在 content 内会被遮罩与操作条压住，热区也抢不过操作条
+    val themePickerOverlay: @Composable BoxScope.() -> Unit = {
+        AnimatedVisibility(
+            visible = showThemePicker,
+            enter = WatchOverlay.Enter,
+            exit = WatchOverlay.Exit,
+        ) {
+            val pickerScroll = rememberScrollState()
+            val pickerCrownContext = LocalContext.current
+            rememberCrownScrollTarget(pickerScroll) { delta ->
+                CrownScrollHelper.dispatchScroll(delta, pickerScroll, pickerCrownContext)
+                true
             }
+            val pickerTick = rememberTickHaptic()
+            androidx.activity.compose.BackHandler { showThemePicker = false }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(colors.background)
+                    // 右滑关浮层：内容跟手平移并淡出，越过门限滑出后关闭，竖向滚动仍归列表
+                    .swipeDismissBack {
+                        pickerTick()
+                        showThemePicker = false
+                    }
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { showThemePicker = false }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(pickerScroll)
+                        .padding(horizontal = 24.dp, vertical = 52.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    SectionLabel("选择配色", color = colors.primary)
+                    ThemeMode.entries.forEach { mode ->
+                        ThemeOptionRow(
+                            mode = mode,
+                            selected = mode.value == themeMode,
+                            onSelect = {
+                                onThemeModeChange(mode.value)
+                                showThemePicker = false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+    WatchScreenScaffold(
+        swipeEnabled = !showThemePicker,
+        onDismiss = {
+            backTick()
+            onBack()
+        },
+        fades = WatchScreenFades(top = 48.dp, bottom = 56.dp),
+        actionBar = {
+            // ── 底部弧形贴边主导航：扇带处处贴合圆屏下缘 ──
+            EdgeActionBar(
+                EdgeButtonSpec("书架", onClick = onHome),
+                EdgeButtonSpec(
+                    "继续阅读",
+                    emphasis = PillEmphasis.Primary,
+                    onClick = onBack
+                )
+            )
+        },
+        overlay = themePickerOverlay
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(scrollState)
-                .padding(horizontal = 24.dp)
-                .padding(top = 44.dp, bottom = 84.dp),
+                .padding(horizontal = insets.horizontal)
+                .padding(top = insets.top, bottom = insets.bottom),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             SectionLabel("阅读控制", modifier = Modifier.staggeredEnter(0), color = colors.primary)
@@ -356,85 +425,9 @@ fun MenuScreen(
             }
 
         }
-
-        // 底部羽化渐隐：压在滚动内容之上、贴边操作条之下，避免内容与胶囊硬叠
-        EdgeFadeMask(
-            edge = Alignment.Bottom,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            height = 56.dp
-        )
-
-        // ── 底部弧形贴边主导航：扇带处处贴合圆屏下缘 ──
-        EdgeActionBar(
-            EdgeButtonSpec("书架", onClick = onHome),
-            EdgeButtonSpec(
-                "继续阅读",
-                emphasis = PillEmphasis.Primary,
-                onClick = onBack
-            )
-        )
-
-        // 顶部羽化渐隐（统一 EdgeFadeMask 基元 + 全应用统一 48dp 顶部高度）
-        EdgeFadeMask(
-            edge = Alignment.Top,
-            modifier = Modifier.align(Alignment.TopCenter),
-            height = 48.dp
-        )
-
-        // 配色选择浮层：全屏单选列表（底色 + 强调色色样直达观感），点击即换并关闭；
-        // 进出场走 scale + fade（微内容时长档），右滑则内容跟手滑出后关闭；
-        // 返回键先关浮层；浮层期表冠滚动注册抢占，直接寻址浮层列表
-        AnimatedVisibility(
-            visible = showThemePicker,
-            enter = WatchOverlay.Enter,
-            exit = WatchOverlay.Exit,
-        ) {
-            val pickerScroll = rememberScrollState()
-            val pickerCrownContext = LocalContext.current
-            rememberCrownScrollTarget(pickerScroll) { delta ->
-                CrownScrollHelper.dispatchScroll(delta, pickerScroll, pickerCrownContext)
-                true
-            }
-            val pickerTick = rememberTickHaptic()
-            androidx.activity.compose.BackHandler { showThemePicker = false }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(colors.background)
-                    // 右滑关浮层：内容跟手平移并淡出，越过门限滑出后关闭，竖向滚动仍归列表
-                    .swipeDismissBack {
-                        pickerTick()
-                        showThemePicker = false
-                    }
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null
-                    ) { showThemePicker = false }
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(pickerScroll)
-                        .padding(horizontal = 24.dp, vertical = 52.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    SectionLabel("选择配色", color = colors.primary)
-                    ThemeMode.entries.forEach { mode ->
-                        ThemeOptionRow(
-                            mode = mode,
-                            selected = mode.value == themeMode,
-                            onSelect = {
-                                onThemeModeChange(mode.value)
-                                showThemePicker = false
-                            }
-                        )
-                    }
-                }
-            }
-        }
     }
 }
+
 
 /**
  * 配色选择浮层单行：主题底色胶囊内嵌强调色圆点作色样（所见即所得），

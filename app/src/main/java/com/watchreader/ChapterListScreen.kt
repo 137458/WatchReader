@@ -149,208 +149,41 @@ fun ChapterListScreen(
     }
     val ranges = remember(chapters.size) { generateChapterRanges(chapters.size) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            // 右滑退出目录页；选卷浮层开启期让位给浮层自身的右滑关闭
-            .swipeDismissBack(enabled = !showRangePicker, onDismiss = onBack),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        if (selectedTab == 0) {
-            // ── 目录模式：原生 ListView 核心 ──
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { context ->
-                    val density = context.resources.displayMetrics.density
-                    val padH = (20 * density).toInt()
-                    // padTop 与顶部 Tab 胶囊（44dp 起 + 48dp 高 + 内边距）对齐，列表内容不被 Tab 压住
-                    // padBottom 避让底部弧形操作条热区（径向深入屏缘 48dp + 悬离 6dp = 54dp），留 72dp 冗余
-                    val padTop = (100 * density).toInt()
-                    val padBottom = (72 * density).toInt()
+    // 底部弧形贴边操作条：扇带处处贴合圆屏下缘（目录 Tab 1~3 键，书签 Tab 2 键）
+    val barSpecs = buildList {
+        add(EdgeButtonSpec(label = "‹ 返回", onClick = onBack))
 
-                    val listView = ListView(context).apply {
-                        layoutParams = ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        isFocusable = true
-                        isFocusableInTouchMode = true
-                        isVerticalScrollBarEnabled = false
-                        divider = null
-                        dividerHeight = (5 * density).toInt()
-                        setBackgroundColor(bgColor)
-                        setPadding(padH, padTop, padH, padBottom)
-                        clipToPadding = false
-                        overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                    }
-                    currentListView = listView
-
-                    // 表冠物理旋转无缝滚动（统一管线扩展，见 bindCrownScroll）
-                    listView.bindCrownScroll(context)
-
-                    val adapter = ChapterListAdapter(chapters, currentChapterIndex, colorScheme, density)
-                    listView.adapter = adapter
-
-                    listView.setOnItemClickListener { _, _, position, _ ->
-                        if (position in chapters.indices) {
-                            onChapterClick(position)
-                        }
-                    }
-
-                    listView.post {
-                        listView.requestFocus()
-                        if (currentChapterIndex in chapters.indices) {
-                            listView.setSelection((currentChapterIndex - 1).coerceAtLeast(0))
-                        }
-                    }
-
-                    listView
-                },
-                update = { listView ->
-                    currentListView = listView
-                    applyListViewBg(listView, bgColor)
-                    // notifyDataSetChanged 会强制全部可见行重布局：仅在数据/主题真正变化时调用，
-                    // 杜绝父级每次重组（如阅读时长 tick）都触发目录整页 invalidate
-                    val adapter = listView.adapter as? ChapterListAdapter
-                    if (adapter != null &&
-                        (adapter.chapters !== chapters ||
-                            adapter.currentChapterIndex != currentChapterIndex ||
-                            adapter.colorScheme !== colorScheme)
-                    ) {
-                        adapter.chapters = chapters
-                        adapter.currentChapterIndex = currentChapterIndex
-                        adapter.colorScheme = colorScheme
-                        adapter.notifyDataSetChanged()
-                    }
-                }
-            )
-        } else {
-            // ── 书签模式：原生卡片 ListView ──
-            if (bookmarks.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "暂无书签\n点击下方“存为书签”保存当前位置",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colorScheme.onSurfaceVariant,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                }
-            } else {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { context ->
-                        val density = context.resources.displayMetrics.density
-                        val padH = (18 * density).toInt()
-                        // 与目录模式一致：避让顶部 Tab 胶囊（44dp 起 + 48dp 高 + 内边距）
-                        // padBottom 避让底部弧形操作条热区（深入 54dp），留 72dp 冗余
-                        val padTop = (100 * density).toInt()
-                        val padBottom = (72 * density).toInt()
-
-                        val bookmarkListView = ListView(context).apply {
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT
-                            )
-                            isFocusable = true
-                            isFocusableInTouchMode = true
-                            isVerticalScrollBarEnabled = false
-                            divider = null
-                            dividerHeight = (6 * density).toInt()
-                            setBackgroundColor(bgColor)
-                            setPadding(padH, padTop, padH, padBottom)
-                            clipToPadding = false
-                            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-                        }
-
-                        // 表冠物理旋转无缝滚动（统一管线扩展）
-                        bookmarkListView.bindCrownScroll(context)
-
-                        val adapter = BookmarkListAdapter(bookmarks, colorScheme, density, onBookmarkClick, onDeleteBookmark)
-                        bookmarkListView.adapter = adapter
-
-                        bookmarkListView
-                    },
-                    update = { bookmarkListView ->
-                        applyListViewBg(bookmarkListView, bgColor)
-                        val adapter = bookmarkListView.adapter as? BookmarkListAdapter
-                        if (adapter != null &&
-                            (adapter.bookmarks !== bookmarks || adapter.colorScheme !== colorScheme)
-                        ) {
-                            adapter.bookmarks = bookmarks
-                            adapter.colorScheme = colorScheme
-                            adapter.notifyDataSetChanged()
-                        }
-                    }
-                )
-            }
+        if (selectedTab == 1) {
+            add(EdgeButtonSpec(label = "存为书签", onClick = onAddBookmark))
         }
 
-        // 顶部/底部羽化遮罩（统一 EdgeFadeMask 基元）
-        EdgeFadeMask(
-            edge = Alignment.Top,
-            modifier = Modifier.align(Alignment.TopCenter),
-            height = 48.dp
-        )
-        EdgeFadeMask(
-            edge = Alignment.Bottom,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            height = 44.dp
-        )
-
-        // 顶部 Tab 切换胶囊（滑动式指示：填充与文字颜色双通道动画，仅绘制层失效）。
-        // 顶部 44dp 起：18dp 处弦宽仅 ~124dp 装不下双胶囊，外端贴弧甚至点不到；
-        // 胶囊最小高度 48dp，列表顶部留白同步上移
-        Row(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 44.dp)
-                .clip(WatchShapes.Pill)
-                .background(colorScheme.surfaceContainerHigh)
-                .border(1.dp, colorScheme.outlineVariant, WatchShapes.Pill)
-                .padding(2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            TabCapsule("目录 (${chapters.size})", selected = selectedTab == 0) { selectedTab = 0 }
-            TabCapsule("书签 (${bookmarks.size})", selected = selectedTab == 1) { selectedTab = 1 }
-        }
-
-        // 底部弧形贴边操作条：扇带处处贴合圆屏下缘（目录 Tab 1~3 键，书签 Tab 2 键）
-        val barSpecs = buildList {
-            add(EdgeButtonSpec(label = "‹ 返回", onClick = onBack))
-
-            if (selectedTab == 1) {
-                add(EdgeButtonSpec(label = "存为书签", onClick = onAddBookmark))
-            }
-
-            if (selectedTab == 0 && chapters.isNotEmpty()) {
-                add(
-                    EdgeButtonSpec(
-                        label = "当前",
-                        emphasis = PillEmphasis.Outline,
-                        onClick = {
-                            currentListView?.let { lv ->
-                                if (currentChapterIndex in chapters.indices) {
-                                    val viewHeight = lv.height
-                                    val itemHeight = (48 * lv.resources.displayMetrics.density).toInt()
-                                    val targetTop = maxOf(0, (viewHeight - itemHeight) / 2)
-                                    lv.smoothScrollToPositionFromTop(currentChapterIndex, targetTop, 300)
-                                }
+        if (selectedTab == 0 && chapters.isNotEmpty()) {
+            add(
+                EdgeButtonSpec(
+                    label = "当前",
+                    emphasis = PillEmphasis.Outline,
+                    onClick = {
+                        currentListView?.let { lv ->
+                            if (currentChapterIndex in chapters.indices) {
+                                val viewHeight = lv.height
+                                val itemHeight = (48 * lv.resources.displayMetrics.density).toInt()
+                                val targetTop = maxOf(0, (viewHeight - itemHeight) / 2)
+                                lv.smoothScrollToPositionFromTop(currentChapterIndex, targetTop, 300)
                             }
                         }
-                    )
+                    }
                 )
-            }
-
-            if (selectedTab == 0 && ranges.isNotEmpty()) {
-                add(EdgeButtonSpec(label = "选卷", onClick = { showRangePicker = true }))
-            }
+            )
         }
-        EdgeActionBar(*barSpecs.toTypedArray())
 
-        // 2. 范围分卷极速直达浮层（进出场走统一 scale + fade 档位）
+        if (selectedTab == 0 && ranges.isNotEmpty()) {
+            add(EdgeButtonSpec(label = "选卷", onClick = { showRangePicker = true }))
+        }
+    }
+
+    // 2. 范围分卷极速直达浮层（进出场走统一 scale + fade 档位）
+    // 浮层必须以 overlay 槽交给壳：留在 content 内会被遮罩与操作条压住，热区也抢不过操作条
+    val rangePickerOverlay: @Composable BoxScope.() -> Unit = {
         AnimatedVisibility(
             visible = showRangePicker && ranges.isNotEmpty(),
             enter = WatchOverlay.Enter,
@@ -503,6 +336,165 @@ fun ChapterListScreen(
                     EdgeButtonSpec(label = "✕ 关闭", onClick = { showRangePicker = false })
                 )
             }
+        }
+    }
+
+    WatchScreenScaffold(
+        swipeEnabled = !showRangePicker,
+        onDismiss = onBack,
+        fades = WatchScreenFades(top = 48.dp, bottom = 44.dp),
+        contentAlignment = Alignment.TopCenter,
+        actionBar = { EdgeActionBar(*barSpecs.toTypedArray()) },
+        overlay = rangePickerOverlay
+    ) {
+        if (selectedTab == 0) {
+            // ── 目录模式：原生 ListView 核心 ──
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { context ->
+                    val density = context.resources.displayMetrics.density
+                    val padH = (20 * density).toInt()
+                    // padTop 与顶部 Tab 胶囊（44dp 起 + 48dp 高 + 内边距）对齐，列表内容不被 Tab 压住
+                    // padBottom 避让底部弧形操作条热区（径向深入屏缘 48dp + 悬离 6dp = 54dp），留 72dp 冗余
+                    val padTop = (100 * density).toInt()
+                    val padBottom = (72 * density).toInt()
+
+                    val listView = ListView(context).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        isFocusable = true
+                        isFocusableInTouchMode = true
+                        isVerticalScrollBarEnabled = false
+                        divider = null
+                        dividerHeight = (5 * density).toInt()
+                        setBackgroundColor(bgColor)
+                        setPadding(padH, padTop, padH, padBottom)
+                        clipToPadding = false
+                        overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                    }
+                    currentListView = listView
+
+                    // 表冠物理旋转无缝滚动（统一管线扩展，见 bindCrownScroll）
+                    listView.bindCrownScroll(context)
+
+                    val adapter = ChapterListAdapter(chapters, currentChapterIndex, colorScheme, density)
+                    listView.adapter = adapter
+
+                    listView.setOnItemClickListener { _, _, position, _ ->
+                        if (position in chapters.indices) {
+                            onChapterClick(position)
+                        }
+                    }
+
+                    listView.post {
+                        listView.requestFocus()
+                        if (currentChapterIndex in chapters.indices) {
+                            listView.setSelection((currentChapterIndex - 1).coerceAtLeast(0))
+                        }
+                    }
+
+                    listView
+                },
+                update = { listView ->
+                    currentListView = listView
+                    applyListViewBg(listView, bgColor)
+                    // notifyDataSetChanged 会强制全部可见行重布局：仅在数据/主题真正变化时调用，
+                    // 杜绝父级每次重组（如阅读时长 tick）都触发目录整页 invalidate
+                    val adapter = listView.adapter as? ChapterListAdapter
+                    if (adapter != null &&
+                        (adapter.chapters !== chapters ||
+                            adapter.currentChapterIndex != currentChapterIndex ||
+                            adapter.colorScheme !== colorScheme)
+                    ) {
+                        adapter.chapters = chapters
+                        adapter.currentChapterIndex = currentChapterIndex
+                        adapter.colorScheme = colorScheme
+                        adapter.notifyDataSetChanged()
+                    }
+                }
+            )
+        } else {
+            // ── 书签模式：原生卡片 ListView ──
+            if (bookmarks.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "暂无书签\n点击下方“存为书签”保存当前位置",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            } else {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { context ->
+                        val density = context.resources.displayMetrics.density
+                        val padH = (18 * density).toInt()
+                        // 与目录模式一致：避让顶部 Tab 胶囊（44dp 起 + 48dp 高 + 内边距）
+                        // padBottom 避让底部弧形操作条热区（深入 54dp），留 72dp 冗余
+                        val padTop = (100 * density).toInt()
+                        val padBottom = (72 * density).toInt()
+
+                        val bookmarkListView = ListView(context).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT
+                            )
+                            isFocusable = true
+                            isFocusableInTouchMode = true
+                            isVerticalScrollBarEnabled = false
+                            divider = null
+                            dividerHeight = (6 * density).toInt()
+                            setBackgroundColor(bgColor)
+                            setPadding(padH, padTop, padH, padBottom)
+                            clipToPadding = false
+                            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                        }
+
+                        // 表冠物理旋转无缝滚动（统一管线扩展）
+                        bookmarkListView.bindCrownScroll(context)
+
+                        val adapter = BookmarkListAdapter(bookmarks, colorScheme, density, onBookmarkClick, onDeleteBookmark)
+                        bookmarkListView.adapter = adapter
+
+                        bookmarkListView
+                    },
+                    update = { bookmarkListView ->
+                        applyListViewBg(bookmarkListView, bgColor)
+                        val adapter = bookmarkListView.adapter as? BookmarkListAdapter
+                        if (adapter != null &&
+                            (adapter.bookmarks !== bookmarks || adapter.colorScheme !== colorScheme)
+                        ) {
+                            adapter.bookmarks = bookmarks
+                            adapter.colorScheme = colorScheme
+                            adapter.notifyDataSetChanged()
+                        }
+                    }
+                )
+            }
+        }
+
+
+        // 顶部 Tab 切换胶囊（滑动式指示：填充与文字颜色双通道动画，仅绘制层失效）。
+        // 顶部 44dp 起：18dp 处弦宽仅 ~124dp 装不下双胶囊，外端贴弧甚至点不到；
+        // 胶囊最小高度 48dp，列表顶部留白同步上移
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 44.dp)
+                .clip(WatchShapes.Pill)
+                .background(colorScheme.surfaceContainerHigh)
+                .border(1.dp, colorScheme.outlineVariant, WatchShapes.Pill)
+                .padding(2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TabCapsule("目录 (${chapters.size})", selected = selectedTab == 0) { selectedTab = 0 }
+            TabCapsule("书签 (${bookmarks.size})", selected = selectedTab == 1) { selectedTab = 1 }
         }
     }
 }

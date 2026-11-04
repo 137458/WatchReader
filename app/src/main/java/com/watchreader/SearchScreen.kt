@@ -68,11 +68,10 @@ fun SearchScreen(
     // 搜索词由 VM 持有（与结果同生命周期）：返回后再进本页仍可微调关键词重查
     var searched by remember { mutableStateOf(false) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            // 右滑退出搜索页（与返回键同一处理）
-            .swipeDismissBack(onDismiss = onBack)
+    WatchScreenScaffold(
+        // 右滑退出搜索页（与返回键同一处理）
+        onDismiss = onBack,
+        fades = WatchScreenFades(top = 48.dp, bottom = 44.dp)
     ) {
         Column(
             modifier = Modifier
@@ -175,16 +174,6 @@ fun SearchScreen(
             }
         }
 
-        EdgeFadeMask(
-            edge = Alignment.Top,
-            modifier = Modifier.align(Alignment.TopCenter),
-            height = 48.dp
-        )
-        EdgeFadeMask(
-            edge = Alignment.Bottom,
-            modifier = Modifier.align(Alignment.BottomCenter),
-            height = 44.dp
-        )
     }
 }
 

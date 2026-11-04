@@ -114,15 +114,14 @@ fun WifiTransferScreen(
     // 百分比整数去重：spring 逐帧重定向时仅在数字变化的那一帧重组
     val progressPercent by remember { derivedStateOf { (animatedProgress * 100).toInt() } }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            // 右滑退出：与全站同一 Wear 口径（跟手平移、未越限弹回、越限滑出）；
-            // 传输进行期整条识别器停摆，中断须走两步确认返回
-            .swipeDismissBack(enabled = !isTransferring) {
-                tick()
-                onBack()
-            },
+    WatchScreenScaffold(
+        swipeEnabled = !isTransferring,
+        onDismiss = {
+            tick()
+            onBack()
+        },
+        // 传书页无滚动词表，遮罩与操作条都不参与
+        fades = WatchScreenFades.None,
         contentAlignment = Alignment.Center
     ) {
         // 1. 沿屏幕边缘的 MD3 环形进度（贴圆屏边沿，仅在传输时呈现）
