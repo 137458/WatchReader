@@ -24,7 +24,7 @@ class AutoScrollEngine(
 
     var speedPxPerSec: Float = 45f // 默认每秒 45 像素 (约 2~3 行)
         set(value) {
-            field = value.coerceIn(15f, 250f)
+            field = AutoScrollSpeed.clamp(value)
         }
 
     private var lastFrameTimeNanos: Long = 0L
@@ -46,11 +46,10 @@ class AutoScrollEngine(
 
                 if (accumulatedDeltaY >= 1.0f) {
                     val step = accumulatedDeltaY.toInt()
-                    val child = scrollView.getChildAt(0)
-                    val maxScroll = if (child != null) maxOf(0, child.height - scrollView.height) else 0
-                    val currentY = scrollView.scrollY
-
-                    if (maxScroll > 0 && currentY >= maxScroll) {
+                    // 与表冠滚动共用同一「到底」口径（含底 padding 与 child 顶偏移）：
+                    // 曾按 child.height - viewportHeight 自算，导致表冠已静默而自动滚屏仍滚进 padding；
+                    // 内容不足一屏时 maxScrollY 恒为 0，旧判据既不推进也不翻章，帧循环空转
+                    if (ScrollMetrics.shouldAdvance(scrollView)) {
                         // 到达章节末尾，触发自动翻章
                         stop()
                         onNextChapterRequest()
@@ -112,7 +111,7 @@ class AutoScrollEngine(
      * 增加或减少速度
      */
     fun adjustSpeed(delta: Float) {
-        speedPxPerSec = (speedPxPerSec + delta).coerceIn(15f, 250f)
+        speedPxPerSec = AutoScrollSpeed.clamp(speedPxPerSec + delta)
     }
 
     fun release() {

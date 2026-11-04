@@ -70,19 +70,37 @@ fun RsvpScreen(
 
     val colorScheme = MaterialTheme.colorScheme
 
-    // 分词并计算相对偏移
+    // 分词：tokenizer 给出的 charOffset 落在正文域（formattedBody 索引），
+    // 而跨页跳转与持久化的约定是「全书绝对原文偏移」，中间必须经 ChapterOffsetMapper
+    // 补回每段缩进与段间换行，直接相加章节起点会把位置落在错误字符上。
     val fullText = chapterContent?.formattedBody ?: ""
-    val chapterStartOffset = chapterContent?.startCharOffset ?: 0
+    val bodyToBookOffset: (Int) -> Int = remember(chapterContent) {
+        { bodyIndex ->
+            val content = chapterContent
+            if (content == null) {
+                bodyIndex
+            } else {
+                content.startCharOffset + ChapterOffsetMapper.bodyToRaw(
+                    bodyIndex,
+                    content.bodyParagraphStarts,
+                    content.rawParagraphStarts,
+                    content.formattedBody.length,
+                    rawLength = content.endCharOffset - content.startCharOffset,
+                    indentChars = content.paragraphIndentChars
+                )
+            }
+        }
+    }
 
     val tokens = remember(fullText) {
-        tokenizeRsvpText(fullText, chapterStartOffset)
+        tokenizeRsvpText(fullText, startOffset = 0)
     }
 
     // 找到初始 Token 索引
     var currentIndex by remember(tokens, initialCharOffset) {
         mutableStateOf(
             if (tokens.isEmpty()) 0 else {
-                val idx = tokens.indexOfFirst { it.charOffset >= initialCharOffset }
+                val idx = tokens.indexOfFirst { bodyToBookOffset(it.charOffset) >= initialCharOffset }
                 if (idx >= 0) idx else 0
             }
         )
@@ -109,7 +127,7 @@ fun RsvpScreen(
 
         if (currentIndex + 1 < tokens.size) {
             currentIndex++
-            onCharOffsetChange(tokens[currentIndex].charOffset)
+            onCharOffsetChange(bodyToBookOffset(tokens[currentIndex].charOffset))
         } else {
             // 读完本章，若有下一章则自动请求翻章
             if (chapterContent?.hasNextChapter == true) {
@@ -138,7 +156,7 @@ fun RsvpScreen(
                                 val nextIdx = (base + 5).coerceAtMost(tokens.lastIndex)
                                 if (nextIdx != base) {
                                     currentIndex = nextIdx
-                                    onCharOffsetChange(tokens[nextIdx].charOffset)
+                                    onCharOffsetChange(bodyToBookOffset(tokens[nextIdx].charOffset))
                                     tick()
                                 }
                             }
@@ -148,7 +166,7 @@ fun RsvpScreen(
                                 val prevIdx = (base - 5).coerceAtLeast(0)
                                 if (prevIdx != base) {
                                     currentIndex = prevIdx
-                                    onCharOffsetChange(tokens[prevIdx].charOffset)
+                                    onCharOffsetChange(bodyToBookOffset(tokens[prevIdx].charOffset))
                                     tick()
                                 }
                             }

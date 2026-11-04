@@ -3,6 +3,7 @@ package com.watchreader
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.view.Choreographer
@@ -13,8 +14,38 @@ import android.view.ViewConfiguration
 import android.widget.ListView
 import android.widget.OverScroller
 import android.widget.ScrollView
+import androidx.annotation.VisibleForTesting
 import androidx.compose.foundation.gestures.ScrollableState
 import kotlin.math.abs
+
+/**
+ * 表冠内核的测试注入点（JVM 单测专用）
+ *
+ * 时间源与观测探针集中在此单点，生产对象只读、不承载可写测试状态；
+ * 唯一写入方是 JVM 单测与 [CrownScrollHelper.resetFeedbackGatesForTest]。
+ */
+internal object CrownScrollTestHooks {
+
+    /** 时间源：默认系统 uptime，单测替换为假时钟以驱动惯性重武装与速度窗口 */
+    @VisibleForTesting
+    var timeSourceMs: () -> Long = { SystemClock.uptimeMillis() }
+
+    /** 振感观测探针（叠加通知，不改变生产路径） */
+    @VisibleForTesting
+    var gearTickProbe: ((Context?, View?) -> Unit)? = null
+
+    /** 惯性起振观测探针 */
+    @VisibleForTesting
+    var flingStartProbe: ((Float) -> Unit)? = null
+
+    /** 恢复默认值（单测隔离） */
+    @VisibleForTesting
+    fun reset() {
+        timeSourceMs = { SystemClock.uptimeMillis() }
+        gearTickProbe = null
+        flingStartProbe = null
+    }
+}
 
 /**
  * OPPO Watch (ColorOS Watch / Wear OS) 表冠转动与触觉交互管理器
@@ -25,7 +56,7 @@ import kotlin.math.abs
  * 2. 【连续滚动】每个事件按 ViewConfiguration 系统滚动系数的 50% 立即下发（至少 1px），
  *    不再按物理档位量子化步进；转动过程与屏幕位移 1:1 跟手。
  * 3. 【刻度累加与振感】对齐 OPPO 系统 mDelta / crown_vibrator_instance（默认 24px）：
- *    按实际滚动像素有符号累积，门限判断先于累加、触发即清零，触发一次原厂 302 齿轮微振；
+ *    按实际滚动像素有符号累积，满门限立即触发一次原厂 302 齿轮微振并保留超出部分的余量；
  *    触底/触顶静默，不响振感；马达投递采用 remove-before 语义。
  * 4. 【惯性】累计位移 × 700 / 窗口毫秒估算速度，超过系统最小起振速度 500px/s 即启动
  *    OverScroller 惯性；任何新表冠事件立即中止惯性恢复跟手，手势数据 25ms 无事件后终止。
@@ -52,7 +83,7 @@ object CrownScrollHelper {
     // 调速档位微振节流器（跨界面共享：每物理档位 12 单位累积一次微振，供 RSVP 速率 / 自动滚屏调速使用）
     private val adjustTickGate = CrownTickGate(thresholdPx = CROWN_UNITS_PER_NOTCH)
 
-    // 齿轮微振距离门限节流器：与系统列表 mDelta 一致，有符号累积、过门限即清零
+    // 齿轮微振距离门限节流器：与系统列表 mDelta 一致，有符号累积、满门限触发并保留余量
     private val gearTickGate = CrownTickGate(
         thresholdPx = VIBRATION_THRESHOLD_PIXELS,
         signed = true
@@ -62,18 +93,10 @@ object CrownScrollHelper {
     private var gestureLastEventMs = 0L
     private var gestureAccumPx = 0f
 
-    // 供 JVM 单测断言 Fling 触发
-    internal var flingStartProbe: ((Float) -> Unit)? = null
-
     private val mainHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
 
-    // 时间源（可注入：JVM 单测用假时钟驱动节流与重武装逻辑）
-    internal var timeSourceMs: () -> Long = { android.os.SystemClock.uptimeMillis() }
-
-    // 振感观测探针（叠加通知，不改变生产路径；供 JVM 单测断言振感触发时机）
-    internal var gearTickProbe: ((Context?, View?) -> Unit)? = null
-
     /** 重置跨界面共享的振感节流状态（JVM 单测隔离用；生产勿调） */
+    @VisibleForTesting
     internal fun resetFeedbackGatesForTest() {
         gearTickGate.reset()
         adjustTickGate.reset()
@@ -81,17 +104,16 @@ object CrownScrollHelper {
         gestureStartMs = 0L
         gestureLastEventMs = 0L
         gestureAccumPx = 0f
-        flingStartProbe = null
         stopFlingInternal()
-        timeSourceMs = { android.os.SystemClock.uptimeMillis() }
         scrollFactorPxPerUnit = DEFAULT_SCROLL_FACTOR_PX_PER_UNIT
+        CrownScrollTestHooks.reset()
     }
 
     /**
      * 齿轮微振反馈：由距离门限节流后触发 1 次原厂 302 齿轮微振
      */
     private fun emitNotchHaptic(context: Context?, view: View?) {
-        gearTickProbe?.invoke(context, view)
+        CrownScrollTestHooks.gearTickProbe?.invoke(context, view)
         RotaryHapticManager.performScrollTick(context, view)
     }
 
@@ -185,26 +207,16 @@ object CrownScrollHelper {
         if (scrollPixels == 0) return
         abortFling(scrollState)
 
-        // 触底/触顶静默钳制：到达边界后滚动安全停止，不响任何振感
+        // 触底/触顶静默钳制：用容器真实消费量判定，未消费即已抵边界 ——
+        // 不累加振感距离（余量原样保留）、不进惯性，避免贴边空转把振感节奏推乱
         val canScroll = if (scrollPixels > 0) scrollState.canScrollForward else scrollState.canScrollBackward
-        if (canScroll) {
-            scrollState.dispatchRawDelta(scrollPixels.toFloat())
-            if (gearTickGate.onScroll(scrollPixels.toFloat())) {
-                emitNotchHaptic(context, view)
-            }
-            trackGestureMotion(scrollPixels.toFloat(), scrollState, context)
-        }
-    }
-
-    /**
-     * 无滚动内容页面的表冠空转反馈（如无线传书页）：按系统滚动距离门限累积微振
-     */
-    fun dispatchIdleTick(rawOrPixelDelta: Float, context: Context?, view: View? = null) {
-        val scrollPixels = scrollPixelsFor(rawOrPixelDelta)
-        if (scrollPixels == 0) return
-        if (gearTickGate.onScroll(scrollPixels.toFloat())) {
+        if (!canScroll) return
+        val consumed = scrollState.dispatchRawDelta(scrollPixels.toFloat())
+        if (consumed == 0f) return
+        if (gearTickGate.onScroll(consumed)) {
             emitNotchHaptic(context, view)
         }
+        trackGestureMotion(consumed, scrollState, context)
     }
 
     /**
@@ -252,7 +264,7 @@ object CrownScrollHelper {
         if (scrollPixels == 0) return
         abortFling(scrollView)
 
-        val maxScroll = maxScrollOf(scrollView)
+        val maxScroll = ScrollMetrics.maxScrollY(scrollView)
         val atBoundary = (scrollPixels > 0 && scrollView.scrollY >= maxScroll) ||
             (scrollPixels < 0 && scrollView.scrollY <= 0)
         if (!atBoundary) {
@@ -271,7 +283,7 @@ object CrownScrollHelper {
 
     private fun trackGestureMotion(deltaPx: Float, surface: Any, context: Context?) {
         if (deltaPx == 0f) return
-        val now = timeSourceMs()
+        val now = CrownScrollTestHooks.timeSourceMs()
         if (now - gestureLastEventMs > GESTURE_IDLE_TIMEOUT_MS) {
             gestureStartMs = now
             gestureAccumPx = 0f
@@ -284,7 +296,7 @@ object CrownScrollHelper {
         val velocity = computeFlingVelocity(gestureAccumPx, elapsed)
         if (abs(velocity) < FLING_MIN_VELOCITY_PX_S) return
 
-        flingStartProbe?.invoke(velocity)
+        CrownScrollTestHooks.flingStartProbe?.invoke(velocity)
         if (context != null) {
             startFling(surface, velocity, context)
         }
@@ -302,7 +314,7 @@ object CrownScrollHelper {
         val scroller = flingScroller ?: OverScroller(context).also { flingScroller = it }
         when (surface) {
             is ScrollView -> {
-                scroller.fling(0, surface.scrollY, 0, velocity.toInt(), 0, 0, 0, maxScrollOf(surface))
+                scroller.fling(0, surface.scrollY, 0, velocity.toInt(), 0, 0, 0, ScrollMetrics.maxScrollY(surface))
                 flingLastPos = surface.scrollY.toFloat()
             }
             else -> {
@@ -323,7 +335,7 @@ object CrownScrollHelper {
                 when (surface) {
                     is ScrollView -> {
                         surface.scrollTo(0, scroller.currY)
-                        if (surface.scrollY <= 0 || surface.scrollY >= maxScrollOf(surface)) {
+                        if (surface.scrollY <= 0 || surface.scrollY >= ScrollMetrics.maxScrollY(surface)) {
                             stopFlingInternal()
                             return
                         }
@@ -372,15 +384,6 @@ object CrownScrollHelper {
             .coerceIn(-FLING_MAX_VELOCITY_PX_S, FLING_MAX_VELOCITY_PX_S)
     }
 
-    /**
-     * ScrollView 真实最大滚动量：滚动范围延伸进上下 padding 区（clipToPadding=false），
-     * 等价于 scrollTo 内部 clamp 的 child.height - (height - padTop - padBottom)
-     */
-    private fun maxScrollOf(scrollView: ScrollView): Int {
-        val child = scrollView.getChildAt(0) ?: return 0
-        return maxOf(0, child.bottom + scrollView.paddingBottom - scrollView.height)
-    }
-
     /** 终止惯性滑动（新表冠事件 / 章节切换恢复滚动位置时调用） */
     fun abortFling(surface: Any?) {
         if (surface == null || flingSurface === surface) {
@@ -418,15 +421,12 @@ fun ListView.bindCrownScroll(context: Context) {
     }
 }
 
-
-
-
 /**
  * 表冠齿轮微振距离门限节流器
  *
- * [signed] = true 时复刻系统列表 `mDelta` 语义：有符号累积、门限判断发生在累加之前、
- * 触发时整体清零（不保留余量）；[signed] = false 时按绝对值累积并保留余量，
- * 供 RSVP / 自动滚屏调速的档位微振使用。
+ * [signed] = true 时复刻系统列表 `mDelta` 的有符号累积：反向转动抵消余量、满门限立即触发，
+ * 触发后只保留超出部分的余量（整体清零会把越过门限的那段距离丢掉，快转时振感节奏变稀）；
+ * [signed] = false 时按绝对值累积并保留余量，供 RSVP / 自动滚屏调速的档位微振使用。
  */
 class CrownTickGate(
     var thresholdPx: Float = CrownScrollHelper.VIBRATION_THRESHOLD_PIXELS,
@@ -439,11 +439,10 @@ class CrownTickGate(
     fun onScroll(distancePx: Float): Boolean {
         if (distancePx == 0f) return false
         if (signed) {
-            if (abs(accumulator) < thresholdPx) {
-                accumulator += distancePx
-                return false
-            }
-            accumulator = 0f
+            accumulator += distancePx
+            if (abs(accumulator) < thresholdPx) return false
+            // carry：扣掉一个门限，剩余距离留给下一次触发
+            accumulator -= if (accumulator > 0f) thresholdPx else -thresholdPx
             return true
         }
         accumulator += abs(distancePx)

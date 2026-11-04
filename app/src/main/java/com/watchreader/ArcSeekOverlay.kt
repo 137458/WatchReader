@@ -49,8 +49,11 @@ object ArcSeekMath {
 
     /**
      * 判断触控点是否位于右侧弧形寻道响应带（容差判定，便于手指触达）
+     *
+     * 圆心必须由调用方按真实容器尺寸给出：默认 233f 只是 466 方屏的一半，
+     * 一旦容器尺寸变化（分屏 / 不同机型）就会静默判定错位。
      */
-    fun isInSeekZone(x: Float, y: Float, cx: Float = 233f, cy: Float = 233f): Boolean {
+    fun isInSeekZone(x: Float, y: Float, cx: Float, cy: Float): Boolean {
         val dx = x - cx
         val dy = y - cy
         val r = sqrt(dx * dx + dy * dy)

@@ -12,8 +12,14 @@ class ArcSeekMathTest {
         val cx = 233f
         val cy = 233f
 
-        // Exact 3 o'clock (angle = 0 deg, r = 220 in [210, 233])
+        // Exact 3 o'clock (angle = 0 deg, r = 220 in [200, 245])
         assertTrue(ArcSeekMath.isInSeekZone(cx + 220f, cy, cx, cy))
+
+        // 判定带由 SEEK_RADIUS_INNER / SEEK_RADIUS_OUTER 决定，逐条锁边界（含端点）
+        assertTrue(ArcSeekMath.isInSeekZone(cx + ArcSeekMath.SEEK_RADIUS_INNER, cy, cx, cy))
+        assertTrue(ArcSeekMath.isInSeekZone(cx + ArcSeekMath.SEEK_RADIUS_OUTER, cy, cx, cy))
+        assertFalse(ArcSeekMath.isInSeekZone(cx + ArcSeekMath.SEEK_RADIUS_INNER - 1f, cy, cx, cy))
+        assertFalse(ArcSeekMath.isInSeekZone(cx + ArcSeekMath.SEEK_RADIUS_OUTER + 1f, cy, cx, cy))
 
         // 45 degrees up (angle = -45 deg, r = 225)
         val r45 = 225f

@@ -33,11 +33,37 @@ object RotaryHapticManager {
     // 待执行的表冠微振任务（remove-before 语义，只保留最新一次）
     private var pendingTickRunnable: Runnable? = null
 
-    // 表冠震动专用后台线程（对齐 HeyLauncher "crown_vibate" 线程）
-    private val vibrateHandler: Handler by lazy {
-        val thread = HandlerThread("crown_vibrate")
-        thread.start()
-        Handler(thread.looper)
+    // 表冠震动专用后台线程（对齐 HeyLauncher "crown_vibate" 线程）：按需创建，
+    // shutdown() 后可重建，进程内不再常驻一个永不退出的 HandlerThread
+    private var vibrateThread: HandlerThread? = null
+    @Volatile private var vibrateHandler: Handler? = null
+
+    private fun handlerOrCreate(): Handler {
+        vibrateHandler?.let { return it }
+        synchronized(this) {
+            vibrateHandler?.let { return it }
+            val thread = HandlerThread("crown_vibrate")
+            thread.start()
+            vibrateThread = thread
+            return Handler(thread.looper).also { vibrateHandler = it }
+        }
+    }
+
+    /**
+     * 释放后台线程与待执行的微振任务（幂等，宿主 onDestroy 调用）
+     *
+     * 之后若有振感请求会按需重建线程，因此重复调用安全、也不影响后续使用。
+     */
+    fun shutdown() {
+        synchronized(this) {
+            val handler = vibrateHandler ?: return
+            pendingTickRunnable?.let(handler::removeCallbacks)
+            pendingTickRunnable = null
+            handler.removeCallbacksAndMessages(null)
+            vibrateThread?.quitSafely()
+            vibrateThread = null
+            vibrateHandler = null
+        }
     }
 
     // OPPO Linearmotor 反射缓存
@@ -131,10 +157,11 @@ object RotaryHapticManager {
      * 触发表冠旋转微振反馈（原厂 302 齿轮微振，后台线程 remove-before 投递）
      */
     fun performScrollTick(context: Context?, view: View? = null) {
+        val handler = handlerOrCreate()
         val runnable = Runnable { vibrateScrollTick(context, view) }
-        pendingTickRunnable?.let(vibrateHandler::removeCallbacks)
+        pendingTickRunnable?.let(handler::removeCallbacks)
         pendingTickRunnable = runnable
-        vibrateHandler.post(runnable)
+        handler.post(runnable)
     }
 
     private fun vibrateScrollTick(context: Context?, view: View?) {
@@ -188,7 +215,7 @@ object RotaryHapticManager {
      */
     fun performSuccessFeedback(context: Context?) {
         if (context == null) return
-        vibrateHandler.post { vibrateSuccess(context) }
+        handlerOrCreate().post { vibrateSuccess(context) }
     }
 
     private fun vibrateSuccess(context: Context) {

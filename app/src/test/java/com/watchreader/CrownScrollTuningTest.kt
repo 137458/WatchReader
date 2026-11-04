@@ -112,12 +112,21 @@ class CrownScrollTuningTest {
     }
 
     @Test
-    fun testSignedGateMatchesSystemMDelta() {
-        // 系统列表：门限判断先于累加，满 24px 后下一次事件触发并整体清零
+    fun testSignedGateFiresOnThreshold() {
+        // 满 24px 的那一次立即触发，超出部分留作余量
         val gate = CrownTickGate(thresholdPx = 24f, signed = true)
-        repeat(4) { assertFalse(gate.onScroll(6f)) } // 累计 24px
-        assertTrue(gate.onScroll(6f)) // 第 5 次触发
-        assertFalse(gate.onScroll(6f)) // 清零后重新累计
+        repeat(3) { assertFalse(gate.onScroll(6f)) } // 累计 18px
+        assertTrue(gate.onScroll(6f)) // 第 4 次正好满 24px → 触发
+        assertFalse(gate.onScroll(1f)) // 余量 0 + 1px
+    }
+
+    @Test
+    fun testSignedGateCarriesOverflowDistance() {
+        // 单事件 30px：一振 + 残留 6px，不得整段丢弃（否则猛转时少振）
+        val gate = CrownTickGate(thresholdPx = 24f, signed = true)
+        assertTrue(gate.onScroll(30f))
+        assertFalse(gate.onScroll(17f)) // 6 + 17 = 23，不足
+        assertTrue(gate.onScroll(1f)) // 24 → 触发，余量 0
     }
 
     @Test
@@ -126,7 +135,6 @@ class CrownScrollTuningTest {
         repeat(3) { assertFalse(gate.onScroll(6f)) } // +18
         repeat(3) { assertFalse(gate.onScroll(-6f)) } // 抵消回 0
         repeat(3) { assertFalse(gate.onScroll(6f)) } // 再 +18，仍未满
-        assertFalse(gate.onScroll(6f)) // 累计 24
-        assertTrue(gate.onScroll(6f)) // 下一次触发
+        assertTrue(gate.onScroll(6f)) // 满 24 立即触发
     }
 }
