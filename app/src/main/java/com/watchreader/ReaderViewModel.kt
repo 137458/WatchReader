@@ -88,6 +88,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val appCtx: Context get() = getApplication<Application>()
 
     /**
+     * 偏好落盘的成对写入：状态更新与后台落盘在同一个入口里完成，setter 只声明字段与存储键
+     */
+    private val prefs = ReaderPreferenceWrites(_uiState, viewModelScope)
+
+    /**
      * 阅读会话：一本书的正文、章节定位、章节缓存与相邻预热全部归它所有。
      *
      * 收口前这里是四个跨调用哨兵字段（编码 / 转换格式 / 转换读取源 / 当前偏移）加两张
@@ -105,9 +110,36 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     val searchState: StateFlow<SearchState> = search.state
 
-    // 异步防抖持久化 Job
-    private var savePositionJob: Job? = null
-    private var loadJob: Job? = null
+    /** 章节加载域对磁盘的依赖面（书架 / 书签 / 阅读位置 / 上次页面） */
+    private val progressStore: ReaderProgressStore = DataStoreReaderProgressStore(appCtx)
+
+    /**
+     * 章节装载、跳章、位置落盘与驱动它们的两个 Job：本类只留一行委托
+     */
+    private val chapters = ChapterNavigator(
+        uiState = _uiState,
+        scope = viewModelScope,
+        session = reading,
+        store = progressStore,
+        resetSearch = { search.reset() },
+        onUserActive = { notifyUserActive() },
+        stopAutoScroll = { setAutoScrolling(false) }
+    )
+
+    /**
+     * 返回手势路由与关书统一出口：六条分支的判定顺序与副作用都在它里面
+     */
+    private val navigation = ReaderBackNavigation(
+        uiState = _uiState,
+        scope = viewModelScope,
+        store = progressStore,
+        flushReadingPosition = { chapters.flushReadingPosition() },
+        resetSearch = { search.reset() },
+        closeSession = { reading.close() },
+        returnToReader = { returnToReader() },
+        cancelSearch = { cancelSearch() },
+        closeWifiTransfer = { closeWifiTransfer() }
+    )
 
     /**
      * 传书服务生命周期与状态镜像：ip/端口/令牌/进度不再占用 ReaderUiState，
@@ -189,53 +221,18 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 DataStoreManager.loadInitialConfig(appCtx)
             }
 
-            if (config.lastScreen == "reader" && config.lastUri != null) {
-                _uiState.update {
-                    it.copy(
-                        fontSize = config.fontSize,
-                        autoScrollSpeed = config.autoScrollSpeed,
-                        appBrightness = config.appBrightness,
-                        bookshelf = config.bookshelf,
-                        themeMode = config.themeMode,
-                        tapPageArea = config.tapPageArea,
-                        cleanTypography = config.cleanTypography,
-                        fontType = config.fontType,
-                        readDurationSec = config.readDurationSec,
-                        readDays = config.readDays,
-                        readGoalMinutes = config.readGoalMinutes,
-                        readGoalCelebrated = config.readGoalCelebrated,
-                        lineSpacing = config.lineSpacing,
-                        letterSpacing = config.letterSpacing,
-                        screen = Screen.Loading,
-                        isLoading = true,
-                        currentUri = config.lastUri
-                    )
-                }
-                loadFile(config.lastUri, config.lastCharOffset)
-            } else {
-                // 上次退出时在书架/非阅读页：0ms 极速进入书架，不读取大文件
-                _uiState.update {
-                    it.copy(
-                        fontSize = config.fontSize,
-                        autoScrollSpeed = config.autoScrollSpeed,
-                        appBrightness = config.appBrightness,
-                        bookshelf = config.bookshelf,
-                        themeMode = config.themeMode,
-                        tapPageArea = config.tapPageArea,
-                        cleanTypography = config.cleanTypography,
-                        fontType = config.fontType,
-                        readDurationSec = config.readDurationSec,
-                        readDays = config.readDays,
-                        readGoalMinutes = config.readGoalMinutes,
-                        readGoalCelebrated = config.readGoalCelebrated,
-                        lineSpacing = config.lineSpacing,
-                        letterSpacing = config.letterSpacing,
-                        screen = Screen.Home,
-                        isLoading = false,
-                        currentUri = null
-                    )
-                }
+            val lastUri = config.lastUri
+            val openLastBook = config.lastScreen == "reader" && lastUri != null
+            _uiState.update {
+                it.withLoadedConfig(
+                    config = config,
+                    // 上次停在阅读页：先进 Loading 并立刻装载；否则 0ms 极速进书架，不读大文件
+                    screen = if (openLastBook) Screen.Loading else Screen.Home,
+                    isLoading = openLastBook,
+                    currentUri = if (openLastBook) lastUri else null
+                )
             }
+            if (openLastBook && lastUri != null) loadFile(lastUri, config.lastCharOffset)
             startReadingTimer()
         }
     }
@@ -258,10 +255,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun updateAppBrightness(brightness: Float) {
         val target = if (brightness < 0f) -1.0f else brightness.coerceIn(0.01f, 1.0f)
-        _uiState.update { it.copy(appBrightness = target) }
-        viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveAppBrightness(appCtx, target)
-        }
+        prefs.persist({ it.copy(appBrightness = target) }) { DataStoreManager.saveAppBrightness(appCtx, target) }
     }
 
     /**
@@ -269,136 +263,31 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun updateAutoScrollSpeed(speed: Float) {
         val clamped = AutoScrollSpeed.clamp(speed)
-        _uiState.update { it.copy(autoScrollSpeed = clamped) }
-        viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveAutoScrollSpeed(appCtx, clamped)
-        }
+        prefs.persist({ it.copy(autoScrollSpeed = clamped) }) { DataStoreManager.saveAutoScrollSpeed(appCtx, clamped) }
     }
 
     /**
      * 更新自动滚屏运行状态
      */
-    fun setAutoScrolling(isScrolling: Boolean) {
-        _uiState.update { it.copy(isAutoScrolling = isScrolling) }
-    }
+    fun setAutoScrolling(isScrolling: Boolean) = prefs.local { it.copy(isAutoScrolling = isScrolling) }
 
     /**
      * 携最新阅读偏移返回阅读页：菜单各入口（上一章/下一章/加书签/开滚屏/返回）的
      * 统一出口。偏移取 VM 内的最新值，UI 层不再跨层读取 volatile 字段
      */
-    fun returnToReader() {
-        _uiState.update { it.copy(screen = Screen.Reader(reading.currentOffset, it.currentChapterIndex)) }
-    }
+    fun returnToReader() =
+        prefs.local { it.copy(screen = Screen.Reader(reading.currentOffset, it.currentChapterIndex)) }
 
     /**
      * 异步加载书籍文件：格式分流、章节索引、首章正文与相邻预热全部交给 `ReadingSession`
      */
-    fun loadFile(uri: Uri, initialOffset: Int = 0) {
-        // 重入即取消上一次装载：两本书的流程交错会互相覆盖会话状态
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            search.reset()
-            _uiState.update {
-                it.copy(
-                    isLoading = true,
-                    screen = Screen.Loading,
-                    currentUri = uri,
-                    errorMessage = null
-                )
-            }
-
-            // 净化排版态是本类持有的用户设置，装载前先交给会话，首章直接按该态排版
-            reading.setCleanTypography(_uiState.value.cleanTypography)
-
-            when (val opened = reading.open(uri, initialOffset)) {
-                is SessionOpenResult.Failed -> {
-                    // 装载失败是常规路径（文件被删、权限失效、DRM）：回书架并说明原因
-                    withContext(Dispatchers.IO) { DataStoreManager.clearReadingPosition(appCtx) }
-                    val shelf = withContext(Dispatchers.IO) { DataStoreManager.loadBookShelf(appCtx) }
-                    _uiState.update {
-                        it.copy(
-                            currentUri = null,
-                            chapters = emptyList(),
-                            currentChapterContent = null,
-                            isLoading = false,
-                            bookshelf = shelf,
-                            errorMessage = "读取小说失败: ${opened.reason}",
-                            screen = Screen.Home
-                        )
-                    }
-                }
-
-                is SessionOpenResult.Opened -> {
-                    syncReadingState()
-                    val chapterTitle = reading.state.value.content?.title.orEmpty()
-                        .ifEmpty { opened.title }
-                    val updatedShelf = withContext(Dispatchers.IO) {
-                        DataStoreManager.updateBookInShelf(
-                            appCtx, uri, reading.currentOffset, opened.totalChars, chapterTitle
-                        )
-                    }
-                    val loadedBookmarks = withContext(Dispatchers.IO) {
-                        DataStoreManager.loadBookmarks(appCtx, uri.toString())
-                    }
-                    _uiState.update {
-                        it.copy(
-                            fileName = opened.title,
-                            bookmarks = loadedBookmarks,
-                            isLoading = false,
-                            bookshelf = updatedShelf,
-                            screen = Screen.Reader(reading.currentOffset, reading.state.value.chapterIndex)
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * 会话快照 → 屏幕状态：阅读域字段只有这一个出口。
-     *
-     * 屏幕状态保持扁平是因为多个页面共用同一份 ReaderUiState（书架、菜单、搜索都读它），
-     * 但"这份数据从哪来"收敛在这里，阅读页不再需要知道章节正文是怎么装载的。
-     */
-    private fun syncReadingState() {
-        val session = reading.state.value
-        _uiState.update {
-            it.copy(
-                chapters = session.chapters,
-                currentChapterIndex = session.chapterIndex,
-                currentChapterContent = session.content,
-                fullTextLength = session.totalChars,
-                cleanTypography = session.cleanTypography,
-                fileName = session.title.ifEmpty { it.fileName }
-            )
-        }
-    }
+    fun loadFile(uri: Uri, initialOffset: Int = 0) = chapters.loadFile(uri, initialOffset)
 
     /**
      * 跳转到指定章节：优先命中预热缓存，未命中按需流式装载
      */
-    fun goToChapter(chapterIndex: Int, targetCharOffset: Int = -1) {
-        val state = _uiState.value
-        val uri = state.currentUri ?: return
-        if (chapterIndex !in state.chapters.indices) return
-
-        viewModelScope.launch {
-            if (!reading.goToChapter(chapterIndex, targetCharOffset)) {
-                // 正文读取失败不跳章：留在当前页，把原因透出给 UI
-                _uiState.update { it.copy(errorMessage = "读取章节正文失败") }
-                return@launch
-            }
-            syncReadingState()
-            val offset = reading.currentOffset
-            _uiState.update { it.copy(screen = Screen.Reader(offset, chapterIndex)) }
-
-            savePositionJob?.cancel()
-            savePositionJob = viewModelScope.launch(Dispatchers.IO) {
-                val title = reading.state.value.content?.title.orEmpty()
-                DataStoreManager.saveReadingPosition(appCtx, uri, offset, reading.totalChars, title)
-            }
-        }
-    }
+    fun goToChapter(chapterIndex: Int, targetCharOffset: Int = -1) =
+        chapters.goToChapter(chapterIndex, targetCharOffset)
 
     /**
      * 书内全文搜索：编排（有没有连续流 / 按章还是按切片 / 进度与取消语义）全部归
@@ -422,24 +311,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 切换至下一章
      */
-    fun goToNextChapter() {
-        val nextIdx = _uiState.value.currentChapterIndex + 1
-        if (nextIdx < _uiState.value.chapters.size) {
-            goToChapter(nextIdx)
-        } else {
-            setAutoScrolling(false)
-        }
-    }
+    fun goToNextChapter() = chapters.goToNextChapter()
 
     /**
      * 切换至上一章
      */
-    fun goToPrevChapter() {
-        val prevIdx = _uiState.value.currentChapterIndex - 1
-        if (prevIdx >= 0) {
-            goToChapter(prevIdx)
-        }
-    }
+    fun goToPrevChapter() = chapters.goToPrevChapter()
 
     /**
      * 从书架点击打开书籍
@@ -475,65 +352,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 静默更新阅读进度（只进行后台防抖持久化，绝对不触发 Compose 顶层重组）
      */
-    fun updateCharOffset(offset: Int) {
-        val state = _uiState.value
-        val uri = state.currentUri ?: return
-        reading.updateOffset(offset)
-        notifyUserActive()
-
-        savePositionJob?.cancel()
-        savePositionJob = viewModelScope.launch(Dispatchers.IO) {
-            kotlinx.coroutines.delay(500L)
-            val currentChapTitle = state.currentChapterContent?.title ?: ""
-            DataStoreManager.saveReadingPosition(
-                appCtx,
-                uri,
-                offset,
-                state.fullTextLength,
-                currentChapTitle
-            )
-        }
-    }
+    fun updateCharOffset(offset: Int) = chapters.updateCharOffset(offset)
 
     /**
      * 立即刷新保存当前位置（退出或切换页面时）
      */
-    fun flushReadingPosition() {
-        val state = _uiState.value
-        val uri = state.currentUri
-        val currentScreen = state.screen
-
-        if (currentScreen is Screen.Home) {
-            viewModelScope.launch(Dispatchers.IO) {
-                DataStoreManager.saveLastScreen(appCtx, "home")
-            }
-            return
-        }
-
-        if (uri == null) return
-        val offset = reading.currentOffset
-        savePositionJob?.cancel()
-        viewModelScope.launch(Dispatchers.IO) {
-            val currentChapTitle = state.currentChapterContent?.title ?: ""
-            DataStoreManager.saveReadingPosition(
-                appCtx,
-                uri,
-                offset,
-                state.fullTextLength,
-                currentChapTitle
-            )
-        }
-    }
+    fun flushReadingPosition() = chapters.flushReadingPosition()
 
     /**
      * 调整字号
      */
     fun updateFontSize(newSize: Int) {
         val clamped = newSize.coerceIn(10, 24)
-        _uiState.update { it.copy(fontSize = clamped) }
-        viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveFontSize(appCtx, clamped)
-        }
+        prefs.persist({ it.copy(fontSize = clamped) }) { DataStoreManager.saveFontSize(appCtx, clamped) }
     }
 
     /**
@@ -578,14 +409,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 搜索书架书籍
      */
-    fun setSearchQuery(query: String) {
-        _uiState.update { it.copy(searchQuery = query) }
-    }
+    fun setSearchQuery(query: String) = prefs.local { it.copy(searchQuery = query) }
 
     /** 书内搜索关键词（与搜索结果同生命周期，返回搜索页可微调重查） */
-    fun setBookSearchQuery(query: String) {
-        _uiState.update { it.copy(bookSearchQuery = query) }
-    }
+    fun setBookSearchQuery(query: String) = prefs.local { it.copy(bookSearchQuery = query) }
 
     /**
      * 保存当前阅读位置为书签
@@ -640,93 +467,24 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * 打开 RSVP 闪读模式
      */
-    fun openRsvp() {
-        _uiState.update { it.copy(screen = Screen.Rsvp) }
-    }
+    fun openRsvp() = prefs.local { it.copy(screen = Screen.Rsvp) }
 
     /**
      * 页面路由跳转
      */
-    fun navigateTo(screen: Screen) {
-        _uiState.update { it.copy(screen = screen) }
-    }
+    fun navigateTo(screen: Screen) = prefs.local { it.copy(screen = screen) }
 
     /**
      * 处理系统返回手势
      */
-    fun handleBack(): Boolean {
-        return when (_uiState.value.screen) {
-            is Screen.Menu, is Screen.ChapterList, is Screen.Rsvp -> {
-                returnToReader()
-                true
-            }
-            is Screen.Search -> {
-                // 离开搜索页即停扫：O(n) 后仍不应在阅读/书架页后台空转
-                cancelSearch()
-                returnToReader()
-                true
-            }
-            is Screen.WifiTransfer -> {
-                closeWifiTransfer()
-                true
-            }
-            is Screen.Reader -> {
-                closeBookInternal()
-                true
-            }
-            is Screen.Loading -> {
-                reading.close()
-                viewModelScope.launch(Dispatchers.IO) {
-                    DataStoreManager.saveLastScreen(appCtx, "home")
-                    val shelf = DataStoreManager.loadBookShelf(appCtx)
-                    _uiState.update {
-                        it.copy(
-                            currentUri = null,
-                            isLoading = false,
-                            bookshelf = shelf,
-                            screen = Screen.Home
-                        )
-                    }
-                }
-                true
-            }
-            is Screen.Home -> {
-                viewModelScope.launch(Dispatchers.IO) {
-                    DataStoreManager.saveLastScreen(appCtx, "home")
-                }
-                false
-            }
-        }
-    }
+    fun handleBack(): Boolean = navigation.handleBack()
 
     /**
      * 关闭当前书籍返回主页
      */
-    fun closeBook() = closeBookInternal()
+    fun closeBook() = navigation.closeBook()
 
-    /** 关书统一路径：落盘进度 + 取消预热/搜索 + 清空章节缓存 + 复位到书架 */
-    private fun closeBookInternal() {
-        flushReadingPosition()
-        search.reset()
-        reading.close()
-        viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveLastScreen(appCtx, "home")
-            val shelf = DataStoreManager.loadBookShelf(appCtx)
-            _uiState.update {
-                it.copy(
-                    currentUri = null,
-                    fileName = "",
-                    chapters = emptyList(),
-                    currentChapterIndex = 0,
-                    currentChapterContent = null,
-                    bookshelf = shelf,
-                    screen = Screen.Home
-                )
-            }
-        }
-    }
-
-    fun getCurrentReadingOffset(): Int = reading.currentOffset
+    fun getCurrentReadingOffset(): Int = chapters.currentReadingOffset()
 
     // RSVP 表冠调速阻尼器（算法见 RsvpRotaryDamper，测试覆盖 RsvpRotaryDamperTest）
     private val rsvpDamper = RsvpRotaryDamper()
@@ -779,10 +537,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun setReadGoalMinutes(minutes: Int) {
         val safe = if (ReadingStats.GOAL_OPTIONS_MINUTES.contains(minutes)) minutes else 0
-        _uiState.update { it.copy(readGoalMinutes = safe) }
-        viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.setReadGoalMinutes(appCtx, safe)
-        }
+        prefs.persist({ it.copy(readGoalMinutes = safe) }) { DataStoreManager.setReadGoalMinutes(appCtx, safe) }
     }
 
     /**
@@ -790,10 +545,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun setLineSpacing(mode: Int) {
         val safe = LineSpacingMode.fromValue(mode).value
-        _uiState.update { it.copy(lineSpacing = safe) }
-        viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveLineSpacing(appCtx, safe)
-        }
+        prefs.persist({ it.copy(lineSpacing = safe) }) { DataStoreManager.saveLineSpacing(appCtx, safe) }
     }
 
     /**
@@ -801,10 +553,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun setLetterSpacing(mode: Int) {
         val safe = LetterSpacingMode.fromValue(mode).value
-        _uiState.update { it.copy(letterSpacing = safe) }
-        viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveLetterSpacing(appCtx, safe)
-        }
+        prefs.persist({ it.copy(letterSpacing = safe) }) { DataStoreManager.saveLetterSpacing(appCtx, safe) }
     }
 
     // ── 书架备份与恢复 ──
@@ -851,10 +600,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setThemeMode(mode: ThemeMode) {
-        _uiState.update { it.copy(themeMode = mode.value) }
-        viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveThemeMode(appCtx, mode.value)
-        }
+        prefs.persist({ it.copy(themeMode = mode.value) }) { DataStoreManager.saveThemeMode(appCtx, mode.value) }
     }
 
     /**
@@ -865,10 +611,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setTapPageArea(area: TapPageArea) {
-        _uiState.update { it.copy(tapPageArea = area.value) }
-        viewModelScope.launch(Dispatchers.IO) {
-            DataStoreManager.saveTapPageArea(appCtx, area.value)
-        }
+        prefs.persist({ it.copy(tapPageArea = area.value) }) { DataStoreManager.saveTapPageArea(appCtx, area.value) }
     }
 
     /**
@@ -879,8 +622,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 使阅读控制界面被无过渡地直接踢掉。
      */
     fun setCleanTypography(enabled: Boolean) {
-        _uiState.update { it.copy(cleanTypography = enabled) }
-        viewModelScope.launch(Dispatchers.IO) {
+        prefs.persist({ it.copy(cleanTypography = enabled) }) {
             DataStoreManager.saveCleanTypography(appCtx, enabled)
         }
 
@@ -890,7 +632,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         cleanTypographyJob?.cancel()
         cleanTypographyJob = viewModelScope.launch {
             if (!reading.setCleanTypography(enabled)) return@launch
-            if (isActive && _uiState.value.cleanTypography == enabled) syncReadingState()
+            if (isActive && _uiState.value.cleanTypography == enabled) chapters.syncReadingState()
         }
     }
 
@@ -902,8 +644,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setFontType(type: FontType) {
-        _uiState.update { it.copy(fontType = type.value) }
-        viewModelScope.launch(Dispatchers.IO) {
+        prefs.persist({ it.copy(fontType = type.value) }) {
             CjkSerifFont.preload()
             DataStoreManager.saveFontType(appCtx, type.value)
         }
@@ -944,11 +685,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 否则 Wi-Fi 传书 socket 与阅读计时协程会越过阅读页继续存活
      */
     override fun onCleared() {
-        loadJob?.cancel()
+        chapters.cancelPendingLoad()
         reading.close()
         cleanTypographyJob?.cancel()
         search.cancel()
-        savePositionJob?.cancel()
+        chapters.cancelPendingSave()
         readingTimerJob?.cancel()
         transferController.close()
         RotaryHapticManager.shutdown()
