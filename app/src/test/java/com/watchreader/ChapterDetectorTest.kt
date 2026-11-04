@@ -142,10 +142,27 @@ class ChapterDetectorTest {
         val text = "第一章 长山\n" + longLine + "\n" + "收尾一行。"
         val (chapters, totalChars) = streamChapters(text, maxChapterChars = 60)
 
-        // 长行首字符在偏移 7，末字符在偏移 120：切点必须落在长行内部
-        val cutInsideLongLine = chapters.any { it.charOffset in 8..120 }
-        assertTrue("超长单行必须在封顶处被强切，实得切点 ${chapters.map { it.charOffset }}", cutInsideLongLine)
+        // 长行首字符在偏移 7：切点是「行首 + 封顶 60」= 67，而不是由 segmentStart(0) 推算的 60
+        // （60 是上一章起点加步长，落在行内第 53 字，系统性早于当前扫描位置）
+        assertEquals(listOf(0, 67), chapters.map { it.charOffset })
+        assertEquals("第一章 长山 · 1/2", chapters[0].title)
+        assertEquals("第一章 长山 · 2/2", chapters[1].title)
         assertEquals(totalChars, text.length)
+    }
+
+    @Test
+    fun testLongLineCutUsesScanPositionNotSegmentStart() {
+        // 行前先有短段：章节起点 0、短段「短行」后长行始于偏移 10。
+        // 切点必须是 10 + 60 = 70；旧实现按 segmentStart(0) + 60 得 60，切进长行第 50 字
+        val longLine = "无换行长句。".repeat(19) // 114 字
+        val text = "第一章 长山\n短行\n" + longLine + "\n收尾。"
+        val (chapters, totalChars) = streamChapters(text, maxChapterChars = 60)
+
+        assertEquals(listOf(0, 70), chapters.map { it.charOffset })
+        // 切点严格递增且落在文末之前：不产生空章、不丢字符
+        assertTrue(chapters.map { it.charOffset }.zipWithNext().all { (a, b) -> b > a })
+        assertTrue(chapters.last().charOffset < totalChars)
+        assertEquals(text.length, totalChars)
     }
 
     @Test

@@ -3,9 +3,12 @@ package com.watchreader
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.compose.runtime.Immutable
 import java.io.BufferedInputStream
 import java.io.BufferedReader
+import java.io.FileInputStream
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.Reader
 import java.nio.charset.Charset
@@ -163,6 +166,10 @@ fun detectFileEncoding(context: Context, uri: Uri): String {
 
 /**
  * 高性能按需流式读取单个章节的原始文本（仅读取当前章节对应的少量字符，内存占用 < 50KB）
+ *
+ * @return 章节原文切片；null 表示读取失败（无法打开流、编码不被支持、字符偏移超过文件长度
+ * 使 skip 无法推进）。失败时绝不退化为"从当前位置开始读"——错位正文会被当成本章内容排版
+ * 并写入阅读进度。空区间（end <= start）返回空串：空章与读失败是两件事。
  */
 fun readChapterChunkFromUri(
     context: Context,
@@ -170,77 +177,86 @@ fun readChapterChunkFromUri(
     encoding: String,
     startCharOffset: Int,
     endCharOffset: Int
-): String {
+): String? {
     if (endCharOffset <= startCharOffset || startCharOffset < 0) return ""
     val targetLen = endCharOffset - startCharOffset
     val safeEncoding = if (encoding.isNotEmpty()) encoding else "UTF-8"
 
     val cr = context.contentResolver
-    try {
+
+    // 主通道：直接用文件描述符定位（无 SAF 代理层，skip 成本最低）
+    val fromDescriptor = try {
         cr.openFileDescriptor(uri, "r")?.use { pfd ->
-            val fis = java.io.FileInputStream(pfd.fileDescriptor)
-            val channel = fis.channel
-
-            // 探测头部是否带 BOM
-            val byteBuf = java.nio.ByteBuffer.allocate(4)
-            val readBytes = channel.read(byteBuf)
-            val hasBom = readBytes >= 3 &&
-                    byteBuf.get(0) == 0xEF.toByte() &&
-                    byteBuf.get(1) == 0xBB.toByte() &&
-                    byteBuf.get(2) == 0xBF.toByte()
-
-            channel.position(if (hasBom && safeEncoding == "UTF-8") 3L else 0L)
-
-            val reader = BufferedReader(InputStreamReader(fis, Charset.forName(safeEncoding)), 32768)
-            var toSkip = startCharOffset.toLong()
-            while (toSkip > 0) {
-                val skipped = reader.skip(toSkip)
-                if (skipped <= 0) break
-                toSkip -= skipped
+            FileInputStream(pfd.fileDescriptor).use { fis ->
+                readChunk(fis, safeEncoding, startCharOffset, targetLen)
             }
-
-            val sb = StringBuilder(targetLen + 64)
-            val charBuf = CharArray(minOf(8192, targetLen))
-            var remaining = targetLen
-            while (remaining > 0) {
-                val toRead = minOf(charBuf.size, remaining)
-                val readChars = reader.read(charBuf, 0, toRead)
-                if (readChars == -1) break
-                sb.append(charBuf, 0, readChars)
-                remaining -= readChars
-            }
-            reader.close()
-            return sb.toString()
         }
-    } catch (_: Exception) {}
+    } catch (e: Exception) {
+        Log.w(TAG_FILE_HELPER, "主通道读取章节失败: $uri", e)
+        null
+    }
+    if (fromDescriptor != null) return fromDescriptor
 
-    // 回退流式通道
+    // 回退通道：部分 SAF 提供方不支持 openFileDescriptor
     return try {
         cr.openInputStream(uri)?.use { rawStream ->
-            val bufferedStream = BufferedInputStream(rawStream, 32768)
-            val reader = BufferedReader(InputStreamReader(bufferedStream, Charset.forName(safeEncoding)), 32768)
-            var toSkip = startCharOffset.toLong()
-            while (toSkip > 0) {
-                val skipped = reader.skip(toSkip)
-                if (skipped <= 0) break
-                toSkip -= skipped
-            }
-
-            val sb = StringBuilder(targetLen + 64)
-            val charBuf = CharArray(minOf(8192, targetLen))
-            var remaining = targetLen
-            while (remaining > 0) {
-                val toRead = minOf(charBuf.size, remaining)
-                val readChars = reader.read(charBuf, 0, toRead)
-                if (readChars == -1) break
-                sb.append(charBuf, 0, readChars)
-                remaining -= readChars
-            }
-            sb.toString()
-        } ?: ""
-    } catch (_: Exception) {
-        ""
+            readChunk(rawStream, safeEncoding, startCharOffset, targetLen)
+        }
+    } catch (e: Exception) {
+        Log.w(TAG_FILE_HELPER, "回退通道读取章节失败: $uri", e)
+        null
     }
+}
+
+private const val TAG_FILE_HELPER = "FileHelper"
+
+/**
+ * 从 [stream] 起点跳过 BOM 与 [startCharOffset] 个字符，再读 [targetLen] 个字符。
+ *
+ * BOM 不是正文字符：若把 3 字节 BOM 解码成 U+FEFF 计入偏移，全书字符偏移会整体错位一位。
+ * skip 无法推进（偏移超过文件长度、流不可定位）即返回 null，由调用方判定为读失败。
+ */
+private fun readChunk(
+    stream: InputStream,
+    encoding: String,
+    startCharOffset: Int,
+    targetLen: Int
+): String? {
+    val buffered = if (stream is BufferedInputStream) stream else BufferedInputStream(stream, 32768)
+    if (encoding.equals("UTF-8", ignoreCase = true)) {
+        buffered.mark(4)
+        val head = ByteArray(3)
+        var filled = 0
+        while (filled < 3) {
+            val n = buffered.read(head, filled, 3 - filled)
+            if (n <= 0) break
+            filled += n
+        }
+        val hasBom = filled == 3 &&
+                head[0] == 0xEF.toByte() && head[1] == 0xBB.toByte() && head[2] == 0xBF.toByte()
+        // 带 BOM：保持已消费 3 字节的位置；不带：回退到起点
+        if (!hasBom) buffered.reset()
+    }
+
+    val reader = BufferedReader(InputStreamReader(buffered, Charset.forName(encoding)), 32768)
+    var toSkip = startCharOffset.toLong()
+    while (toSkip > 0) {
+        val skipped = reader.skip(toSkip)
+        if (skipped <= 0) return null
+        toSkip -= skipped
+    }
+
+    val sb = StringBuilder(targetLen + 64)
+    val charBuf = CharArray(minOf(8192, targetLen))
+    var remaining = targetLen
+    while (remaining > 0) {
+        val toRead = minOf(charBuf.size, remaining)
+        val readChars = reader.read(charBuf, 0, toRead)
+        if (readChars == -1) break
+        sb.append(charBuf, 0, readChars)
+        remaining -= readChars
+    }
+    return sb.toString()
 }
 
 /**

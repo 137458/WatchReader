@@ -139,7 +139,14 @@ object BookTextConverter {
             }
             if (tmp.length() == 0L) throw BookFormatException("转换结果为空，文件可能已损坏")
             if (!tmp.renameTo(cache)) {
-                tmp.copyTo(cache, overwrite = true)
+                try {
+                    tmp.copyTo(cache, overwrite = true)
+                } catch (e: Exception) {
+                    // 覆盖写可能已截断旧缓存：宁可删掉残缺产物，也不能留下 length > 0 的
+                    // 半份正文被下次 "存在且非空即复用" 直接命中
+                    cache.delete()
+                    throw e
+                }
                 tmp.delete()
             }
         } catch (e: BookFormatException) {
@@ -360,6 +367,9 @@ object BookTextConverter {
     /**
      * 增量把 HTML 转为行式纯文本：块级标签与 <br> 输出换行，script/style/title 内容
      * 连同注释整体剔除，文本中的换行与制表符折叠为空格。逐字符状态机，内存占用恒定。
+     *
+     * 写入失败（磁盘满、缓存文件被回收）必须向上抛出：吞掉后转换会"成功"返回一个
+     * 截断但 length > 0 的缓存文件，下次打开将直接复用它，正文永久缺章。
      */
     internal class HtmlTextStripper(private val out: Appendable) {
 
@@ -496,10 +506,7 @@ object BookTextConverter {
 
         private fun emitNewline() {
             flushText()
-            try {
-                out.append('\n')
-            } catch (_: Exception) {
-            }
+            out.append('\n')
         }
 
         private fun appendSpace() {
@@ -509,10 +516,7 @@ object BookTextConverter {
         private fun flushText() {
             if (text.isEmpty()) return
             val decoded = EpubParser.decodeHtmlEntities(text.toString())
-            try {
-                out.append(decoded)
-            } catch (_: Exception) {
-            }
+            out.append(decoded)
             text.setLength(0)
         }
     }

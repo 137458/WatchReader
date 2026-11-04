@@ -95,10 +95,9 @@ class MainActivity : ComponentActivity() {
             try {
                 val json = contentResolver.openInputStream(uri)
                     ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-                // 先解析预览、确认浮层点头后才真正覆盖（误选旧备份不再立即回滚全书架）
-                if (viewModel.previewBackupRestore(json) == null) {
-                    viewModel.notifyBackupRestoreFailed()
-                }
+                // 先解析预览、确认浮层点头后才真正覆盖（误选旧备份不再立即回滚全书架）；
+                // 预览失败的具体原因由 previewBackupRestore 写入 errorMessage，此处不覆盖
+                viewModel.previewBackupRestore(json)
             } catch (_: Exception) {
                 viewModel.notifyBackupRestoreFailed()
             }
@@ -235,6 +234,12 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         viewModel.flushReadingPosition()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // 释放表冠微振后台线程（shutdown 幂等，且有振感请求时会按需重建）
+        RotaryHapticManager.shutdown()
     }
 
     /**

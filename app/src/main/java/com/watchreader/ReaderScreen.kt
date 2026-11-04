@@ -115,10 +115,9 @@ fun ReaderScreen(
     val keepScreenOnHandler = remember { Handler(Looper.getMainLooper()) }
 
     var isScrolling by remember { mutableStateOf(false) }
-    var currentReadingOffset by remember(initialCharOffset) { mutableStateOf(initialCharOffset) }
-    // AndroidView.update 需要读最新阅读位置，但它运行在组合的 apply 阶段：读 Compose 状态会让
-    // 本页在每次滚动事件后整页重组。改用普通字段交换，状态仅服务于下方已去重的进度指示。
-    val liveReadingOffset = remember(initialCharOffset) { intArrayOf(initialCharOffset) }
+    // 阅读位置唯一所有者：事件路径写入、组合读进度、update 阶段读 latestValue。
+    // 此前是"Compose 状态 + volatile 数组"两个字段各自被写一次，漏写一处即错位
+    val readingPosition = remember(initialCharOffset) { ReadingPosition(initialCharOffset) }
 
     // 弧形寻道：识别下沉至原生触摸管线，叠加层仅负责绘制（其全屏 pointerInput 曾吞掉正文全部触摸流）。
     // 三项渲染状态聚合于单个状态容器：高频 MOVE 写入经叠加层绘制阶段延迟读取，寻道全程零重组
@@ -156,7 +155,7 @@ fun ReaderScreen(
     DisposableEffect(Unit) {
         onDispose {
             scrollDebounceHandler.removeCallbacksAndMessages(null)
-            onCharOffsetChange(currentReadingOffset)
+            onCharOffsetChange(readingPosition.latestValue)
             onFlushReadingPosition()
             // 组合销毁必须停掉 Choreographer 帧循环与表冠惯性：引擎 doFrame 自续
             // postFrameCallback 且 release 无其他调用方，否则带滚屏返回书架后逐帧空转
@@ -570,8 +569,7 @@ fun ReaderScreen(
                             val chapterLen = content.endCharOffset - content.startCharOffset
                             content.startCharOffset + (chapterLen * scrollRatio).toInt()
                         }
-                        currentReadingOffset = currentOffset
-                        liveReadingOffset[0] = currentOffset
+                        readingPosition.update(currentOffset)
 
                         if (currentOffset != lastReportedOffset) {
                             lastReportedOffset = currentOffset
@@ -629,7 +627,7 @@ fun ReaderScreen(
                     bindChapterData(holder, chapterContent, fontSize, fontType, lineSpacing, letterSpacing, textColor, titleColor, onSurfaceVariantColor)
                     // 同一章内仅换排版（净化开关只替换正文、不跳页）时，实时偏移仍落在本章区间内，
                     // 以它为准才不会把阅读位置弹回本章最初打开的地方
-                    val liveOffset = liveReadingOffset[0]
+                    val liveOffset = readingPosition.latestValue
                     val sameChapter = lastChapterIndex == currentChapterIdx
                     val restoreOffset = if (sameChapter && chapterContent != null &&
                         liveOffset in chapterContent.startCharOffset..chapterContent.endCharOffset
@@ -691,7 +689,7 @@ fun ReaderScreen(
                 val progressPercent by remember(fullTextLength) {
                     derivedStateOf {
                         if (fullTextLength > 0) {
-                            ((currentReadingOffset.toFloat() / fullTextLength) * 100).toInt().coerceIn(0, 100)
+                            ((readingPosition.current.toFloat() / fullTextLength) * 100).toInt().coerceIn(0, 100)
                         } else 0
                     }
                 }

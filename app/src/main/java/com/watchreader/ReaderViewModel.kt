@@ -6,8 +6,10 @@ import android.net.Uri
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -119,6 +121,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     // 异步防抖持久化 Job
     private var savePositionJob: Job? = null
+    private var loadJob: Job? = null
     @Volatile
     private var currentReadingOffset: Int = 0
 
@@ -227,7 +230,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 调整自动滚屏速度
      */
     fun updateAutoScrollSpeed(speed: Float) {
-        val clamped = speed.coerceIn(15f, 200f)
+        val clamped = AutoScrollSpeed.clamp(speed)
         _uiState.update { it.copy(autoScrollSpeed = clamped) }
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.saveAutoScrollSpeed(appCtx, clamped)
@@ -253,7 +256,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 异步加载书籍文件（按需流式加载 + 内存即时释放）
      */
     fun loadFile(uri: Uri, initialOffset: Int = 0) {
-        viewModelScope.launch {
+        // 重入即取消上一次装载：两本书的流程交错会互相写 currentEncoding 与正文缓存
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             searchJob?.cancel()
             _uiState.update {
                 it.copy(
@@ -265,6 +270,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     searchResults = emptyList()
                 )
             }
+
+            // 读取源哨兵必须在加载入口统一清空：只在非 EPUB 分支重置，
+            // 会让上一本转换缓存的 URI 越界作用到 EPUB 上，正文串成上一本书
+            convertedFormat = null
+            convertedReadUri = null
 
             try {
                 val format = withContext(Dispatchers.IO) {
@@ -287,8 +297,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 } else {
                     fileName = getFileName(appCtx, uri)
                     val (scannedChapters, scannedLen) = withContext(Dispatchers.IO) {
-                        convertedFormat = null
-                        convertedReadUri = null
                         var readUri = uri
                         val encoding: String
                         if (format == BookFormat.TXT) {
@@ -318,7 +326,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
                 val chapterContent = withContext(Dispatchers.IO) {
                     getOrLoadChapterContent(uri, chapters, chapterIndex, fullLen)
-                }
+                } ?: throw IllegalStateException("章节正文读取失败")
                 val chapterTitle = chapterContent.title.ifEmpty { fileName }
                 currentReadingOffset = safeOffset
 
@@ -346,6 +354,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         screen = Screen.Reader(safeOffset, chapterIndex)
                     )
                 }
+            } catch (e: CancellationException) {
+                // 取消不是读取失败，交给取消方（loadJob 重入 / onCleared）处理
+                throw e
             } catch (e: Throwable) {
                 withContext(Dispatchers.IO) {
                     DataStoreManager.clearReadingPosition(appCtx)
@@ -426,6 +437,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             val chapterContent = chapterContentCache[chapterCacheKey(chapterIndex, state.cleanTypography)]
                 ?: withContext(Dispatchers.IO) {
                     getOrLoadChapterContent(uri, chapters, chapterIndex, totalLen)
+                } ?: run {
+                    // 正文读取失败不跳章：留在当前页，把原因透出给 UI
+                    _uiState.update { it.copy(errorMessage = "读取章节正文失败") }
+                    return@launch
                 }
             val offset = if (targetCharOffset >= 0) targetCharOffset else chapterContent.startCharOffset
             currentReadingOffset = offset
@@ -456,7 +471,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         chapters: List<Chapter>,
         chapterIndex: Int,
         totalChars: Int
-    ): ChapterContent {
+    ): ChapterContent? {
         val clean = _uiState.value.cleanTypography
         chapterContentCache[chapterCacheKey(chapterIndex, clean)]?.let { return it }
 
@@ -468,7 +483,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             convertedFormat != null -> loadChunkContent(uri, chapters, chapterIndex, totalChars)
             EpubParser.isEpubFile(appCtx, uri) -> EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters, clean)
             else -> loadChunkContent(uri, chapters, chapterIndex, totalChars)
-        }
+        } ?: return null
 
         chapterContentCache[chapterCacheKey(chapterIndex, clean)] = formatted
         return formatted
@@ -481,12 +496,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         chapterIndex: Int,
         totalChars: Int,
         clean: Boolean = _uiState.value.cleanTypography
-    ): ChapterContent {
+    ): ChapterContent? {
         val readUri = if (convertedFormat != null) resolveConvertedReadUri(originalUri) else originalUri
         val startOffset = chapters[chapterIndex].charOffset.coerceIn(0, totalChars)
         val endOffset = endOffsetOf(chapters, chapterIndex, totalChars).coerceIn(startOffset, totalChars)
 
+        // 读取失败（通道不可用/IO 异常）与"合法空章"必须分开：前者返回 null 由上层兜底，
+        // 后者仍是带空正文的有效章节，不能当成失败吞掉
         val rawChunk = readChapterChunkFromUri(appCtx, readUri, currentEncoding, startOffset, endOffset)
+            ?: return null
         return formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset, clean)
     }
 
@@ -557,7 +575,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         uri: Uri,
         chapters: List<Chapter>,
         chapterIndex: Int
-    ): ChapterContent = withContext(Dispatchers.IO) {
+    ): ChapterContent? = withContext(Dispatchers.IO) {
         val totalChars = _uiState.value.fullTextLength
         when {
             convertedFormat != null -> loadChunkContent(uri, chapters, chapterIndex, totalChars, clean = false)
@@ -662,7 +680,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         query: String,
         hits: MutableList<SearchHit>
     ) {
-        val content = loadChapterContentForSearch(uri, chapters, chapterIndex)
+        val content = loadChapterContentForSearch(uri, chapters, chapterIndex) ?: return
         appendSearchHits(content.formattedBody, content.rawParagraphStarts.firstOrNull() ?: 0, content.startCharOffset, chapters, chapterIndex, query, hits)
     }
 
@@ -944,7 +962,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val chap = state.currentChapterContent ?: return
         val currentOffset = currentReadingOffset
         val body = chap.formattedBody
-        val relOffset = (currentOffset - chap.startCharOffset).coerceIn(0, body.length)
+        // 正文坐标必须经排版映射换算：formattedBody 补过段首缩进并重排换行，
+        // 直接相减会落在错位的段落里，书签摘录与持久化位置一起漂移
+        val relOffset = ChapterOffsetMapper.rawToBody(
+            rawIndex = currentOffset - chap.startCharOffset,
+            bodyParaStarts = chap.bodyParagraphStarts,
+            rawParaStarts = chap.rawParagraphStarts,
+            bodyLength = body.length,
+            indentChars = chap.paragraphIndentChars
+        )
         val snippet = body.substring(relOffset, minOf(relOffset + 40, body.length)).trim().replace("\n", " ")
         val bm = Bookmark(
             chapterIndex = chap.chapterIndex,
@@ -1116,6 +1142,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private fun startReadingTimer() {
         readingTimerJob?.cancel()
         readingTimerJob = viewModelScope.launch(Dispatchers.IO) {
+            val persistBuffer = ReadingSecondsBuffer()
+            try {
             while (true) {
                 kotlinx.coroutines.delay(10_000L)
                 val state = _uiState.value
@@ -1123,7 +1151,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     val now = android.os.SystemClock.uptimeMillis()
                     if (now - lastActiveTime <= 60_000L) {
                         val todayKey = ReadingStats.dateKeyOf(System.currentTimeMillis())
-                        DataStoreManager.addReadingSeconds(appCtx, 10L, todayKey)
+                        // 每 10s 结算一次状态，落盘按 60s 攒批：DataStore 每次 edit
+                        // 都会重写整份 preferences（含书架 JSON），不能按秒写
+                        val flushSeconds = persistBuffer.record(10L)
+                        if (flushSeconds > 0L) {
+                            DataStoreManager.addReadingSeconds(appCtx, flushSeconds, todayKey)
+                        }
 
                         val newSec = state.readDurationSec + 10L
                         val newDays = ReadingStats.addSeconds(state.readDays, todayKey, 10L)
@@ -1140,6 +1173,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                                 readGoalCelebrated = celebrated
                             )
                         }
+                    }
+                }
+            }
+            } finally {
+                // Job 被取消（退出阅读/onCleared）时冲刷余量，不足 60s 的碎片不丢
+                val remainder = persistBuffer.drain()
+                if (remainder > 0L) {
+                    withContext(NonCancellable) {
+                        DataStoreManager.addReadingSeconds(
+                            appCtx,
+                            remainder,
+                            ReadingStats.dateKeyOf(System.currentTimeMillis())
+                        )
                     }
                 }
             }
@@ -1198,7 +1244,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 解析备份供确认浮层预览：合法则记录原文并返回书目数，非法返回 null（文件不是有效备份）
      */
     fun previewBackupRestore(json: String): Int? {
-        val payload = BackupCodec.decode(json) ?: return null
+        val payload = when (val decoded = BackupCodec.decodeResult(json)) {
+            is BackupCodec.DecodeResult.Success -> decoded.payload
+            is BackupCodec.DecodeResult.Failure -> {
+                // 失败原因逐码透出：结构损坏与「类型/版本不符」是两种完全不同的误操作
+                _uiState.update { it.copy(errorMessage = "恢复失败：${decoded.message}") }
+                return null
+            }
+        }
         pendingRestoreJson = json
         _uiState.update { it.copy(pendingRestoreCount = payload.shelf.size) }
         return payload.shelf.size
@@ -1220,7 +1273,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    suspend fun restoreBackup(json: String): Boolean {        val count = withContext(Dispatchers.IO) { DataStoreManager.restoreBackup(appCtx, json) }
+    suspend fun restoreBackup(json: String): Boolean {
+        val count = withContext(Dispatchers.IO) { DataStoreManager.restoreBackup(appCtx, json) }
         if (count < 0) return false
         val config = withContext(Dispatchers.IO) { DataStoreManager.loadInitialConfig(appCtx) }
         _uiState.update {
@@ -1237,6 +1291,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 readDays = config.readDays,
                 readGoalMinutes = config.readGoalMinutes,
                 readGoalCelebrated = config.readGoalCelebrated,
+                lineSpacing = config.lineSpacing,
+                letterSpacing = config.letterSpacing,
                 infoMessage = "已恢复 ${count} 本书与全部设置"
             )
         }
@@ -1315,7 +1371,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             val chapterContent = chapterContentCache[chapterCacheKey(chapterIndex, enabled)]
                 ?: withContext(Dispatchers.IO) {
                     getOrLoadChapterContent(uri, state.chapters, chapterIndex, state.fullTextLength)
-                }
+                } ?: return@launch
             if (isActive && _uiState.value.cleanTypography == enabled) {
                 _uiState.update { it.copy(currentChapterContent = chapterContent) }
                 prefetchAdjacentChapters(uri, state.chapters, chapterIndex, state.fullTextLength)
@@ -1366,5 +1422,23 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
         }
+    }
+
+    /**
+     * 生命周期收口：ViewModel 销毁时必须停掉派生 Job 与服务端，
+     * 否则 Wi-Fi 传书 socket 与阅读计时协程会越过阅读页继续存活
+     */
+    override fun onCleared() {
+        loadJob?.cancel()
+        prefetchJob?.cancel()
+        cleanTypographyJob?.cancel()
+        searchJob?.cancel()
+        savePositionJob?.cancel()
+        wifiCollectJob?.cancel()
+        readingTimerJob?.cancel()
+        wifiServer?.stop()
+        wifiServer = null
+        RotaryHapticManager.shutdown()
+        super.onCleared()
     }
 }

@@ -135,10 +135,16 @@ fun detectChaptersFromInputStream(
                     lineCharCount++
                     currentCharOffset++
                     // 单行自身每满一个封顶步长强切一次（只切真正的超长行，
-                    // 短行文本仍由换行分支吸附到段首，避免切进句中）
+                    // 短行文本仍由换行分支吸附到段首，避免切进句中）。
+                    // 切点必须由当前扫描位置推算：segmentStart 是上一章/上一切点的位置，
+                    // 可能落后于本行行首（行前还有若干未封顶的短段时），用 segmentStart + 步长
+                    // 会算出比当前扫描位置更早的切点，导致切点系统性提前、分节长度失真。
                     if (maxChapterChars > 0 && lineCharCount % maxChapterChars == 0) {
-                        breakOffsets.add(segmentStart + maxChapterChars)
-                        segmentStart += maxChapterChars
+                        val cutOffset = lineStartCharOffset + lineCharCount
+                        if (cutOffset > segmentStart) {
+                            breakOffsets.add(cutOffset)
+                            segmentStart = cutOffset
+                        }
                     }
                 }
             }

@@ -76,25 +76,15 @@ object EpubParser {
 
     /**
      * 判断指定 URI 是否为 EPUB 文件
+     *
+     * 委托 [BookTextConverter.resolveFormat]：扩展名与头部魔数只在这里有一份判定口径，
+     * 调用方与书架徽标、转换入口的结论不会再出现分歧。
+     *
+     * TODO(波次二)：ReaderViewModel 仍在三处各自判定格式（:480 / :575 / :609），
+     * 待收口到 resolveFormat 单一入口后本函数只作为 EPUB 语义糖。
      */
-    fun isEpubFile(context: Context, uri: Uri): Boolean {
-        val fileName = getFileName(context, uri)
-        if (fileName.endsWith(".epub", ignoreCase = true)) {
-            return true
-        }
-
-        // 检查文件头魔数 (PK\x03\x04)
-        return try {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                val header = ByteArray(4)
-                val read = input.read(header)
-                read == 4 && header[0] == 0x50.toByte() && header[1] == 0x4B.toByte() &&
-                        header[2] == 0x03.toByte() && header[3] == 0x04.toByte()
-            } ?: false
-        } catch (_: Exception) {
-            false
-        }
-    }
+    fun isEpubFile(context: Context, uri: Uri): Boolean =
+        BookTextConverter.resolveFormat(context, uri) == BookFormat.EPUB
 
     /**
      * 智能净化书名（去除 .epub, .txt 等常见文件后缀）
@@ -362,6 +352,12 @@ object EpubParser {
 
     /**
      * 按章节索引读取单章正文内容并排版（命中 LRU 内存缓存 0ms 直出）
+     *
+     * @return 读取失败返回 null（章节索引越界、zip 条目缺失、解压/流读取异常）。
+     * 失败绝不返回占位正文：占位文本会被当成正常正文写入 LRU 缓存与阅读进度，
+     * 上层也就无法把"读取失败"呈现成可重试的错误态，而会当作"本章确实没有内容"。
+     * 条目存在但正文为空（插图页等）属于"空章"，返回 formattedBody 为空的 ChapterContent，
+     * 与 null（读失败）区分开。
      */
     fun readChapterContent(
         context: Context,
@@ -369,10 +365,8 @@ object EpubParser {
         chapterIndex: Int,
         chapters: List<Chapter>,
         cleanTypography: Boolean = true
-    ): ChapterContent {
-        if (chapters.isEmpty() || chapterIndex !in chapters.indices) {
-            return ChapterContent(0, "", "", 0, 0, false, "", false, "")
-        }
+    ): ChapterContent? {
+        if (chapters.isEmpty() || chapterIndex !in chapters.indices) return null
 
         val fileSize = getFileSize(context, uri)
         val cacheKey = "${uri}_${fileSize}"
@@ -389,30 +383,39 @@ object EpubParser {
             nextEntry.anchor
         } else ""
 
-        var rawHtml = ""
-        if (currentEntry != null) {
-            val localFile = getFileForUri(context, uri)
-            if (localFile != null && localFile.exists() && localFile.canRead()) {
-                try {
-                    ZipFile(localFile).use { zf ->
-                        val entry = findZipEntry(zf, currentEntry.entryPath)
-                        if (entry != null) {
-                            rawHtml = zf.getInputStream(entry).bufferedReader(Charsets.UTF_8).readText()
-                        }
+        val entryPath = currentEntry?.entryPath ?: return null
+        // null 表示"没取到该条目"（缺失/解压失败），与"取到但正文为空"（""）区分：
+        // 前者是读失败，后者是插图页这类合法的空章
+        var rawHtml: String? = null
+
+        val localFile = getFileForUri(context, uri)
+        if (localFile != null && localFile.exists() && localFile.canRead()) {
+            try {
+                ZipFile(localFile).use { zf ->
+                    val entry = findZipEntry(zf, entryPath)
+                    if (entry != null) {
+                        rawHtml = zf.getInputStream(entry).bufferedReader(Charsets.UTF_8).readText()
                     }
-                } catch (_: Exception) {}
-            }
-
-            if (rawHtml.isEmpty()) {
-                rawHtml = readZipEntryString({ context.contentResolver.openInputStream(uri)!! }, currentEntry.entryPath) ?: ""
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "ZipFile 读取章节失败: $entryPath", e)
             }
         }
 
-        val plainBody = if (rawHtml.isNotEmpty()) {
-            extractFormattedTextFromHtml(rawHtml, currentEntry?.anchor ?: "", nextAnchor, cleanTypography)
-        } else {
-            "（本章节无正文内容）"
+        if (rawHtml == null) {
+            // 回退到流式 zip 读取（部分 SAF 提供方无法给出可直接打开的本地文件路径）
+            val stream = try {
+                context.contentResolver.openInputStream(uri)
+            } catch (e: Exception) {
+                Log.w(TAG, "无法打开 EPUB 流: $uri", e)
+                null
+            } ?: return null
+            rawHtml = readZipEntryString({ stream }, entryPath) ?: return null
         }
+
+        // rawHtml 在上面的 lambda 里赋值，Kotlin 不做智能转换：显式收敛为非空值
+        val html = rawHtml ?: return null
+        val plainBody = extractFormattedTextFromHtml(html, currentEntry?.anchor ?: "", nextAnchor, cleanTypography)
 
         val startOffset = currentChap.charOffset
         val endOffset = if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else metadata.totalChars
