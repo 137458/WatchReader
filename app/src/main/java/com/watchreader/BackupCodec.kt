@@ -55,20 +55,20 @@ object BackupCodec {
         root.put("version", VERSION)
         root.put("exportedAt", exportedAtMs)
         // 书架条目复用书架持久化的同一套键名，解码与恢复单一路径
-        root.put("shelf", JSONArray(DataStoreManager.serializeBookShelf(payload.shelf)))
+        root.put("shelf", JSONArray(ShelfStore.encodeShelf(payload.shelf)))
         val bookmarkArray = JSONArray()
         for ((uri, list) in payload.bookmarks) {
             if (list.isEmpty()) continue
             bookmarkArray.put(
                 JSONObject()
                     .put("uri", uri)
-                    .put("list", JSONArray(DataStoreManager.serializeBookmarks(list)))
+                    .put("list", JSONArray(BookmarkStore.encode(list)))
             )
         }
         root.put("bookmarks", bookmarkArray)
         root.put("stats", JSONObject()
             .put("totalSec", payload.totalReadSec)
-            .put("days", JSONObject(DataStoreManager.serializeReadDays(payload.readDays)))
+            .put("days", JSONObject(ReadingStatsStore.encodeDays(payload.readDays)))
         )
         root.put("settings", JSONObject()
             .put("fontSize", payload.fontSize)
@@ -109,7 +109,7 @@ object BackupCodec {
             return DecodeResult.Failure(ERROR_CORRUPT_SHELF, "书架字段不是数组")
         }
         val shelfArray = rawShelf as? JSONArray
-        val shelfSnapshot = DataStoreManager.parseBookShelfSnapshot(shelfArray?.toString())
+        val shelfSnapshot = ShelfStore.decodeShelf(shelfArray?.toString())
         if (shelfArray != null && shelfArray.length() > 0 && shelfSnapshot.items.isEmpty()) {
             return DecodeResult.Failure(ERROR_CORRUPT_SHELF, "书架条目全部无法解析")
         }
@@ -129,7 +129,7 @@ object BackupCodec {
                 if (rawList != null && rawList !== JSONObject.NULL && rawList !is JSONArray) {
                     return DecodeResult.Failure(ERROR_CORRUPT_BOOKMARKS, "书签列表不是数组")
                 }
-                bookmarks[uri] = DataStoreManager.parseBookmarks((rawList as? JSONArray)?.toString())
+                bookmarks[uri] = BookmarkStore.decode((rawList as? JSONArray)?.toString())
             }
         }
 

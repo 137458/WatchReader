@@ -96,12 +96,12 @@ class ReadingStatsTest {
     @Test
     fun testReadDaysJsonRoundtrip() {
         val days = mapOf("2026-10-03" to 5400L, "2026-10-04" to 600L)
-        val json = DataStoreManager.serializeReadDays(days)
-        assertEquals(days, DataStoreManager.parseReadDays(json))
+        val json = ReadingStatsStore.encodeDays(days)
+        assertEquals(days, ReadingStatsStore.decodeDays(json))
         // 脏数据容错：返回空表而非抛异常
-        assertEquals(emptyMap<String, Long>(), DataStoreManager.parseReadDays(null))
-        assertEquals(emptyMap<String, Long>(), DataStoreManager.parseReadDays(""))
-        assertEquals(emptyMap<String, Long>(), DataStoreManager.parseReadDays("not-json"))
+        assertEquals(emptyMap<String, Long>(), ReadingStatsStore.decodeDays(null))
+        assertEquals(emptyMap<String, Long>(), ReadingStatsStore.decodeDays(""))
+        assertEquals(emptyMap<String, Long>(), ReadingStatsStore.decodeDays("not-json"))
     }
 
     @Test

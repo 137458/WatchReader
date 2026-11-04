@@ -14,8 +14,8 @@ class BookmarksAndPinTest {
             BookItem("content://2", "已置顶书", 0, 1000, "第一章", 500L, isPinned = true)
         )
 
-        val json = DataStoreManager.serializeBookShelf(books)
-        val parsed = DataStoreManager.parseBookShelf(json)
+        val json = ShelfStore.encodeShelf(books)
+        val parsed = ShelfStore.decodeShelf(json).items
 
         assertEquals(2, parsed.size)
         // 置顶的书籍应该排在最前面

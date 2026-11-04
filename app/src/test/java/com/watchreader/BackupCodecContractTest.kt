@@ -7,7 +7,7 @@ import org.junit.Test
 
 /**
  * 备份解码契约：结构损坏的备份必须拒绝，而不是解出「空书架」让恢复流程把用户数据洗掉。
- * 旧实现 `DataStoreManager.parseBookShelf(root.optJSONArray("shelf")?.toString())`：
+ * 旧实现 `ShelfStore.decodeShelf(root.optJSONArray("shelf")?.toString()).items` 的等价先行版本：
  * shelf 是字符串/全坏条目时 optJSONArray 返回 null → 空列表 → decode 成功 → restore 写入空书架。
  */
 class BackupCodecContractTest {
