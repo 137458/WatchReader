@@ -40,6 +40,9 @@ import kotlin.math.abs
 
 /**
  * 固定 5 节点 View 持有器 + 自动滚屏引擎（永久复用，零 View 分配与销毁）
+ *
+ * 同时是 [ReaderPaneStylePort] 的 Android 适配器：下发哪些属性由 [ReaderPaneStyles] 决定，
+ * 本类只负责把属性落到具体 View / Drawable 上。
  */
 private class ReaderViewHolder(
     val scrollView: ScrollView,
@@ -53,24 +56,61 @@ private class ReaderViewHolder(
     val endTv: TextView,
     var autoScrollEngine: AutoScrollEngine? = null,
     var currentContent: ChapterContent? = null
-) {
+) : ReaderPaneStylePort {
+
     // 卡片背景复用池：滚动期间 ReaderScreen 高频重组，update 阶段仅重着色不再新建 GradientDrawable
     var prevBackground: GradientDrawable? = null
     var nextBackground: GradientDrawable? = null
-    var appliedChromeColor: Int = 0
 
-    // update 阶段守卫状态：chapters 为不稳定 List，阅读页无法跳过父级重组，update 每次都会执行；
-    // TextView 的 setTextSize / setTextColor / typeface 各自都会经 checkForRelayout() 同步重建
-    // 整章 StaticLayout，不加逐项守卫会把"阅读时长 10s tick / 底部百分比整数跳变"这类低频重组
-    // 转化为全 ScrollView 重排版（滚动掉帧源），也让一次字体切换重复排版三遍
-    var appliedBgColor: Int = Int.MIN_VALUE
-    var appliedFontSize: Int = -1
-    var appliedBodyTypeface: Typeface? = null
-    var appliedTitleColor: Int = Int.MIN_VALUE
-    var appliedBodyColor: Int = Int.MIN_VALUE
-    var appliedMetaColor: Int = Int.MIN_VALUE
-    var appliedLineSpacing: Int = Int.MIN_VALUE
-    var appliedLetterSpacing: Int = Int.MIN_VALUE
+    // 已应用外观（唯一守卫状态）：chapters 为不稳定 List，阅读页无法跳过父级重组，update 每次都会执行；
+    // TextView 的 setTextSize / setTextColor / typeface 各自都会经 checkForRelayout() 同步重建整章
+    // StaticLayout，没有守卫会把"阅读时长 10s tick / 底部百分比整数跳变"这类低频重组转化为
+    // 全 ScrollView 重排版（滚动掉帧源），也让一次字体切换重复排版三遍
+    var appliedAppearance: ReaderPaneAppearance? = null
+
+    override fun setBackgroundArgb(argb: Int) {
+        scrollView.setBackgroundColor(argb)
+    }
+
+    override fun setChromeArgb(argb: Int) {
+        prevBackground?.setColor(argb)
+        nextBackground?.setColor(argb)
+    }
+
+    override fun setBodyColorArgb(argb: Int) {
+        bodyTv.setTextColor(argb)
+    }
+
+    override fun setTitleColorArgb(argb: Int) {
+        titleTv.setTextColor(argb)
+        nextTv.setTextColor(argb)
+    }
+
+    override fun setMetaColorArgb(argb: Int) {
+        prevTv.setTextColor(argb)
+        endTv.setTextColor(argb)
+    }
+
+    override fun setTitleTextSizeSp(sp: Float) {
+        titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+    }
+
+    override fun setBodyTextSizeSp(sp: Float) {
+        bodyTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp)
+    }
+
+    override fun setLineSpacingMultiplier(multiplier: Float) {
+        bodyTv.setLineSpacing(0f, multiplier)
+    }
+
+    override fun setLetterSpacingEm(em: Float) {
+        bodyTv.letterSpacing = em
+    }
+
+    override fun setBodyTypefaceToken(token: Any?) {
+        // 端口以不透明句柄表达字面，避免纯计算模块依赖 android.graphics
+        bodyTv.typeface = token as? Typeface ?: Typeface.SANS_SERIF
+    }
 }
 
 /**
@@ -261,6 +301,19 @@ private fun ReaderPane(
     val surfaceVariantColor = colorScheme.surfaceContainerHigh.toArgb()
     val onSurfaceVariantColor = colorScheme.onSurfaceVariant.toArgb()
 
+    // 当前排版偏好的目标外观：工厂首绑与每次 update 共用同一份构造（差量判定见 ReaderPaneStyles）
+    val targetAppearance = ReaderPaneAppearance(
+        backgroundArgb = bgColor,
+        chromeArgb = surfaceVariantColor,
+        bodyColorArgb = textColor,
+        titleColorArgb = titleColor,
+        metaColorArgb = onSurfaceVariantColor,
+        fontSizeSp = fontSize,
+        lineSpacingMultiplier = LineSpacingMode.fromValue(lineSpacing).multiplier,
+        letterSpacingEm = LetterSpacingMode.fromValue(letterSpacing).em,
+        bodyTypefaceToken = bodyTypefaceFor(fontType)
+    )
+
     val currentChapterTitle = chapterContent?.title ?: ""
 
     Box(
@@ -420,7 +473,18 @@ private fun ReaderPane(
                 )
                 holder.prevBackground = prevBackgroundRef
                 holder.nextBackground = nextBackgroundRef
-                holder.appliedChromeColor = surfaceVariantColor
+                // 工厂已直接写到 View 上的初值：声明为"已应用"，首次绑定只补下发工厂未设置的项
+                // （行距档位、字距与正文字面），避免无变化时仍然重建整章 StaticLayout
+                val factoryAppearance = ReaderPaneAppearance(
+                    backgroundArgb = bgColor,
+                    chromeArgb = surfaceVariantColor,
+                    bodyColorArgb = textColor,
+                    titleColorArgb = titleColor,
+                    metaColorArgb = onSurfaceVariantColor,
+                    fontSizeSp = fontSize,
+                    lineSpacingMultiplier = LineSpacingMode.STANDARD.multiplier
+                )
+                holder.appliedAppearance = factoryAppearance
                 scrollView.tag = holder
 
                 // 手势交互：支持上下/左右点按翻页、长按呼出菜单、自动滚屏时单击暂停。
@@ -562,8 +626,9 @@ private fun ReaderPane(
                     false
                 }
 
-                // 首次绑定数据
-                bindChapterData(holder, chapterContent, fontSize, fontType, lineSpacing, letterSpacing, textColor, titleColor, onSurfaceVariantColor)
+                // 首次绑定数据：先落文本再下发外观，与收口前的排版顺序一致（文本一次排版 + 外观差异一次）
+                bindChapterData(holder, chapterContent)
+                applyChapterStyles(holder, targetAppearance)
 
                 // 首次布局完成后精准恢复阅读位置并请求焦点
                 scrollView.post {
@@ -630,20 +695,6 @@ private fun ReaderPane(
                     if (covered) CrownScrollHelper.abortFling(scrollView)
                 }
 
-                if (holder.appliedBgColor != bgColor) {
-                    holder.appliedBgColor = bgColor
-                    scrollView.setBackgroundColor(bgColor)
-                }
-
-                // 卡片背景零分配复用：仅主题色真正变化时重着色。
-                // 此前每次重组都新建 GradientDrawable 并重设 background，
-                // 滚动期间（offset 状态逐帧推进）等于逐帧分配 + 双 View 失效，是滚动卡顿主源之一
-                if (holder.appliedChromeColor != surfaceVariantColor) {
-                    holder.appliedChromeColor = surfaceVariantColor
-                    holder.prevBackground?.setColor(surfaceVariantColor)
-                    holder.nextBackground?.setColor(surfaceVariantColor)
-                }
-
                 // 同步自动滚屏引擎状态（被覆盖时挂起，避免不可见状态下空转滚动）
                 holder.autoScrollEngine?.let { engine ->
                     engine.speedPxPerSec = autoScrollSpeed
@@ -660,7 +711,9 @@ private fun ReaderPane(
                 val currentChapterIdx = chapterContent?.chapterIndex
 
                 if (lastChapterIndex != currentChapterIdx || holder.currentContent != chapterContent) {
-                    bindChapterData(holder, chapterContent, fontSize, fontType, lineSpacing, letterSpacing, textColor, titleColor, onSurfaceVariantColor)
+                    bindChapterData(holder, chapterContent)
+                    // 样式必须先于位置恢复下发：换章与换排版同时发生时，滚动位置要按新排版度量
+                    applyChapterStyles(holder, targetAppearance)
                     // 同一章内仅换排版（净化开关只替换正文、不跳页）时，实时偏移仍落在本章区间内，
                     // 以它为准才不会把阅读位置弹回本章最初打开的地方
                     val liveOffset = readingPosition.latestValue
@@ -672,14 +725,11 @@ private fun ReaderPane(
                     if (isAutoScrolling) {
                         holder.autoScrollEngine?.start()
                     }
-                } else if (holder.appliedFontSize != fontSize ||
-                    holder.appliedBodyTypeface !== bodyTypefaceFor(fontType) ||
-                    holder.appliedTitleColor != titleColor || holder.appliedBodyColor != textColor ||
-                    holder.appliedMetaColor != onSurfaceVariantColor ||
-                    holder.appliedLineSpacing != lineSpacing || holder.appliedLetterSpacing != letterSpacing
-                ) {
-                    applyChapterStyles(holder, fontSize, fontType, lineSpacing, letterSpacing, textColor, titleColor, onSurfaceVariantColor)
                 }
+                // 外观差量下发：颜色 / 字号 / 行距 / 字距 / 字面全走同一份已应用快照，无变化时零 View 调用
+                // （卡片背景仅重着色不重建 GradientDrawable）。覆盖"同章内仅换排版"这条路径，
+                // 换章分支已在恢复位置前下发过，此处为空操作
+                applyChapterStyles(holder, targetAppearance)
             }
         )
 
@@ -772,86 +822,17 @@ private fun ReaderPane(
 }
 
 /**
- * 字体档位 → 正文目标字面。
- *
- * 衬线档必须走中文宋体字面：本 ROM 的 serif 族不含中文字形、zh-Hans 回退又被换成黑体，
- * Typeface.SERIF 下汉字与黑体同形（详见 CjkSerifFont）。此处只读取已解析结果，
- * 绝不在排版路径上同步加载字面；预热完成后的下一次重组会自动改用真正的宋体字面。
+ * 外观差量下发（见 [ReaderPaneStyles]）：只在值真正变化时触碰对应属性，
+ * 避免同一帧内重复整章排版
  */
-private fun bodyTypefaceFor(fontType: Int): Typeface =
-    if (FontType.fromValue(fontType) == FontType.SERIF) {
-        CjkSerifFont.resolvedOrNull() ?: Typeface.SERIF
-    } else {
-        Typeface.SANS_SERIF
-    }
-
-/**
- * 正文样式逐项下发：只在值真正变化时触碰对应属性，避免同一帧内重复整章排版
- */
-private fun applyChapterStyles(
-    holder: ReaderViewHolder,
-    fontSize: Int,
-    fontType: Int,
-    lineSpacing: Int,
-    letterSpacing: Int,
-    textColor: Int,
-    titleColor: Int,
-    onSurfaceVariantColor: Int
-) {
-    if (holder.appliedFontSize != fontSize) {
-        holder.appliedFontSize = fontSize
-        holder.titleTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSize + 2).toFloat())
-        holder.bodyTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.toFloat())
-    }
-
-    val bodyTypeface = bodyTypefaceFor(fontType)
-    if (holder.appliedBodyTypeface !== bodyTypeface) {
-        holder.appliedBodyTypeface = bodyTypeface
-        holder.bodyTv.typeface = bodyTypeface
-    }
-
-    if (holder.appliedTitleColor != titleColor) {
-        holder.appliedTitleColor = titleColor
-        holder.titleTv.setTextColor(titleColor)
-        holder.nextTv.setTextColor(titleColor)
-    }
-
-    if (holder.appliedBodyColor != textColor) {
-        holder.appliedBodyColor = textColor
-        holder.bodyTv.setTextColor(textColor)
-    }
-
-    if (holder.appliedMetaColor != onSurfaceVariantColor) {
-        holder.appliedMetaColor = onSurfaceVariantColor
-        holder.prevTv.setTextColor(onSurfaceVariantColor)
-        holder.endTv.setTextColor(onSurfaceVariantColor)
-    }
-
-    if (holder.appliedLineSpacing != lineSpacing) {
-        holder.appliedLineSpacing = lineSpacing
-        holder.bodyTv.setLineSpacing(0f, LineSpacingMode.fromValue(lineSpacing).multiplier)
-    }
-
-    if (holder.appliedLetterSpacing != letterSpacing) {
-        holder.appliedLetterSpacing = letterSpacing
-        holder.bodyTv.letterSpacing = LetterSpacingMode.fromValue(letterSpacing).em
-    }
+private fun applyChapterStyles(holder: ReaderViewHolder, target: ReaderPaneAppearance) {
+    holder.appliedAppearance = ReaderPaneStyles.apply(holder, holder.appliedAppearance, target)
 }
 
 /**
  * 极速数据绑定（微秒级直接属性赋值，0 对象分配）
  */
-private fun bindChapterData(
-    holder: ReaderViewHolder,
-    content: ChapterContent?,
-    fontSize: Int,
-    fontType: Int,
-    lineSpacing: Int,
-    letterSpacing: Int,
-    textColor: Int,
-    titleColor: Int,
-    onSurfaceVariantColor: Int
-) {
+private fun bindChapterData(holder: ReaderViewHolder, content: ChapterContent?) {
     holder.currentContent = content
     if (content == null) {
         holder.container.tag = null
@@ -879,7 +860,7 @@ private fun bindChapterData(
     holder.titleTv.setPadding(0, topPad, 0, (10 * density).toInt())
     holder.titleTv.text = content.title
 
-    // 3. 章节正文（单 TextLayout 一体排版；样式经逐项下发，避免同帧重复整章排版）
+    // 3. 章节正文（单 TextLayout 一体排版；样式由 applyChapterStyles 差量下发）
     holder.bodyTv.text = content.formattedBody
 
     // 4. 下一章 / 全书完
@@ -891,8 +872,6 @@ private fun bindChapterData(
         holder.nextBtn.visibility = View.GONE
         holder.endTv.visibility = View.VISIBLE
     }
-
-    applyChapterStyles(holder, fontSize, fontType, lineSpacing, letterSpacing, textColor, titleColor, onSurfaceVariantColor)
 }
 
 /**
@@ -905,10 +884,16 @@ private fun restoreScrollPosition(
     initialCharOffset: Int
 ) {
     if (content == null) return
+    val maxScrollY = ScrollMetrics.maxScrollY(scrollView)
     if (initialCharOffset <= content.startCharOffset) {
-        val density = scrollView.resources.displayMetrics.density
-        val targetTop = maxOf(0, holder.titleTv.top - (6 * density).toInt())
-        scrollView.scrollTo(0, targetTop)
+        val sixDpPx = (6 * scrollView.resources.displayMetrics.density).toInt()
+        scrollView.scrollTo(
+            0,
+            ReaderScrollMath.clampScrollY(
+                ReaderScrollMath.topAnchorScrollY(holder.titleTv.top, sixDpPx),
+                maxScrollY
+            )
+        )
         return
     }
 
@@ -923,17 +908,24 @@ private fun restoreScrollPosition(
             indentChars = content.paragraphIndentChars
         )
         val line = layout.getLineForOffset(charOffsetInBody)
-        val lineTop = layout.getLineTop(line)
-        val targetY = maxOf(0, holder.bodyTv.top + lineTop)
-        scrollView.scrollTo(0, targetY)
+        scrollView.scrollTo(
+            0,
+            ReaderScrollMath.clampScrollY(
+                ReaderScrollMath.lineScrollY(holder.bodyTv.top, layout.getLineTop(line)),
+                maxScrollY
+            )
+        )
     } else {
         val chapterLen = maxOf(1, content.endCharOffset - content.startCharOffset)
         val relativeOffset = (initialCharOffset - content.startCharOffset).coerceIn(0, chapterLen)
         val ratio = relativeOffset.toFloat() / chapterLen
-        val bodyTop = holder.bodyTv.top
-        val bodyHeight = maxOf(1, holder.bodyTv.height)
-        val targetY = (bodyTop + (bodyHeight * ratio)).toInt()
-        scrollView.scrollTo(0, targetY)
+        scrollView.scrollTo(
+            0,
+            ReaderScrollMath.clampScrollY(
+                ReaderScrollMath.ratioScrollY(holder.bodyTv.top, maxOf(1, holder.bodyTv.height), ratio),
+                maxScrollY
+            )
+        )
     }
 }
 
@@ -949,7 +941,7 @@ private fun safeRestoreScrollPosition(
     // 章节切换/位置恢复与惯性滑动互斥，防止 fling 把恢复位置再拖走
     CrownScrollHelper.abortFling(scrollView)
     if (content == null) return
-    if (holder.bodyTv.height > 0 && holder.bodyTv.layout != null) {
+    if (ReaderScrollMath.isLayoutReady(holder.bodyTv.height, holder.bodyTv.layout != null)) {
         restoreScrollPosition(scrollView, holder, content, initialCharOffset)
     } else {
         holder.bodyTv.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
@@ -957,7 +949,7 @@ private fun safeRestoreScrollPosition(
                 v: View?, left: Int, top: Int, right: Int, bottom: Int,
                 oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int
             ) {
-                if (bottom - top > 0 && holder.bodyTv.layout != null) {
+                if (ReaderScrollMath.isLayoutReady(bottom - top, holder.bodyTv.layout != null)) {
                     holder.bodyTv.removeOnLayoutChangeListener(this)
                     restoreScrollPosition(scrollView, holder, holder.currentContent, initialCharOffset)
                 }
