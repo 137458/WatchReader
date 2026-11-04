@@ -1,6 +1,5 @@
 package com.watchreader
 
-import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.MotionEvent
@@ -11,14 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -27,7 +19,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,70 +30,59 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 
 /**
  * MainActivity — 遵循 Android / ColorOS Watch 官方规范的入口 Activity
+ *
+ * 只承担四件在 Activity 期才有意义的事：SAF 启动器注册与表冠管线装配、setContent 与状态收集、
+ * Window 级副作用（亮度 / DecorView 底色 / 暗化遮罩）、生命周期钩子。
+ * 页面装配见 [WatchAppContent]，SAF 回调体见 [SafResultHandlers]，表冠分派见 [CrownEventDispatch]。
  */
 class MainActivity : ComponentActivity() {
 
     private val viewModel: ReaderViewModel by viewModels()
 
-    // SAF 文件选择器
+    // SAF 回调体：流生命周期与编码在 SafResultHandlers 里，本类只负责注册
+    private val safHandlers by lazy {
+        SafResultHandlers(contentResolver, lifecycleScope, viewModel)
+    }
+
+    // 启动器必须在 Activity 期注册
     private val openFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        uri?.let {
-            try {
-                contentResolver.takePersistableUriPermission(
-                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (_: Exception) {}
-            viewModel.loadFile(it)
-        }
-    }
+    ) { uri: Uri? -> safHandlers.onOpenDocumentResult(uri) }
 
     // 备份导出（SAF 建文件）与恢复（SAF 选文件）
     private val exportBackupLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
-    ) { uri: Uri? ->
-        if (uri == null) return@registerForActivityResult
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val json = viewModel.exportBackup()
-                contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(json.toByteArray(Charsets.UTF_8))
-                    out.flush()
-                } ?: throw IllegalStateException("无法写入所选文件")
-                viewModel.notifyBackupExported(true)
-            } catch (_: Exception) {
-                viewModel.notifyBackupExported(false)
-            }
-        }
-    }
+    ) { uri: Uri? -> safHandlers.onExportBackupResult(uri) }
 
     private val importBackupLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri == null) return@registerForActivityResult
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                val json = contentResolver.openInputStream(uri)
-                    ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } ?: ""
-                // 先解析预览、确认浮层点头后才真正覆盖（误选旧备份不再立即回滚全书架）；
-                // 预览失败的具体原因由 previewBackupRestore 写入 errorMessage，此处不覆盖
-                viewModel.previewBackupRestore(json)
-            } catch (_: Exception) {
-                viewModel.notifyBackupRestoreFailed()
-            }
-        }
+    ) { uri: Uri? -> safHandlers.onImportBackupResult(uri) }
+
+    // 页面只拿到三个启动请求，不再接触启动器字段
+    private val safLaunchRequests by lazy {
+        SafLaunchRequests(
+            openDocument = { openFileLauncher.launch(SafRequests.openDocumentMimeTypes()) },
+            exportBackup = { exportBackupLauncher.launch(SafRequests.defaultBackupFileName()) },
+            importBackup = { importBackupLauncher.launch(SafRequests.importBackupMimeTypes()) }
+        )
+    }
+
+    // 表冠路由：分派顺序在 CrownRoutes 里声明一次，本类只做装配与原生下发适配
+    private val crownDispatch by lazy {
+        CrownEventDispatch(
+            onRsvpRotary = { delta -> viewModel.handleRotaryScroll(delta) },
+            pageTarget = { CrownScrollTargetRegistry.active },
+            dispatchDefaultChain = { event -> dispatchDefaultChain(event) },
+            dispatchToFocused = { event -> currentFocus?.dispatchGenericMotionEvent(event) == true },
+            rootView = { window.decorView as? ViewGroup }
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -146,89 +128,96 @@ class MainActivity : ComponentActivity() {
 
             // 主题根节点：应用自持 ThemeMode（DataStore 持久化），显式注入 MD3 色板、
             // 腕上排版与 shape scale，不走系统动态取色管线
-                MaterialTheme(
-                    colorScheme = colorScheme,
-                    typography = WatchTypography,
-                    shapes = WatchShapesM3
-                ) {
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        AppContent(uiState, transferState, searchState)
+            MaterialTheme(
+                colorScheme = colorScheme,
+                typography = WatchTypography,
+                shapes = WatchShapesM3
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    WatchAppContent(
+                        uiState = uiState,
+                        transferState = transferState,
+                        searchState = searchState,
+                        viewModel = viewModel,
+                        requests = safLaunchRequests,
+                        onExitApp = { finish() }
+                    )
 
-                        // 恢复备份确认浮层：SAF 选完文件先亮出将载入的书目数，确认才覆盖。
-                        // 出口三条：取消按钮 / 返回键 / 右滑，后两者一律走「取消」而非覆盖，
-                        // 与浮层外点击被拦截的强制二选一语义一致（侧滑绝不等于确认）。
-                        // 退出动画期 pendingRestoreCount 已置空，故留存最后一次书目数供离场渲染。
-                        val restoreCount = uiState.pendingRestoreCount
-                        var lastRestoreCount by remember { mutableStateOf(0) }
-                        if (restoreCount != null) lastRestoreCount = restoreCount
-                        AnimatedVisibility(
-                            visible = restoreCount != null,
-                            enter = WatchOverlay.Enter,
-                            exit = WatchOverlay.Exit
+                    // 恢复备份确认浮层：SAF 选完文件先亮出将载入的书目数，确认才覆盖。
+                    // 出口三条：取消按钮 / 返回键 / 右滑，后两者一律走「取消」而非覆盖，
+                    // 与浮层外点击被拦截的强制二选一语义一致（侧滑绝不等于确认）。
+                    // 退出动画期 pendingRestoreCount 已置空，故留存最后一次书目数供离场渲染。
+                    val restoreCount = uiState.pendingRestoreCount
+                    var lastRestoreCount by remember { mutableStateOf(0) }
+                    if (restoreCount != null) lastRestoreCount = restoreCount
+                    AnimatedVisibility(
+                        visible = restoreCount != null,
+                        enter = WatchOverlay.Enter,
+                        exit = WatchOverlay.Exit
+                    ) {
+                        val blockInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                        BackHandler { viewModel.cancelBackupRestore() }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.6f))
+                                .swipeDismissBack { viewModel.cancelBackupRestore() }
+                                // 拦截浮层外的一切点击，强制走 取消/确认 二选一
+                                .clickable(
+                                    interactionSource = blockInteraction,
+                                    indication = null
+                                ) {},
+                            contentAlignment = androidx.compose.ui.Alignment.Center
                         ) {
-                            val blockInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-                            BackHandler { viewModel.cancelBackupRestore() }
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color.Black.copy(alpha = 0.6f))
-                                    .swipeDismissBack { viewModel.cancelBackupRestore() }
-                                    // 拦截浮层外的一切点击，强制走 取消/确认 二选一
-                                    .clickable(
-                                        interactionSource = blockInteraction,
-                                        indication = null
-                                    ) {},
-                                contentAlignment = androidx.compose.ui.Alignment.Center
-                            ) {
-                                SurfaceCard(modifier = Modifier.padding(horizontal = 28.dp)) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(16.dp),
-                                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-                                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
+                            SurfaceCard(modifier = Modifier.padding(horizontal = 28.dp)) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Text(
+                                        text = "恢复备份？",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "将载入 $lastRestoreCount 本书的书架快照，并覆盖当前书架与全部阅读设置。",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    )
+                                    Row(
+                                        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Text(
-                                            text = "恢复备份？",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            text = "将载入 $lastRestoreCount 本书的书架快照，并覆盖当前书架与全部阅读设置。",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                                        )
-                                        Row(
-                                            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                                        PillButton("取消", Modifier.weight(1f)) {
+                                            viewModel.cancelBackupRestore()
+                                        }
+                                        PillButton(
+                                            "确认恢复",
+                                            Modifier.weight(1f),
+                                            emphasis = PillEmphasis.Primary
                                         ) {
-                                            PillButton("取消", Modifier.weight(1f)) {
-                                                viewModel.cancelBackupRestore()
-                                            }
-                                            PillButton(
-                                                "确认恢复",
-                                                Modifier.weight(1f),
-                                                emphasis = PillEmphasis.Primary
-                                            ) {
-                                                lifecycleScope.launch { viewModel.confirmBackupRestore() }
-                                            }
+                                            lifecycleScope.launch { viewModel.confirmBackupRestore() }
                                         }
                                     }
                                 }
                             }
                         }
+                    }
 
-                        // 极暗纯黑 Alpha 硬件加速遮罩（仅当亮度低于 12% 时激活，不拦截手势）
-                        val overlayAlpha = BrightnessManager.calculateDarkOverlayAlpha(uiState.appBrightness)
-                        if (overlayAlpha > 0f) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color.Black.copy(alpha = overlayAlpha))
-                            )
-                        }
+                    // 极暗纯黑 Alpha 硬件加速遮罩（仅当亮度低于 12% 时激活，不拦截手势）
+                    val overlayAlpha = BrightnessManager.calculateDarkOverlayAlpha(uiState.appBrightness)
+                    if (overlayAlpha > 0f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = overlayAlpha))
+                        )
                     }
                 }
+            }
         }
     }
 
@@ -243,312 +232,15 @@ class MainActivity : ComponentActivity() {
         RotaryHapticManager.shutdown()
     }
 
-    // 表冠路由：分派顺序在 CrownRoutes 里声明一次，本类只做装配与原生下发适配
-    private val crownRouter: CrownRouter by lazy {
-        CrownRouter(
-            CrownRoutes.ordered(
-                onRsvpRotary = { delta -> viewModel.handleRotaryScroll(delta) },
-                pageTarget = { CrownScrollTargetRegistry.active }
-            )
-        )
-    }
-
     /**
-     * 表冠事件唯一入口：表冠事件交给 [CrownRouter] 一次分派；其余通用运动事件保持原生链语义
+     * 表冠事件唯一入口：表冠事件交给 [CrownEventDispatch] 一次分派；其余通用运动事件保持原生链语义
      *
      * 收口前这里串行试探了 5 条路径，谁消费取决于书写顺序；现在顺序由 CrownRoutes 声明，
-     * 原生链 / 焦点视图 / 兜底遍历退化为第 3~5 条策略，实现见 [ActivityCrownDispatch]。
+     * 原生链 / 焦点视图 / 兜底遍历退化为第 3~5 条策略，实现见 [CrownEventDispatch]。
      */
-    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-        if (CrownScrollHelper.isCrownScrollEvent(event)) {
-            return crownRouter.onRotary(
-                CrownTurn(CrownScrollHelper.extractCrownDelta(event)),
-                ActivityCrownDispatch(event)
-            )
-        }
-        return dispatchDefaultChain(event) || (currentFocus?.dispatchGenericMotionEvent(event) == true)
-    }
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
+        crownDispatch.onGenericMotionEvent(event)
 
     /** super 调用不能写进 lambda / 内部类，单独包一层供路由策略回调 */
     private fun dispatchDefaultChain(event: MotionEvent): Boolean = super.dispatchGenericMotionEvent(event)
-
-    /** 路由的原生下发适配器：三条需要真实事件与窗口引用的策略都收敛在这里 */
-    private inner class ActivityCrownDispatch(private val event: MotionEvent) : CrownNativeDispatch {
-
-        override fun dispatchDefault(): Boolean = dispatchDefaultChain(event)
-
-        override fun dispatchToFocused(): Boolean =
-            currentFocus?.dispatchGenericMotionEvent(event) == true
-
-        override fun dispatchToActiveScrollableView(): Boolean {
-            val root = window.decorView as? ViewGroup ?: return false
-            return dispatchRotaryToActiveScrollView(root, event)
-        }
-    }
-
-    /**
-     * 第 5 条策略（活跃滚动容器兜底）的实现：Compose 悬浮组件夺走焦点后原生 View 失去焦点，
-     * 此处直接寻址视图中第一个可见的 ScrollView / ListView 并下发
-     */
-    private fun dispatchRotaryToActiveScrollView(viewGroup: ViewGroup, event: MotionEvent): Boolean {
-        for (i in 0 until viewGroup.childCount) {
-            val child = viewGroup.getChildAt(i)
-            if (child.isShown && (child is android.widget.ScrollView || child is android.widget.ListView)) {
-                if (child.dispatchGenericMotionEvent(event)) {
-                    return true
-                }
-            }
-            if (child is ViewGroup && child.isShown) {
-                if (dispatchRotaryToActiveScrollView(child, event)) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
-    @Composable
-    private fun AppContent(
-        uiState: ReaderUiState,
-        transferState: TransferUiState,
-        searchState: SearchState
-    ) {
-        val screen = uiState.screen
-
-        // 阅读页常驻层：呼出菜单 / 目录 / 速读时不再拆解阅读页 ——
-        // 阅读页是"单 TextLayout 承载整章文本 + 6 个复用原生 View"，销毁重建一次就要
-        // 整章重新断行排版并重建视图树，这正是"返回阅读"顿挫的根因。覆盖页改为叠加其上，
-        // 阅读页原生视图转 INVISIBLE 退出绘制（View 树跳过不可见子节点，隐藏期零绘制），
-        // 返回时排版、滚动位置、表冠管线与自动滚屏引擎原样保留。
-        val readerAlive = uiState.currentUri != null && (
-            screen is Screen.Reader || screen is Screen.Menu ||
-                screen is Screen.ChapterList || screen is Screen.Rsvp || screen is Screen.Search
-            )
-
-        // 离开阅读页后屏幕状态不再携带阅读定位参数，故保留最后一次的阅读参数：
-        // 避免常驻阅读页的 initialCharOffset 抖动引发其内部偏移状态重置
-        val readerArgs = remember { mutableStateOf(Screen.Reader()) }
-        if (screen is Screen.Reader) readerArgs.value = screen
-        if (screen is Screen.Reader) readerArgs.value = screen
-
-        // 常驻阅读页的输入：状态与回调各收成一个整体对象。
-        // 状态相等时 Compose 整页跳过（阅读时长 tick、传书进度不再重排整章）；
-        // 回调用 remember 固定身份，父级重组不会让它失效。
-        val readerActions = remember(viewModel) {
-            ReaderPaneActions(
-                onCharOffsetChange = { viewModel.updateCharOffset(it) },
-                onNextChapter = { viewModel.goToNextChapter() },
-                onPrevChapter = { viewModel.goToPrevChapter() },
-                onLongPress = { viewModel.navigateTo(Screen.Menu) },
-                onBack = { viewModel.handleBack() },
-                onAutoScrollToggle = {
-                    viewModel.setAutoScrolling(!viewModel.uiState.value.isAutoScrolling)
-                },
-                onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
-                onSeekChapter = { index -> viewModel.goToChapter(index) },
-                onFlushReadingPosition = { viewModel.flushReadingPosition() }
-            )
-        }
-
-        // 行距 / 字距曾长期只写 _uiState 与 DataStore、从未下传阅读页，
-        // 菜单里的两档设置对正文永久无效；这里必须显式带上
-        val readerState = ReaderPaneState(
-            chapterContent = uiState.currentChapterContent,
-            initialCharOffset = readerArgs.value.charOffset,
-            totalChapters = uiState.chapters.size,
-            fullTextLength = uiState.fullTextLength,
-            fontSize = uiState.fontSize,
-            autoScrollSpeed = uiState.autoScrollSpeed,
-            isAutoScrolling = uiState.isAutoScrolling,
-            tapPageArea = uiState.tapPageArea,
-            fontType = uiState.fontType,
-            lineSpacing = uiState.lineSpacing,
-            letterSpacing = uiState.letterSpacing,
-            chapters = uiState.chapters,
-            currentChapterIndex = uiState.currentChapterIndex,
-            covered = screen !is Screen.Reader
-        )
-
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (readerAlive) {
-                ReaderScreen(state = readerState, actions = readerActions)
-            }
-
-            ScreenSlot(
-                uiState = uiState,
-                screen = screen,
-                transferState = transferState,
-                searchState = searchState
-            )
-        }
-    }
-
-    /**
-     * 页面内容槽位。阅读页槽位只占一个透明空 Box（真实阅读页由常驻层承载），
-     * 使页面切换不再销毁阅读页；其余页面按其自身入场节奏淡入。
-     */
-    @Composable
-    private fun ScreenSlot(
-        uiState: ReaderUiState,
-        screen: Screen,
-        transferState: TransferUiState,
-        searchState: SearchState
-    ) {
-        // 页面级切换过渡。只有两类边界瞬时切换，其余页面保留纯 alpha 淡入淡出
-        // （不用 scale：缩放会逐帧重建全屏离屏缓冲并重采样）：
-        // 1. 目标页自带入场动效 —— 书架 / 菜单的逐卡 staggeredEnter，父层淡入与其重叠；
-        // 2. 参与过渡的页面主体是原生视图 —— 阅读页正文常驻在原生层、目录页主体是原生 ListView，
-        //    Compose 的 alpha 过渡对原生视图无效，淡入只会让周边 chrome 单独闪烁。
-        AnimatedContent(
-            targetState = screen,
-            contentKey = { it::class },
-            transitionSpec = {
-                val targetSelfAnimated = targetState is Screen.Menu || targetState is Screen.Home
-                val nativeSurface = initialState is Screen.Reader || targetState is Screen.Reader ||
-                    initialState is Screen.ChapterList || targetState is Screen.ChapterList
-                if (targetSelfAnimated || nativeSurface) {
-                    EnterTransition.None togetherWith ExitTransition.None
-                } else {
-                    fadeIn(tween(WatchMotion.DUR_FADE, easing = WatchMotion.EnterEasing)) togetherWith
-                        fadeOut(tween(WatchMotion.DUR_FADE_OUT, easing = WatchMotion.ExitEasing))
-                }
-            },
-            label = "screen-transition"
-        ) { current ->
-            when (current) {
-                is Screen.Home -> BookshelfScreen(
-                    bookshelf = uiState.bookshelf,
-                    searchQuery = uiState.searchQuery,
-                    fontSize = uiState.fontSize,
-                    isDarkMode = ThemeMode.fromValue(uiState.themeMode).isDark,
-                    onOpenFile = {
-                        openFileLauncher.launch(arrayOf("text/plain", "application/epub+zip", "application/octet-stream", "*/*"))
-                    },
-                    onOpenBook = { book -> viewModel.openFromShelf(book) },
-                    onDeleteBook = { book -> viewModel.deleteFromShelf(book) },
-                    onTogglePin = { book -> viewModel.toggleBookPin(book.uriString) },
-                    onSearchChange = { viewModel.setSearchQuery(it) },
-                    onOpenWifiTransfer = { viewModel.openWifiTransfer() },
-                    onFontSizeChange = { viewModel.updateFontSize(it) },
-                    onToggleDarkMode = { viewModel.toggleDarkMode() },
-                    errorMessage = uiState.errorMessage,
-                    infoMessage = uiState.infoMessage,
-                    onInfoMessageShown = { viewModel.clearInfoMessage() },
-                    onBackup = {
-                        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.US)
-                            .format(java.util.Date())
-                        exportBackupLauncher.launch("watchreader_backup_$stamp.json")
-                    },
-                    onRestore = {
-                        importBackupLauncher.launch(arrayOf("application/json", "text/plain", "*/*"))
-                    },
-                    onExitApp = { finish() }
-                )
-
-                is Screen.Loading -> LoadingScreen(onBack = { viewModel.handleBack() })
-
-                // 阅读页由常驻层承载，此槽位保持透明空占位（零绘制）
-                is Screen.Reader -> Box(modifier = Modifier.fillMaxSize())
-
-                is Screen.Menu -> MenuScreen(
-                    chapterTitle = uiState.currentChapterContent?.title ?: "",
-                    fontSize = uiState.fontSize,
-                    autoScrollSpeed = uiState.autoScrollSpeed,
-                    isAutoScrolling = uiState.isAutoScrolling,
-                    appBrightness = uiState.appBrightness,
-                    hasPrevChapter = uiState.currentChapterContent?.hasPrevChapter == true,
-                    hasNextChapter = uiState.currentChapterContent?.hasNextChapter == true,
-                    onPrevChapter = {
-                        viewModel.goToPrevChapter()
-                        viewModel.returnToReader()
-                    },
-                    onNextChapter = {
-                        viewModel.goToNextChapter()
-                        viewModel.returnToReader()
-                    },
-                    onFontSizeChange = { viewModel.updateFontSize(it) },
-                    onToggleAutoScroll = {
-                        val nextScrollState = !uiState.isAutoScrolling
-                        viewModel.setAutoScrolling(nextScrollState)
-                        if (nextScrollState) {
-                            viewModel.returnToReader()
-                        }
-                    },
-                    onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
-                    onBrightnessChange = { viewModel.updateAppBrightness(it) },
-                    onOpenBookmarks = { viewModel.navigateTo(Screen.ChapterList(bookmarkTab = true)) },
-                    onOpenRsvp = { viewModel.openRsvp() },
-                    onChapterListClick = { viewModel.navigateTo(Screen.ChapterList()) },
-                    onOpenSearch = { viewModel.navigateTo(Screen.Search) },
-                    onBack = { viewModel.returnToReader() },
-                    onHome = { viewModel.closeBook() },
-                    themeMode = uiState.themeMode,
-                    onThemeModeChange = { viewModel.setThemeMode(it) },
-                    tapPageArea = uiState.tapPageArea,
-                    onTapPageAreaChange = { viewModel.setTapPageArea(it) },
-                    cleanTypography = uiState.cleanTypography,
-                    onCleanTypographyChange = { viewModel.setCleanTypography(it) },
-                    fontType = uiState.fontType,
-                    onFontTypeChange = { viewModel.setFontType(it) },
-                    readDurationSec = uiState.readDurationSec,
-                    readDays = uiState.readDays,
-                    readGoalMinutes = uiState.readGoalMinutes,
-                    finishedCount = uiState.bookshelf.count { it.finished },
-                    onReadGoalChange = { viewModel.setReadGoalMinutes(it) },
-                    lineSpacing = uiState.lineSpacing,
-                    letterSpacing = uiState.letterSpacing,
-                    onLineSpacingChange = { viewModel.setLineSpacing(it) },
-                    onLetterSpacingChange = { viewModel.setLetterSpacing(it) }
-                )
-
-                is Screen.ChapterList -> ChapterListScreen(
-                    openBookmarkTab = current.bookmarkTab,
-                    chapters = uiState.chapters,
-                    currentChapterIndex = uiState.currentChapterIndex,
-                    bookmarks = uiState.bookmarks,
-                    onChapterClick = { index ->
-                        viewModel.goToChapter(index)
-                    },
-                    onBookmarkClick = { bookmark ->
-                        viewModel.jumpToBookmark(bookmark)
-                    },
-                    onDeleteBookmark = { bookmark ->
-                        viewModel.removeBookmark(bookmark.id)
-                    },
-                    onAddBookmark = { viewModel.addBookmark() },
-                    onBack = { viewModel.returnToReader() }
-                )
-
-                is Screen.Rsvp -> RsvpScreen(
-                    chapterContent = uiState.currentChapterContent,
-                    initialCharOffset = viewModel.getCurrentReadingOffset(),
-                    wordsPerMinute = uiState.rsvpSpeed,
-                    onCharOffsetChange = { offset ->
-                        viewModel.updateCharOffset(offset)
-                    },
-                    onNextChapter = { viewModel.goToNextChapter() },
-                    onSpeedChange = { viewModel.updateRsvpSpeed(it) },
-                    onBack = { viewModel.handleBack() }
-                )
-
-                is Screen.Search -> SearchScreen(
-                    chapters = uiState.chapters,
-                    state = searchState,
-                    query = uiState.bookSearchQuery,
-                    onQueryChange = { viewModel.setBookSearchQuery(it) },
-                    onSearch = { viewModel.searchInBook(it) },
-                    onHitClick = { viewModel.jumpToSearchHit(it) },
-                    onBack = { viewModel.handleBack() }
-                )
-
-                is Screen.WifiTransfer -> WifiTransferScreen(
-                    state = transferState,
-                    onToggleServer = {
-                        if (transferState.isRunning) viewModel.closeWifiTransfer() else viewModel.openWifiTransfer()
-                    },
-                    onBack = { viewModel.closeWifiTransfer() }
-                )
-            }
-        }
-    }
 }
