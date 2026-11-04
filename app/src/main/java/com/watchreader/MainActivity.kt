@@ -327,6 +327,10 @@ class MainActivity : ComponentActivity() {
                     onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
                     tapPageArea = uiState.tapPageArea,
                     fontType = uiState.fontType,
+                    // 行距 / 字距此前只写了 _uiState 与 DataStore，从未下传阅读页，
+                    // 菜单里的两档设置对正文永久无效（阅读页一直吃 ReaderScreen 的缺省值）
+                    lineSpacing = uiState.lineSpacing,
+                    letterSpacing = uiState.letterSpacing,
                     chapters = uiState.chapters,
                     currentChapterIndex = uiState.currentChapterIndex,
                     onSeekChapter = { index -> viewModel.goToChapter(index) },
