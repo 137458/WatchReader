@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.*
 import java.net.Inet4Address
 import java.net.InetSocketAddress
@@ -22,6 +24,7 @@ import java.net.Socket
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.security.SecureRandom
 
 /**
  * 传书进度数据模型
@@ -33,6 +36,9 @@ data class TransferProgress(
     val bytesRead: Long = 0L,
     val totalBytes: Long = 0L
 )
+
+/** 书籍清单单条记录（文件名 + 体积 + 修改时间） */
+internal data class BookFileEntry(val name: String, val size: Long, val modified: Long)
 
 /**
  * 局域网 Wi-Fi 网页无线传书轻量级 HTTP 服务
@@ -62,9 +68,49 @@ class WifiTransferServer(
     val accessToken: String get() = sessionToken
 
     companion object {
-        /** 生成 12 位十六进制会话令牌 */
-        internal fun generateToken(): String =
-            java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12)
+        /**
+         * 单文件上传硬上限 50MB。
+         *
+         * 手表可用存储远小于手机，且上传直接写进 books 目录（不落临时盘），一次误传超大文件
+         * 就能把 /data 写满并让后续所有写盘操作失败；50MB 对纯文本/EPUB 小说已是充裕上界。
+         * 声明了 Content-Length 的请求在开写前就拒绝，未声明长度的（chunked）由流式累计兜底。
+         */
+        internal const val MAX_UPLOAD_BYTES: Long = 50L * 1024L * 1024L
+
+        /** 会话令牌长度（字符） */
+        private const val TOKEN_LENGTH = 12
+
+        /** base62 字符表：URL query 安全，无需额外百分号编码 */
+        private const val TOKEN_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+        private val tokenRandom = SecureRandom()
+
+        /** 生成 12 位 base62 会话令牌（SecureRandom.nextInt 内部拒绝采样，无模偏置） */
+        internal fun generateToken(): String {
+            val builder = StringBuilder(TOKEN_LENGTH)
+            repeat(TOKEN_LENGTH) {
+                builder.append(TOKEN_ALPHABET[tokenRandom.nextInt(TOKEN_ALPHABET.length)])
+            }
+            return builder.toString()
+        }
+
+        /** 上传体是否超限；contentLength < 0 表示未声明长度，不在此预判 */
+        internal fun uploadExceedsLimit(contentLength: Long, limit: Long = MAX_UPLOAD_BYTES): Boolean =
+            contentLength > limit
+
+        /** 书籍清单 JSON：统一走 org.json，文件名含引号/反斜杠/换行时不再拼出伪 JSON */
+        internal fun bookListJson(entries: List<BookFileEntry>): String {
+            val array = JSONArray()
+            for (entry in entries) {
+                array.put(
+                    JSONObject()
+                        .put("name", entry.name)
+                        .put("size", entry.size)
+                        .put("modified", entry.modified)
+                )
+            }
+            return array.toString()
+        }
 
         internal fun parseQueryParams(rawPath: String): Map<String, String> {
             val map = mutableMapOf<String, String>()
@@ -335,6 +381,17 @@ class WifiTransferServer(
                 return
             }
 
+            // 体积上限先看声明长度：超限请求一个字节都不写盘
+            if (uploadExceedsLimit(contentLength)) {
+                Log.w(TAG, "拒绝超限上传 $cleanName：$contentLength > $MAX_UPLOAD_BYTES")
+                _transferProgress.value = TransferProgress(isTransferring = false)
+                val body = JSONObject()
+                    .put("status", "error")
+                    .put("message", "文件超过 50MB 上传上限")
+                sendResponse(output, 413, "application/json", body.toString())
+                return
+            }
+
             // 初始化进度
             _transferProgress.value = TransferProgress(
                 isTransferring = true,
@@ -347,6 +404,7 @@ class WifiTransferServer(
 
             val savedFile = File(booksDir, cleanName)
             var totalRead = 0L
+            var overflow = false
             try {
                 FileOutputStream(savedFile).use { fos ->
                     val buf = ByteArray(32768)
@@ -356,6 +414,12 @@ class WifiTransferServer(
                     while (input.read(buf).also { read = it } != -1) {
                         fos.write(buf, 0, read)
                         totalRead += read
+
+                        // 未声明长度的上传（chunked）在这里兜底：一旦越线立刻停手，避免写满存储
+                        if (uploadExceedsLimit(totalRead)) {
+                            overflow = true
+                            break
+                        }
 
                         val p = if (contentLength > 0) (totalRead.toFloat() / contentLength).coerceIn(0.05f, 0.98f) else 0.5f
                         _transferProgress.value = TransferProgress(
@@ -386,6 +450,17 @@ class WifiTransferServer(
                 return
             }
 
+            if (overflow) {
+                // 越线即丢弃半成品：残缺的超大文件既不该留在 books 目录，也不该进书架
+                savedFile.delete()
+                _transferProgress.value = TransferProgress(isTransferring = false)
+                val body = JSONObject()
+                    .put("status", "error")
+                    .put("message", "文件超过 50MB 上传上限")
+                sendResponse(output, 413, "application/json", body.toString())
+                return
+            }
+
             if (contentLength > 0 && totalRead < contentLength) {
                 savedFile.delete()
                 _transferProgress.value = TransferProgress(isTransferring = false)
@@ -397,7 +472,10 @@ class WifiTransferServer(
         } catch (e: Exception) {
             Log.e(TAG, "Error in saveDirectStreamUpload", e)
             _transferProgress.value = TransferProgress(isTransferring = false)
-            sendResponse(output, 500, "application/json", """{"status":"error","message":"${e.localizedMessage}"}""")
+            val body = JSONObject()
+                .put("status", "error")
+                .put("message", e.localizedMessage ?: "传输失败")
+            sendResponse(output, 500, "application/json", body.toString())
         }
     }
 
@@ -431,8 +509,8 @@ class WifiTransferServer(
 
         RotaryHapticManager.performSuccessFeedback(context)
 
-        val escapedName = fileName.replace("\\", "\\\\").replace("\"", "\\\"")
-        sendResponse(output, 200, "application/json", """{"status":"ok","fileName":"$escapedName"}""")
+        val body = JSONObject().put("status", "ok").put("fileName", fileName)
+        sendResponse(output, 200, "application/json", body.toString())
 
         // 1.2 秒后平滑恢复常驻就绪视图
         scope.launch {
@@ -444,11 +522,8 @@ class WifiTransferServer(
     private fun handleGetBooks(output: OutputStream) {
         val files = booksDir.listFiles()?.filter { BookTextConverter.isSupportedFileName(it.name) }?.sortedByDescending { it.lastModified() } ?: emptyList()
 
-        val jsonArray = files.joinToString(prefix = "[", postfix = "]") { f ->
-            val escapedName = f.name.replace("\\", "\\\\").replace("\"", "\\\"")
-            """{"name":"$escapedName","size":${f.length()},"modified":${f.lastModified()}}"""
-        }
-        sendResponse(output, 200, "application/json; charset=utf-8", jsonArray)
+        val entries = files.map { BookFileEntry(it.name, it.length(), it.lastModified()) }
+        sendResponse(output, 200, "application/json; charset=utf-8", bookListJson(entries))
     }
 
     private fun handleDownloadBook(rawPath: String, output: OutputStream) {
@@ -508,7 +583,12 @@ class WifiTransferServer(
             val deleted = targetFile.delete()
             if (deleted) {
                 onBookDeleted?.invoke(cleanName)
-                sendResponse(output, 200, "application/json", """{"status":"ok","deleted":"$cleanName"}""")
+                sendResponse(
+                    output,
+                    200,
+                    "application/json",
+                    JSONObject().put("status", "ok").put("deleted", cleanName).toString()
+                )
             } else {
                 sendResponse(output, 500, "application/json", """{"status":"error","message":"删除失败"}""")
             }
@@ -525,6 +605,7 @@ class WifiTransferServer(
             400 -> "Bad Request"
             401 -> "Unauthorized"
             404 -> "Not Found"
+            413 -> "Payload Too Large"
             else -> "Internal Server Error"
         }
         val header = "HTTP/1.1 $statusCode $statusText\r\n" +

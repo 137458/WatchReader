@@ -2,7 +2,6 @@ package com.watchreader
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -40,15 +39,22 @@ class WifiTransferServerAuthTest {
     // ── generateToken ──
 
     @Test
-    fun `generateToken 为 12 位十六进制且每次不同`() {
-        val a = WifiTransferServer.generateToken()
-        val b = WifiTransferServer.generateToken()
-        assertEquals(12, a.length)
-        assertTrue(a.all { it in "0123456789abcdef" })
-        assertNotEquals(a, b)
+    fun `generateToken 为 12 位 base62 且抽样无碰撞`() {
+        val alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+        val tokens = List(64) { WifiTransferServer.generateToken() }
+        tokens.forEach { token ->
+            assertEquals(12, token.length)
+            assertTrue("非 base62 字符：$token", token.all { it in alphabet })
+        }
+        assertEquals("64 次抽样出现重复令牌", tokens.size, tokens.toSet().size)
+        // 旧实现取 UUID 去掉横线后前 12 位，字符集恒为小写十六进制
+        assertTrue(
+            "令牌字符集仍停留在十六进制",
+            tokens.any { token -> token.any { it !in "0123456789abcdef" } }
+        )
     }
 
-    // ── tokenMatches（红灯：当前桩恒 false） ──
+    // ── tokenMatches ──
 
     @Test
     fun `tokenMatches 相同令牌通过`() {

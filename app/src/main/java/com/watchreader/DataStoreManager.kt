@@ -2,6 +2,7 @@ package com.watchreader
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.SharedPreferencesMigration
 import androidx.datastore.preferences.core.Preferences
@@ -58,6 +59,11 @@ data class AppInitialConfig(
  */
 object DataStoreManager {
 
+    private const val TAG = "DataStoreManager"
+
+    /** 书签键名前缀：键名格式 bookmarks_<uriString.hashCode()> 是历史落盘格式，改动会让老用户书签全部失效 */
+    internal const val BOOKMARK_KEY_PREFIX = "bookmarks_"
+
     val KEY_LAST_URI = stringPreferencesKey("last_uri")
     val KEY_LAST_CHAR_OFFSET = intPreferencesKey("last_char_offset")
     val KEY_LAST_SCREEN = stringPreferencesKey("last_screen") // "home" 或 "reader"
@@ -96,7 +102,7 @@ object DataStoreManager {
     suspend fun loadInitialConfig(context: Context): AppInitialConfig {
         val prefs = getSafePreferencesFlow(context).first()
         val fontSize = prefs[KEY_FONT_SIZE] ?: DEFAULT_FONT_SIZE
-        val autoScrollSpeed = prefs[KEY_AUTO_SCROLL_SPEED] ?: DEFAULT_AUTO_SCROLL_SPEED
+        val autoScrollSpeed = AutoScrollSpeed.fromStored(prefs[KEY_AUTO_SCROLL_SPEED] ?: DEFAULT_AUTO_SCROLL_SPEED)
         val appBrightness = prefs[KEY_APP_BRIGHTNESS] ?: DEFAULT_BRIGHTNESS
         val bookshelf = parseBookShelf(prefs[KEY_BOOK_SHELF])
         val lastScreen = prefs[KEY_LAST_SCREEN] ?: "home"
@@ -257,7 +263,7 @@ object DataStoreManager {
             val restoredTheme = ThemeMode.fromValue(payload.themeMode).value
             prefs[KEY_THEME_MODE] = restoredTheme
             prefs[KEY_DARK_MODE] = restoredTheme != ThemeMode.LIGHT.value
-            prefs[KEY_AUTO_SCROLL_SPEED] = payload.autoScrollSpeed
+            prefs[KEY_AUTO_SCROLL_SPEED] = AutoScrollSpeed.fromStored(payload.autoScrollSpeed)
             prefs[KEY_APP_BRIGHTNESS] = payload.appBrightness
             prefs[KEY_TAP_PAGE_AREA] = payload.tapPageArea
             prefs[KEY_CLEAN_TYPOGRAPHY] = payload.cleanTypography
@@ -273,13 +279,17 @@ object DataStoreManager {
                 prefs.remove(KEY_LAST_CHAR_OFFSET)
                 prefs[KEY_LAST_SCREEN] = "home"
             }
-        }
-        // 书签键按书逐本写回（动态键域，单书单事务）
-        payload.bookmarks.forEach { (uri, list) ->
-            if (list.isNotEmpty()) {
-                context.dataStore.edit { prefs ->
-                    prefs[getBookmarkKey(uri)] = serializeBookmarks(list)
-                }
+            // 书签键与上述设置同事务写回：此前每本书各自一个事务，中途失败会留下
+            // 「设置已恢复、书签只恢复一半」的半状态，且单本失败无人感知
+            val restoredBookmarkUris = HashSet<String>()
+            for ((uri, list) in payload.bookmarks) {
+                if (list.isEmpty()) continue
+                restoredBookmarkUris.add(uri)
+                prefs[getBookmarkKey(uri)] = serializeBookmarks(list)
+            }
+            // 整体恢复语义：快照之外的历史书签键一并清理，避免已删的书把书签永久留在键域里
+            for (name in staleBookmarkKeyNames(prefs.asMap().keys.map { it.name }, restoredBookmarkUris)) {
+                prefs.remove(stringPreferencesKey(name))
             }
         }
         return payload.shelf.size
@@ -326,7 +336,8 @@ object DataStoreManager {
 
     suspend fun saveAutoScrollSpeed(context: Context, speed: Float) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_AUTO_SCROLL_SPEED] = speed.coerceIn(10f, 200f)
+            // 取值域收敛到 AutoScrollSpeed：此前持久层 10..200、阅读页 15..200、自动滚屏 15..250 三处各钳一套
+            prefs[KEY_AUTO_SCROLL_SPEED] = AutoScrollSpeed.clamp(speed)
         }
     }
 
@@ -350,17 +361,19 @@ object DataStoreManager {
             prefs[KEY_LAST_CHAR_OFFSET] = charOffset
             prefs[KEY_LAST_SCREEN] = "reader"
 
-            // 单次原子事务同步更新书架记录，消除二次磁盘 I/O 写入
-            val merged = mergeBookEntry(
-                currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]),
-                uriStr = uriStr,
-                charOffset = charOffset,
-                totalChars = totalChars,
-                chapterTitle = chapterTitle,
-                fallbackTitle = { getFileName(context, uri) },
-                nowMs = System.currentTimeMillis()
-            )
-            prefs[KEY_BOOK_SHELF] = serializeBookShelf(merged)
+            // 单次原子事务同步更新书架记录，消除二次磁盘 I/O 写入。
+            // 统一走 rewriteShelf：写回时保留无法识别的历史条目，避免一次进度保存就把整段数据洗掉
+            prefs[KEY_BOOK_SHELF] = rewriteShelf(prefs[KEY_BOOK_SHELF]) { current ->
+                mergeBookEntry(
+                    currentList = current,
+                    uriStr = uriStr,
+                    charOffset = charOffset,
+                    totalChars = totalChars,
+                    chapterTitle = chapterTitle,
+                    fallbackTitle = { getFileName(context, uri) },
+                    nowMs = System.currentTimeMillis()
+                )
+            }
         }
     }
 
@@ -388,17 +401,19 @@ object DataStoreManager {
         val uriStr = uri.toString()
         var resultList: List<BookItem> = emptyList()
         context.dataStore.edit { prefs ->
-            val merged = mergeBookEntry(
-                currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]),
-                uriStr = uriStr,
-                charOffset = charOffset,
-                totalChars = totalChars,
-                chapterTitle = chapterTitle,
-                fallbackTitle = { getFileName(context, uri) },
-                nowMs = System.currentTimeMillis()
-            )
-            prefs[KEY_BOOK_SHELF] = serializeBookShelf(merged)
-            resultList = merged.sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
+            var merged: List<BookItem> = emptyList()
+            prefs[KEY_BOOK_SHELF] = rewriteShelf(prefs[KEY_BOOK_SHELF]) { current ->
+                mergeBookEntry(
+                    currentList = current,
+                    uriStr = uriStr,
+                    charOffset = charOffset,
+                    totalChars = totalChars,
+                    chapterTitle = chapterTitle,
+                    fallbackTitle = { getFileName(context, uri) },
+                    nowMs = System.currentTimeMillis()
+                ).also { merged = it }
+            }
+            resultList = sortBooks(merged)
         }
         return resultList
     }
@@ -406,22 +421,23 @@ object DataStoreManager {
     suspend fun toggleBookPin(context: Context, uriString: String): List<BookItem> {
         var resultList: List<BookItem> = emptyList()
         context.dataStore.edit { prefs ->
-            val currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]).toMutableList()
-            val idx = currentList.indexOfFirst { it.uriString == uriString }
-            if (idx >= 0) {
-                val item = currentList[idx]
-                currentList[idx] = item.copy(isPinned = !item.isPinned)
-                prefs[KEY_BOOK_SHELF] = serializeBookShelf(currentList)
+            var updated: List<BookItem> = emptyList()
+            prefs[KEY_BOOK_SHELF] = rewriteShelf(prefs[KEY_BOOK_SHELF]) { current ->
+                updated = current.map { if (it.uriString == uriString) it.copy(isPinned = !it.isPinned) else it }
+                updated
             }
-            resultList = currentList.sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
+            resultList = sortBooks(updated)
         }
         return resultList
     }
 
     suspend fun removeBookFromShelf(context: Context, uriString: String) {
         context.dataStore.edit { prefs ->
-            val currentList = parseBookShelf(prefs[KEY_BOOK_SHELF]).filter { it.uriString != uriString }
-            prefs[KEY_BOOK_SHELF] = serializeBookShelf(currentList)
+            prefs[KEY_BOOK_SHELF] = rewriteShelf(prefs[KEY_BOOK_SHELF]) { current ->
+                current.filter { it.uriString != uriString }
+            }
+            // 书签键随书删除：此前只删书架条目与 last_uri，书签键永久残留在动态键域里
+            prefs.remove(stringPreferencesKey(bookmarkKeyName(uriString)))
             if (prefs[KEY_LAST_URI] == uriString) {
                 prefs.remove(KEY_LAST_URI)
                 prefs.remove(KEY_LAST_CHAR_OFFSET)
@@ -432,85 +448,127 @@ object DataStoreManager {
 
     fun serializeBookShelf(list: List<BookItem>): String {
         val array = JSONArray()
-        for (item in list) {
-            val obj = JSONObject().apply {
-                put("uri", item.uriString)
-                put("title", item.title)
-                put("offset", item.charOffset)
-                put("total", item.totalChars)
-                put("chapter", item.lastChapterTitle)
-                put("time", item.lastReadTime)
-                put("pinned", item.isPinned)
-                put("finished", item.finished)
+        for (item in list) array.put(bookItemJson(item))
+        return array.toString()
+    }
+
+    /** 写回时保留未识别条目：坏条目的原始 JSON 原样回填，避免一次写盘把用户书架洗成空 */
+    internal fun serializeBookShelfPreserving(list: List<BookItem>, unparsedRaw: List<String>): String {
+        val array = JSONArray()
+        for (item in list) array.put(bookItemJson(item))
+        for (raw in unparsedRaw) {
+            val obj = try {
+                JSONObject(raw)
+            } catch (_: Exception) {
+                null
             }
+            if (obj == null) continue
             array.put(obj)
         }
         return array.toString()
     }
 
-    fun parseBookShelf(jsonStr: String?): List<BookItem> {
-        if (jsonStr.isNullOrEmpty()) return emptyList()
-        val list = mutableListOf<BookItem>()
-        try {
-            val array = JSONArray(jsonStr)
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                list.add(
-                    BookItem(
-                        uriString = obj.getString("uri"),
-                        title = obj.optString("title", "未命名小说"),
-                        charOffset = obj.optInt("offset", 0),
-                        totalChars = obj.optInt("total", 0),
-                        lastChapterTitle = obj.optString("chapter", ""),
-                        lastReadTime = obj.optLong("time", 0L),
-                        isPinned = obj.optBoolean("pinned", false),
-                        finished = obj.optBoolean("finished", false)
-                    )
-                )
-            }
-        } catch (_: Exception) {}
-        return list.sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
+    private fun bookItemJson(item: BookItem): JSONObject = JSONObject().apply {
+        put("uri", item.uriString)
+        put("title", item.title)
+        put("offset", item.charOffset)
+        put("total", item.totalChars)
+        put("chapter", item.lastChapterTitle)
+        put("time", item.lastReadTime)
+        put("pinned", item.isPinned)
+        put("finished", item.finished)
     }
 
+    private fun bookItemOf(obj: JSONObject): BookItem = BookItem(
+        uriString = obj.getString("uri"),
+        title = obj.optString("title", "未命名小说"),
+        charOffset = obj.optInt("offset", 0),
+        totalChars = obj.optInt("total", 0),
+        lastChapterTitle = obj.optString("chapter", ""),
+        lastReadTime = obj.optLong("time", 0L),
+        isPinned = obj.optBoolean("pinned", false),
+        finished = obj.optBoolean("finished", false)
+    )
+
+    /** 书架解析结果：可识别条目 + 未识别条目的原始 JSON（写回时原样保留，不再静默丢失） */
+    internal data class ShelfSnapshot(val items: List<BookItem>, val unparsedRaw: List<String>)
+
+    internal fun parseBookShelfSnapshot(jsonStr: String?): ShelfSnapshot {
+        if (jsonStr.isNullOrEmpty()) return ShelfSnapshot(emptyList(), emptyList())
+        val array = try {
+            JSONArray(jsonStr)
+        } catch (e: Exception) {
+            Log.w(TAG, "书架 JSON 整体损坏，按空书架处理", e)
+            return ShelfSnapshot(emptyList(), emptyList())
+        }
+        val items = ArrayList<BookItem>(array.length())
+        val unparsed = ArrayList<String>()
+        for (i in 0 until array.length()) {
+            val obj = array.optJSONObject(i)
+            if (obj == null) {
+                Log.w(TAG, "书架第 $i 条不是 JSON 对象，已跳过")
+                continue
+            }
+            try {
+                items.add(bookItemOf(obj))
+            } catch (e: Exception) {
+                // 单条坏数据只丢自己，不再截断后续条目；原文留给写回时回填
+                unparsed.add(obj.toString())
+                Log.w(TAG, "书架第 $i 条损坏，已保留原文待回填", e)
+            }
+        }
+        return ShelfSnapshot(sortBooks(items), unparsed)
+    }
+
+    fun parseBookShelf(jsonStr: String?): List<BookItem> = parseBookShelfSnapshot(jsonStr).items
+
+    /** 书架「读-改-写」唯一入口：四个写方共用，写回时保留未识别条目 */
+    internal fun rewriteShelf(currentJson: String?, transform: (List<BookItem>) -> List<BookItem>): String {
+        val snapshot = parseBookShelfSnapshot(currentJson)
+        return serializeBookShelfPreserving(transform(snapshot.items), snapshot.unparsedRaw)
+    }
+
+    internal fun sortBooks(list: List<BookItem>): List<BookItem> =
+        list.sortedWith(compareByDescending<BookItem> { it.isPinned }.thenByDescending { it.lastReadTime })
+
     // ── 书签管理 ──
-    private fun getBookmarkKey(uriString: String): Preferences.Key<String> {
-        return stringPreferencesKey("bookmarks_${uriString.hashCode()}")
+
+    /** 书签键名：保持历史落盘格式 bookmarks_<uriString.hashCode()>，改格式等于让老用户书签全部失效 */
+    internal fun bookmarkKeyName(uriString: String): String = "$BOOKMARK_KEY_PREFIX${uriString.hashCode()}"
+
+    private fun getBookmarkKey(uriString: String): Preferences.Key<String> =
+        stringPreferencesKey(bookmarkKeyName(uriString))
+
+    /** 现存键名中属于「已不在保留集合里的书」的书签键（删书与整体恢复共用） */
+    internal fun staleBookmarkKeyNames(
+        existingKeyNames: Collection<String>,
+        keepUris: Collection<String>
+    ): List<String> {
+        val keep = keepUris.mapTo(HashSet()) { bookmarkKeyName(it) }
+        return existingKeyNames.filter { it.startsWith(BOOKMARK_KEY_PREFIX) && it !in keep }
     }
 
     suspend fun loadBookmarks(context: Context, uriString: String): List<Bookmark> {
         if (uriString.isEmpty()) return emptyList()
         val prefs = getSafePreferencesFlow(context).first()
-        val jsonStr = prefs[getBookmarkKey(uriString)] ?: return emptyList()
-        val list = mutableListOf<Bookmark>()
-        try {
-            val array = JSONArray(jsonStr)
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                list.add(
-                    Bookmark(
-                        id = obj.optString("id", java.util.UUID.randomUUID().toString()),
-                        chapterIndex = obj.optInt("chapterIndex", 0),
-                        chapterTitle = obj.optString("chapterTitle", ""),
-                        charOffset = obj.optInt("charOffset", 0),
-                        snippet = obj.optString("snippet", ""),
-                        time = obj.optLong("time", System.currentTimeMillis())
-                    )
-                )
-            }
-        } catch (_: Exception) {}
-        return list.sortedByDescending { it.time }
+        // 解析只有一份实现：此前 load 与 parse 各写一套（id 随机 UUID vs 时间默认 0L），读回值随入口漂移
+        return parseBookmarks(prefs[getBookmarkKey(uriString)])
     }
+
+    /** 同章 10 字符内视为同一位置，避免同一处反复加书签 */
+    private fun isSameBookmarkPosition(a: Bookmark, b: Bookmark): Boolean =
+        a.chapterIndex == b.chapterIndex && Math.abs(a.charOffset - b.charOffset) < 10
 
     suspend fun saveBookmark(context: Context, uriString: String, bookmark: Bookmark): List<Bookmark> {
         if (uriString.isEmpty()) return emptyList()
         var resultList: List<Bookmark> = emptyList()
         context.dataStore.edit { prefs ->
             val key = getBookmarkKey(uriString)
-            val currentList = parseBookmarks(prefs[key]).toMutableList()
-            currentList.removeAll { it.chapterIndex == bookmark.chapterIndex && Math.abs(it.charOffset - bookmark.charOffset) < 10 }
-            currentList.add(0, bookmark)
-            prefs[key] = serializeBookmarks(currentList)
-            resultList = currentList
+            prefs[key] = rewriteBookmarks(prefs[key]) { current ->
+                val list = current.filter { !isSameBookmarkPosition(it, bookmark) }.toMutableList()
+                list.add(0, bookmark)
+                list.also { resultList = it }
+            }
         }
         return resultList
     }
@@ -520,12 +578,16 @@ object DataStoreManager {
         var resultList: List<Bookmark> = emptyList()
         context.dataStore.edit { prefs ->
             val key = getBookmarkKey(uriString)
-            val currentList = parseBookmarks(prefs[key]).filter { it.id != bookmarkId }
-            prefs[key] = serializeBookmarks(currentList)
-            resultList = currentList
+            prefs[key] = rewriteBookmarks(prefs[key]) { current ->
+                current.filter { it.id != bookmarkId }.also { resultList = it }
+            }
         }
         return resultList
     }
+
+    /** 书签「读-改-写」唯一入口 */
+    internal fun rewriteBookmarks(currentJson: String?, transform: (List<Bookmark>) -> List<Bookmark>): String =
+        serializeBookmarks(transform(parseBookmarks(currentJson)))
 
     internal fun serializeBookmarks(list: List<Bookmark>): String {
         val array = JSONArray()
@@ -545,25 +607,34 @@ object DataStoreManager {
 
     internal fun parseBookmarks(jsonStr: String?): List<Bookmark> {
         if (jsonStr.isNullOrEmpty()) return emptyList()
-        val list = mutableListOf<Bookmark>()
-        try {
-            val array = JSONArray(jsonStr)
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                list.add(
-                    Bookmark(
-                        id = obj.optString("id", java.util.UUID.randomUUID().toString()),
-                        chapterIndex = obj.optInt("chapterIndex", 0),
-                        chapterTitle = obj.optString("chapterTitle", ""),
-                        charOffset = obj.optInt("charOffset", 0),
-                        snippet = obj.optString("snippet", ""),
-                        time = obj.optLong("time", 0L)
-                    )
+        val array = try {
+            JSONArray(jsonStr)
+        } catch (e: Exception) {
+            Log.w(TAG, "书签 JSON 整体损坏，按空书签处理", e)
+            return emptyList()
+        }
+        val list = ArrayList<Bookmark>(array.length())
+        for (i in 0 until array.length()) {
+            val obj = array.optJSONObject(i) ?: continue
+            val chapterIndex = obj.optInt("chapterIndex", 0)
+            val charOffset = obj.optInt("charOffset", 0)
+            list.add(
+                Bookmark(
+                    // 缺失 id 时按内容稳定派生：旧实现每次读回随机 UUID，删除指定书签会在两次读取之间指向不存在的 id
+                    id = obj.optString("id", "").ifEmpty { stableBookmarkId(chapterIndex, charOffset) },
+                    chapterIndex = chapterIndex,
+                    chapterTitle = obj.optString("chapterTitle", ""),
+                    charOffset = charOffset,
+                    snippet = obj.optString("snippet", ""),
+                    time = obj.optLong("time", 0L)
                 )
-            }
-        } catch (_: Exception) {}
+            )
+        }
         return list.sortedByDescending { it.time }
     }
+
+    /** 缺失 id 的书签按位置派生稳定标识，保证同一书签每次读回都是同一个 id */
+    internal fun stableBookmarkId(chapterIndex: Int, charOffset: Int): String = "bm-$chapterIndex-$charOffset"
 }
 
 /**
