@@ -50,16 +50,20 @@ import androidx.compose.ui.viewinterop.AndroidView
 @Composable
 fun SearchScreen(
     chapters: List<Chapter>,
-    searchResults: List<SearchHit>,
-    isSearching: Boolean,
-    scannedChapters: Int,
-    totalChapters: Int,
+    state: SearchState,
     query: String,
     onQueryChange: (String) -> Unit,
     onSearch: (String) -> Unit,
     onHitClick: (SearchHit) -> Unit,
     onBack: () -> Unit
 ) {
+    // 搜索态是独立于书架/阅读态的型（SearchState）：扫描逐切片上报只重组本页，
+    // 不会连带书架整份列表与阅读页一起重组
+    val searchResults = state.hits
+    val isSearching = state.isSearching
+    val scannedChapters = state.scannedChapters
+    val totalChapters = state.totalChapters
+
     BackHandler(onBack = onBack)
 
     val colorScheme = MaterialTheme.colorScheme

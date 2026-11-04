@@ -127,6 +127,8 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val uiState by viewModel.uiState.collectAsState()
+            val transferState by viewModel.transferState.collectAsState()
+            val searchState by viewModel.searchState.collectAsState()
             val colorScheme = watchColorSchemeOf(ThemeMode.fromValue(uiState.themeMode))
 
             // 动态同步 Window 底层 DecorView 背景色与硬件独立屏幕亮度。
@@ -150,7 +152,7 @@ class MainActivity : ComponentActivity() {
                     shapes = WatchShapesM3
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
-                        AppContent(uiState)
+                        AppContent(uiState, transferState, searchState)
 
                         // 恢复备份确认浮层：SAF 选完文件先亮出将载入的书目数，确认才覆盖。
                         // 出口三条：取消按钮 / 返回键 / 右滑，后两者一律走「取消」而非覆盖，
@@ -306,7 +308,11 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun AppContent(uiState: ReaderUiState) {
+    private fun AppContent(
+        uiState: ReaderUiState,
+        transferState: TransferUiState,
+        searchState: SearchState
+    ) {
         val screen = uiState.screen
 
         // 阅读页常驻层：呼出菜单 / 目录 / 速读时不再拆解阅读页 ——
@@ -368,7 +374,12 @@ class MainActivity : ComponentActivity() {
                 ReaderScreen(state = readerState, actions = readerActions)
             }
 
-            ScreenSlot(uiState = uiState, screen = screen)
+            ScreenSlot(
+                uiState = uiState,
+                screen = screen,
+                transferState = transferState,
+                searchState = searchState
+            )
         }
     }
 
@@ -377,7 +388,12 @@ class MainActivity : ComponentActivity() {
      * 使页面切换不再销毁阅读页；其余页面按其自身入场节奏淡入。
      */
     @Composable
-    private fun ScreenSlot(uiState: ReaderUiState, screen: Screen) {
+    private fun ScreenSlot(
+        uiState: ReaderUiState,
+        screen: Screen,
+        transferState: TransferUiState,
+        searchState: SearchState
+    ) {
         // 页面级切换过渡。只有两类边界瞬时切换，其余页面保留纯 alpha 淡入淡出
         // （不用 scale：缩放会逐帧重建全屏离屏缓冲并重采样）：
         // 1. 目标页自带入场动效 —— 书架 / 菜单的逐卡 staggeredEnter，父层淡入与其重叠；
@@ -517,10 +533,7 @@ class MainActivity : ComponentActivity() {
 
                 is Screen.Search -> SearchScreen(
                     chapters = uiState.chapters,
-                    searchResults = uiState.searchResults,
-                    isSearching = uiState.isSearching,
-                    scannedChapters = uiState.searchScannedChapters,
-                    totalChapters = uiState.searchTotalChapters,
+                    state = searchState,
                     query = uiState.bookSearchQuery,
                     onQueryChange = { viewModel.setBookSearchQuery(it) },
                     onSearch = { viewModel.searchInBook(it) },
@@ -529,16 +542,9 @@ class MainActivity : ComponentActivity() {
                 )
 
                 is Screen.WifiTransfer -> WifiTransferScreen(
-                    ipAddress = uiState.wifiIpAddress,
-                    port = uiState.wifiPort,
-                    accessToken = uiState.wifiToken,
-                    uploadedCount = uiState.wifiUploadedCount,
-                    isServerRunning = uiState.isWifiServerRunning,
-                    isTransferring = uiState.isTransferring,
-                    transferProgress = uiState.transferProgress,
-                    transferFileName = uiState.transferFileName,
+                    state = transferState,
                     onToggleServer = {
-                        if (uiState.isWifiServerRunning) viewModel.closeWifiTransfer() else viewModel.openWifiTransfer()
+                        if (transferState.isRunning) viewModel.closeWifiTransfer() else viewModel.openWifiTransfer()
                     },
                     onBack = { viewModel.closeWifiTransfer() }
                 )

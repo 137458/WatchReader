@@ -53,17 +53,21 @@ import kotlin.math.min
  */
 @Composable
 fun WifiTransferScreen(
-    ipAddress: String?,
-    port: Int = 8888,
-    accessToken: String? = null,
-    uploadedCount: Int,
-    isServerRunning: Boolean,
-    isTransferring: Boolean = false,
-    transferProgress: Float = 0f,
-    transferFileName: String = "",
+    state: TransferUiState,
     onToggleServer: () -> Unit,
     onBack: () -> Unit
 ) {
+    // 传书态是独立于书架/阅读态的型（TransferUiState），整页只有一个入参：
+    // 上传进度变化只会重组本页，不会带着书架的整份列表一起重组
+    val ipAddress = state.ipAddress
+    val port = state.port
+    val accessToken = state.token
+    val uploadedCount = state.uploadedCount
+    val isServerRunning = state.isRunning
+    val isTransferring = state.isTransferring
+    val transferProgress = state.progress
+    val transferFileName = state.fileName
+
     val colorScheme = MaterialTheme.colorScheme
     val tick = rememberTickHaptic()
 

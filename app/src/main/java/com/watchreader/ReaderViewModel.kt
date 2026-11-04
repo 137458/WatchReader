@@ -62,14 +62,6 @@ data class ReaderUiState(
     val errorMessage: String? = null,
     val bookshelf: List<BookItem> = emptyList(),
     val searchQuery: String = "",
-    val isWifiServerRunning: Boolean = false,
-    val wifiIpAddress: String? = null,
-    val wifiPort: Int = 8888,
-    val wifiToken: String? = null,
-    val wifiUploadedCount: Int = 0,
-    val isTransferring: Boolean = false,
-    val transferProgress: Float = 0f,
-    val transferFileName: String = "",
     val rsvpSpeed: Float = 350f,
     val themeMode: Int = 0,
     val tapPageArea: Int = 0,
@@ -81,10 +73,6 @@ data class ReaderUiState(
     val readGoalCelebrated: String = "",
     val lineSpacing: Int = LineSpacingMode.STANDARD.value,
     val letterSpacing: Int = LetterSpacingMode.STANDARD.value,
-    val isSearching: Boolean = false,
-    val searchResults: List<SearchHit> = emptyList(),
-    val searchScannedChapters: Int = 0,
-    val searchTotalChapters: Int = 0,
     val bookSearchQuery: String = "",
     val pendingRestoreCount: Int? = null,
     val infoMessage: String? = null
@@ -109,14 +97,40 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val reading = ReadingSession(appCtx, viewModelScope)
 
     private var cleanTypographyJob: Job? = null
-    private var searchJob: Job? = null
+
+    /**
+     * 书内搜索编排：扫描、进度上报、取消语义都在它里面，搜索态不再占用 ReaderUiState
+     * （搜索逐键/逐切片回写整份 uiState 会连带书架列表一起重组）
+     */
+    private val search = BookSearchController(viewModelScope)
+
+    val searchState: StateFlow<SearchState> = search.state
 
     // 异步防抖持久化 Job
     private var savePositionJob: Job? = null
     private var loadJob: Job? = null
 
-    // Wi-Fi 传书协程监听生命周期托管
-    private var wifiCollectJob: Job? = null
+    /**
+     * 传书服务生命周期与状态镜像：ip/端口/令牌/进度不再占用 ReaderUiState，
+     * 传书页只订阅这条流，书架的整份状态不会因为上传进度而变化
+     */
+    private val transferController = TransferController(viewModelScope) {
+        WifiTransferServerAdapter(
+            WifiTransferServer(
+                context = appCtx,
+                preferredPort = 8888,
+                onBookUploaded = { _ ->
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val shelf = DataStoreManager.loadBookShelf(appCtx)
+                        _uiState.update { it.copy(bookshelf = shelf) }
+                    }
+                },
+                onBookDeleted = { fileName -> notifyBookDeletedFromWeb(fileName) }
+            )
+        )
+    }
+
+    val transferState: StateFlow<TransferUiState> = transferController.state
 
     // 活跃阅读时长统计器（uptimeMillis：间隔计算不受系统时间调整影响）
     private var readingTimerJob: Job? = null
@@ -249,15 +263,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         // 重入即取消上一次装载：两本书的流程交错会互相覆盖会话状态
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
-            searchJob?.cancel()
+            search.reset()
             _uiState.update {
                 it.copy(
                     isLoading = true,
                     screen = Screen.Loading,
                     currentUri = uri,
-                    errorMessage = null,
-                    isSearching = false,
-                    searchResults = emptyList()
+                    errorMessage = null
                 )
             }
 
@@ -355,160 +367,17 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * 搜索用单章装载：固定原样态（正文 = 原文切片，坐标可直接换算），且绕过章节预热缓存——
-     * 全书扫描不得把 16 章预热窗口挤掉。格式分流（EPUB 条目 / 文本切片）由 `BookSource` 决定。
-     */
-    private suspend fun loadChapterContentForSearch(chapterIndex: Int): ChapterContent? =
-        reading.readChapterForSearch(chapterIndex)
-
-    /**
-     * 书内全文搜索：有连续字符流（TXT / 转换类格式）时单趟顺序解码 + [ChapterSliceAssembler]
-     * 边界切片，逐章从头 skip 解码的 O(n²) 只剩"没有流"的格式（EPUB 条目各自为政，
-     * 总代价本就是各章之和）；命中即增量上报，全书命中总数受 MAX_RESULTS 封顶
+     * 书内全文搜索：编排（有没有连续流 / 按章还是按切片 / 进度与取消语义）全部归
+     * [BookSearchController]；本类只做两件事——把阅读会话适配成可搜对象、留住最后一次搜索词
      */
     fun searchInBook(query: String) {
-        val state = _uiState.value
-        if (state.currentUri == null) return
-        val q = query.trim()
-        if (state.chapters.isEmpty() || q.isEmpty()) return
-
-        searchJob?.cancel()
-        _uiState.update {
-            it.copy(
-                // 搜索词随结果一起收敛进 VM：返回后再进搜索页可微调关键词重查，
-                // 不再出现"有结果无关键词"的表冠重打成本
-                bookSearchQuery = q,
-                isSearching = true,
-                searchResults = emptyList(),
-                searchScannedChapters = 0,
-                searchTotalChapters = state.chapters.size
-            )
-        }
-        searchJob = viewModelScope.launch {
-            val hits = mutableListOf<SearchHit>()
-            try {
-                withContext(Dispatchers.IO) {
-                    val chapters = reading.chapters
-                    val stream = reading.openCharStream()
-                    if (stream == null) {
-                        // 没有连续流（EPUB）或流打不开：逐章装载，坐标域与单趟扫描一致，仅慢
-                        for ((idx, _) in chapters.withIndex()) {
-                            if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
-                            scanChapterByLoading(idx, q, hits)
-                            reportSearchProgress(idx + 1, hits)
-                        }
-                    } else {
-                        stream.use { reader ->
-                            val assembler = ChapterSliceAssembler(reading.chapterEndOffsets())
-                            val buf = CharArray(24576)
-                            while (isActive && hits.size < BookSearchEngine.MAX_RESULTS) {
-                                val n = reader.read(buf)
-                                if (n < 0) break
-                                if (n > 0) assembler.feed(buf, 0, n)
-                                drainSearchSlices(assembler.drain(), q, hits)
-                            }
-                            assembler.finish()
-                            drainSearchSlices(assembler.drain(), q, hits)
-                            reportSearchProgress(chapters.size, hits)
-                        }
-                    }
-                }
-            } finally {
-                if (isActive) {
-                    _uiState.update { it.copy(isSearching = false, searchResults = hits.toList()) }
-                }
-            }
-        }
+        search.search(if (reading.isOpen()) reading.asSearchableBook() else null, query)
+        // 搜索词与结果同生命周期：返回后再进搜索页仍可微调关键词重查
+        if (search.state.value.isSearching) _uiState.update { it.copy(bookSearchQuery = query.trim()) }
     }
 
     /** 停止全书扫描（离开搜索页 / 跳转命中时调用）：已扫到的命中保留，转圈态立即复位 */
-    fun cancelSearch() {
-        searchJob?.cancel()
-        searchJob = null
-        _uiState.update { it.copy(isSearching = false) }
-    }
-
-    /** 单章装载→匹配（EPUB 与流打开失败的回退路径），坐标语义与流式切片一致 */
-    private suspend fun scanChapterByLoading(
-        chapterIndex: Int,
-        query: String,
-        hits: MutableList<SearchHit>
-    ) {
-        val content = loadChapterContentForSearch(chapterIndex) ?: return
-        appendSearchHits(
-            content.formattedBody,
-            content.rawParagraphStarts.firstOrNull() ?: 0,
-            content.startCharOffset,
-            chapterIndex,
-            query,
-            hits
-        )
-    }
-
-    /** 流式切片→与逐章装载同语义的净化关闭态排版→匹配（单趟扫描核心步） */
-    private fun scanChapterSlice(
-        slice: String,
-        chapterIndex: Int,
-        query: String,
-        hits: MutableList<SearchHit>
-    ) {
-        val chapters = reading.chapters
-        if (chapterIndex !in chapters.indices || slice.isEmpty()) return
-        val bounds = BookSource.chapterBounds(chapters, chapterIndex, reading.totalChars) ?: return
-        val content = formatChapterRawText(
-            slice, chapters, chapterIndex, bounds.start, bounds.end, cleanTypography = false
-        )
-        appendSearchHits(
-            content.formattedBody,
-            content.rawParagraphStarts.firstOrNull() ?: 0,
-            bounds.start,
-            chapterIndex,
-            query,
-            hits
-        )
-    }
-
-    /** 单趟扫描吐出的整章切片批量匹配，并按最后完成的章节上报进度 */
-    private fun drainSearchSlices(
-        slices: List<Pair<Int, String>>,
-        query: String,
-        hits: MutableList<SearchHit>
-    ) {
-        if (slices.isEmpty()) return
-        for ((idx, slice) in slices) {
-            if (hits.size >= BookSearchEngine.MAX_RESULTS) break
-            scanChapterSlice(slice, idx, query, hits)
-        }
-        reportSearchProgress(slices.last().first + 1, hits)
-    }
-
-    private fun appendSearchHits(
-        body: String,
-        bodyStartInRaw: Int,
-        baseCharOffset: Int,
-        chapterIndex: Int,
-        query: String,
-        hits: MutableList<SearchHit>
-    ) {
-        if (body.isEmpty()) return
-        val chapters = reading.chapters
-        if (chapterIndex !in chapters.indices) return
-        hits += BookSearchEngine.findMatches(
-            body = body,
-            query = query,
-            bodyStartInRaw = bodyStartInRaw,
-            baseCharOffset = baseCharOffset,
-            chapterIndex = chapterIndex,
-            chapterTitle = chapters[chapterIndex].title,
-            maxHits = BookSearchEngine.MAX_RESULTS - hits.size
-        )
-    }
-
-    private fun reportSearchProgress(scanned: Int, hits: List<SearchHit>) {
-        _uiState.update {
-            it.copy(searchScannedChapters = scanned, searchResults = hits.toList())
-        }
-    }
+    fun cancelSearch() = search.cancel()
 
     /** 跳转至搜索命中位置（章节 + 全书原始字符偏移精准定位），跳转即停止后台扫描 */
     fun jumpToSearchHit(hit: SearchHit) {
@@ -633,61 +502,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private var wifiServer: WifiTransferServer? = null
-
     /**
      * 开启局域网 Wi-Fi 传书服务
      */
     fun openWifiTransfer() {
-        if (wifiServer == null) {
-            wifiServer = WifiTransferServer(
-                context = appCtx,
-                preferredPort = 8888,
-                onBookUploaded = { _ ->
-                    viewModelScope.launch(Dispatchers.IO) {
-                        val shelf = DataStoreManager.loadBookShelf(appCtx)
-                        _uiState.update { it.copy(bookshelf = shelf) }
-                    }
-                },
-                onBookDeleted = { fileName ->
-                    notifyBookDeletedFromWeb(fileName)
-                }
-            )
-        }
-        // 先切页，再后台绑定：ServerSocket bind（最多尝试 6 个端口）与网卡枚举是阻塞 IO，
-        // 从 onClick 主线程直调存在 ANR 风险
-        _uiState.update { it.copy(screen = Screen.WifiTransfer, wifiIpAddress = null, wifiToken = null, wifiUploadedCount = 0) }
+        // 先切页，再后台绑定：端口 bind（最多尝试 6 个候选端口）与网卡枚举都是阻塞 IO，
+        // open() 因此是阻塞调用，留在主线程会让 onClick 直接 ANR
+        _uiState.update { it.copy(screen = Screen.WifiTransfer) }
         viewModelScope.launch {
-            val server = wifiServer ?: return@launch
-            val started = withContext(Dispatchers.IO) { server.start() }
-            val ip = withContext(Dispatchers.IO) { server.getLocalIpAddress() }
-            _uiState.update {
-                it.copy(
-                    isWifiServerRunning = started,
-                    wifiIpAddress = ip,
-                    wifiPort = server.activePort,
-                    wifiToken = server.accessToken
-                )
-            }
-        }
-        wifiCollectJob?.cancel()
-        wifiCollectJob = viewModelScope.launch {
-            launch {
-                wifiServer?.uploadedCount?.collect { count ->
-                    _uiState.update { it.copy(wifiUploadedCount = count) }
-                }
-            }
-            launch {
-                wifiServer?.transferProgress?.collect { tp ->
-                    _uiState.update {
-                        it.copy(
-                            isTransferring = tp.isTransferring,
-                            transferProgress = tp.progress,
-                            transferFileName = tp.fileName
-                        )
-                    }
-                }
-            }
+            withContext(Dispatchers.IO) { transferController.open() }
         }
     }
 
@@ -695,19 +518,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 关闭局域网 Wi-Fi 传书服务
      */
     fun closeWifiTransfer() {
-        wifiServer?.stop()
-        wifiCollectJob?.cancel()
-        wifiCollectJob = null
         viewModelScope.launch(Dispatchers.IO) {
+            // stop() 要关监听 socket，同样不能留在主线程
+            transferController.close()
             val shelf = DataStoreManager.loadBookShelf(appCtx)
             _uiState.update {
                 it.copy(
                     screen = Screen.Home,
-                    isWifiServerRunning = false,
-                    isTransferring = false,
-                    transferProgress = 0f,
-                    transferFileName = "",
-                    wifiToken = null,
                     bookshelf = shelf
                 )
             }
@@ -856,7 +673,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     /** 关书统一路径：落盘进度 + 取消预热/搜索 + 清空章节缓存 + 复位到书架 */
     private fun closeBookInternal() {
         flushReadingPosition()
-        searchJob?.cancel()
+        search.reset()
         reading.close()
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.saveLastScreen(appCtx, "home")
@@ -869,9 +686,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     currentChapterIndex = 0,
                     currentChapterContent = null,
                     bookshelf = shelf,
-                    screen = Screen.Home,
-                    isSearching = false,
-                    searchResults = emptyList()
+                    screen = Screen.Home
                 )
             }
         }
@@ -1205,12 +1020,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         loadJob?.cancel()
         reading.close()
         cleanTypographyJob?.cancel()
-        searchJob?.cancel()
+        search.cancel()
         savePositionJob?.cancel()
-        wifiCollectJob?.cancel()
         readingTimerJob?.cancel()
-        wifiServer?.stop()
-        wifiServer = null
+        transferController.close()
         RotaryHapticManager.shutdown()
         super.onCleared()
     }
