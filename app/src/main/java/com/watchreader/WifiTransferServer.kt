@@ -13,16 +13,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.*
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.File
 import java.net.Inet4Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
-import java.net.URLDecoder
-import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.SecureRandom
 
@@ -37,11 +35,15 @@ data class TransferProgress(
     val totalBytes: Long = 0L
 )
 
-/** 书籍清单单条记录（文件名 + 体积 + 修改时间） */
-internal data class BookFileEntry(val name: String, val size: Long, val modified: Long)
-
 /**
  * 局域网 Wi-Fi 网页无线传书轻量级 HTTP 服务
+ *
+ * 本类只做「传输管道」：端口绑定与回退、socket 生命周期、令牌鉴权、进度与触感、上传后入库。
+ * 协议解析与动作分发分别落在三个纯 JVM 模块里，本类不解析请求行、不拼响应头：
+ * - [HttpRequestParser]：请求头 → [HttpRequest]；
+ * - [EntityBody]：按 Content-Length / chunked 把 socket 流还原成一个实体体；
+ * - [TransferEndpoint]：路径 + 请求体 → [TransferResponse]，副作用经 [TransferEndpoint.Listener] 回调回本类；
+ * - [HttpResponseWriter]：把 [TransferResponse] 写回 socket。
  *
  * 特性：
  * 1. 0 第三方依赖：纯原生 ServerSocket 构建，包体积 0 增加。
@@ -69,13 +71,13 @@ class WifiTransferServer(
 
     companion object {
         /**
-         * 单文件上传硬上限 50MB。
+         * 单文件上传硬上限 50MB（实现见 [TransferEndpoint.MAX_UPLOAD_BYTES]）。
          *
          * 手表可用存储远小于手机，且上传直接写进 books 目录（不落临时盘），一次误传超大文件
          * 就能把 /data 写满并让后续所有写盘操作失败；50MB 对纯文本/EPUB 小说已是充裕上界。
          * 声明了 Content-Length 的请求在开写前就拒绝，未声明长度的（chunked）由流式累计兜底。
          */
-        internal const val MAX_UPLOAD_BYTES: Long = 50L * 1024L * 1024L
+        internal const val MAX_UPLOAD_BYTES: Long = TransferEndpoint.MAX_UPLOAD_BYTES
 
         /** 会话令牌长度（字符） */
         private const val TOKEN_LENGTH = 12
@@ -96,40 +98,14 @@ class WifiTransferServer(
 
         /** 上传体是否超限；contentLength < 0 表示未声明长度，不在此预判 */
         internal fun uploadExceedsLimit(contentLength: Long, limit: Long = MAX_UPLOAD_BYTES): Boolean =
-            contentLength > limit
+            TransferEndpoint.uploadExceedsLimit(contentLength, limit)
 
-        /** 书籍清单 JSON：统一走 org.json，文件名含引号/反斜杠/换行时不再拼出伪 JSON */
-        internal fun bookListJson(entries: List<BookFileEntry>): String {
-            val array = JSONArray()
-            for (entry in entries) {
-                array.put(
-                    JSONObject()
-                        .put("name", entry.name)
-                        .put("size", entry.size)
-                        .put("modified", entry.modified)
-                )
-            }
-            return array.toString()
-        }
+        /** 书籍清单 JSON（实现见 [TransferEndpoint.bookListJson]） */
+        internal fun bookListJson(entries: List<BookFileEntry>): String =
+            TransferEndpoint.bookListJson(entries)
 
-        internal fun parseQueryParams(rawPath: String): Map<String, String> {
-            val map = mutableMapOf<String, String>()
-            val qIdx = rawPath.indexOf('?')
-            if (qIdx >= 0 && qIdx + 1 < rawPath.length) {
-                val queryStr = rawPath.substring(qIdx + 1)
-                for (p in queryStr.split("&")) {
-                    val kv = p.split("=")
-                    if (kv.size == 2 && kv[0].isNotEmpty()) {
-                        try {
-                            map[kv[0].lowercase()] = URLDecoder.decode(kv[1], "UTF-8")
-                        } catch (_: Exception) {
-                            map[kv[0].lowercase()] = kv[1]
-                        }
-                    }
-                }
-            }
-            return map
-        }
+        /** 解析 target 里的查询串（实现见 [parseQuery]） */
+        internal fun parseQueryParams(rawPath: String): Map<String, String> = parseQuery(rawPath)
 
         /** 恒时比较令牌：空值/不一致一律拒绝，空串也视作未提供 */
         internal fun tokenMatches(presented: String?, expected: String): Boolean {
@@ -154,6 +130,63 @@ class WifiTransferServer(
         val dir = File(context.filesDir, "books")
         if (!dir.exists()) dir.mkdirs()
         dir
+    }
+
+    /** 端点把副作用回调到这里：进度、触感、入库都留在 Android 侧，端点本身保持纯 JVM */
+    private val endpoint: TransferEndpoint by lazy {
+        TransferEndpoint(
+            booksDir = booksDir,
+            isSupportedFileName = BookTextConverter::isSupportedFileName,
+            uploadedCount = { _uploadedCount.value },
+            listener = object : TransferEndpoint.Listener {
+
+                override fun onUploadRejected(fileName: String, declaredBytes: Long) {
+                    Log.w(TAG, "拒绝超限上传 $fileName：$declaredBytes > $MAX_UPLOAD_BYTES")
+                }
+
+                override fun onUploadStarted(fileName: String, declaredBytes: Long) {
+                    _transferProgress.value = TransferProgress(
+                        isTransferring = true,
+                        fileName = fileName,
+                        progress = 0.05f,
+                        bytesRead = 0,
+                        totalBytes = declaredBytes
+                    )
+                    RotaryHapticManager.performScrollTick(context, null)
+                }
+
+                override fun onUploadChunk(
+                    fileName: String,
+                    progress: Float,
+                    bytesRead: Long,
+                    declaredBytes: Long
+                ) {
+                    _transferProgress.value = TransferProgress(
+                        isTransferring = true,
+                        fileName = fileName,
+                        progress = progress,
+                        bytesRead = bytesRead,
+                        totalBytes = declaredBytes
+                    )
+                }
+
+                override fun onUploadMilestone() {
+                    RotaryHapticManager.performScrollTick(context, null)
+                }
+
+                override fun onUploadAborted() {
+                    _transferProgress.value = TransferProgress()
+                }
+
+                override fun onUploadSaved(file: File, fileName: String) {
+                    onFileSuccessfullySaved(file, fileName)
+                }
+
+                override fun onBookDeleted(fileName: String) {
+                    onBookDeleted?.invoke(fileName)
+                }
+            }
+        )
     }
 
     /**
@@ -267,56 +300,33 @@ class WifiTransferServer(
             val input = BufferedInputStream(socket.getInputStream())
             val output = BufferedOutputStream(socket.getOutputStream())
 
-            val requestHeader = readHeader(input)
-            if (requestHeader.isEmpty()) {
+            val request = HttpRequestParser.read(input)
+            if (request == null) {
                 socket.close()
                 return
             }
-
-            val lines = requestHeader.lines()
-            val requestLine = lines.firstOrNull() ?: ""
-            val parts = requestLine.split(" ")
-            if (parts.size < 2) {
-                socket.close()
-                return
-            }
-
-            val method = parts[0].uppercase()
-            val rawPath = parts[1]
 
             // 访问令牌校验：二维码 URL 与网页 JS 均携带 token，未授权请求一律拒绝，
             // 杜绝同网段任意设备/网页静默读架、删书、上传
-            if (!tokenMatches(parseQueryParams(rawPath)["token"], sessionToken)) {
-                sendResponse(output, 401, "application/json", """{"status":"error","message":"未授权：请通过手表二维码重新进入传书页"}""")
+            if (!tokenMatches(request.query["token"], sessionToken)) {
+                HttpResponseWriter.write(
+                    output,
+                    TransferResponse.Text(
+                        401,
+                        "application/json",
+                        """{"status":"error","message":"未授权：请通过手表二维码重新进入传书页"}"""
+                    )
+                )
                 return
             }
 
-            when {
-                method == "GET" && (rawPath == "/" || rawPath.startsWith("/?")) -> {
-                    serveWebPage(output)
-                }
-                method == "GET" && rawPath == "/favicon.ico" -> {
-                    sendResponse(output, 204, "image/x-icon", "")
-                }
-                method == "GET" && rawPath == "/status" -> {
-                    sendResponse(output, 200, "application/json", """{"status":"ok","uploaded":${_uploadedCount.value}}""")
-                }
-                method == "GET" && (rawPath == "/api/books" || rawPath.startsWith("/api/books?")) -> {
-                    handleGetBooks(output)
-                }
-                (method == "POST" || method == "DELETE") && rawPath.startsWith("/api/books/delete") -> {
-                    handleDeleteBook(rawPath, output)
-                }
-                method == "GET" && (rawPath.startsWith("/api/download") || rawPath.startsWith("/download")) -> {
-                    handleDownloadBook(rawPath, output)
-                }
-                method == "POST" && rawPath.startsWith("/upload") -> {
-                    handleFileUpload(rawPath, lines, input, output)
-                }
-                else -> {
-                    sendResponse(output, 404, "text/plain", "Not Found")
-                }
+            val body = EntityBody.open(request.headers, input)
+            val response = endpoint.dispatch(request, body)
+            // 端点内部吞掉异常并回 500，异常现场只剩状态码，这里补一条日志便于排查落盘失败
+            if (response is TransferResponse.Text && response.status >= 500) {
+                Log.w(TAG, "Endpoint returned ${response.status}: ${request.method} ${request.target}")
             }
+            HttpResponseWriter.write(output, response)
         } catch (e: Exception) {
             Log.w(TAG, "Error handling client request", e)
         } finally {
@@ -324,162 +334,8 @@ class WifiTransferServer(
         }
     }
 
-    private fun readHeader(input: InputStream): String {
-        val baos = ByteArrayOutputStream()
-        var b: Int
-        var consecutiveNewlines = 0
-
-        while (input.read().also { b = it } != -1) {
-            baos.write(b)
-            if (b == '\n'.code) {
-                consecutiveNewlines++
-                if (consecutiveNewlines >= 2) break
-            } else if (b != '\r'.code) {
-                consecutiveNewlines = 0
-            }
-            if (baos.size() > 65536) break
-        }
-        return baos.toString("UTF-8")
-    }
-
-    private fun handleFileUpload(rawPath: String, headers: List<String>, input: InputStream, output: OutputStream) {
-        var contentLength = -1L
-        val params = parseQueryParams(rawPath)
-        var queryFileName = params["filename"] ?: params["name"] ?: ""
-
-        for (h in headers) {
-            val lower = h.lowercase()
-            if (lower.startsWith("content-length:")) {
-                contentLength = h.substring(15).trim().toLongOrNull() ?: -1L
-            } else if (lower.startsWith("x-filename:")) {
-                try {
-                    queryFileName = URLDecoder.decode(h.substring(11).trim(), "UTF-8")
-                } catch (_: Exception) {}
-            }
-        }
-
-        if (queryFileName.isNotEmpty()) {
-            saveDirectStreamUpload(queryFileName, contentLength, input, output)
-            return
-        }
-
-        // multipart 表单分支已移除：原实现从不扫描 boundary，会把分隔符与 part 头原样写进书籍文件
-        // 产出损坏内容。手表端统一使用网页内置的 X-Filename 直存协议，标准 multipart 客户端明确报错
-        sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持内置网页直传（缺少 filename 参数）"}""")
-    }
-
-    private fun saveDirectStreamUpload(
-        fileName: String,
-        contentLength: Long,
-        input: InputStream,
-        output: OutputStream
-    ) {
-        try {
-            val cleanName = File(fileName).name
-            if (!BookTextConverter.isSupportedFileName(cleanName)) {
-                sendResponse(output, 400, "application/json", """{"status":"error","message":"仅支持 .txt / .epub / .mobi / .azw3 / .fb2 / .html 格式"}""")
-                return
-            }
-
-            // 体积上限先看声明长度：超限请求一个字节都不写盘
-            if (uploadExceedsLimit(contentLength)) {
-                Log.w(TAG, "拒绝超限上传 $cleanName：$contentLength > $MAX_UPLOAD_BYTES")
-                _transferProgress.value = TransferProgress(isTransferring = false)
-                val body = JSONObject()
-                    .put("status", "error")
-                    .put("message", "文件超过 50MB 上传上限")
-                sendResponse(output, 413, "application/json", body.toString())
-                return
-            }
-
-            // 初始化进度
-            _transferProgress.value = TransferProgress(
-                isTransferring = true,
-                fileName = cleanName,
-                progress = 0.05f,
-                bytesRead = 0,
-                totalBytes = contentLength
-            )
-            RotaryHapticManager.performScrollTick(context, null)
-
-            val savedFile = File(booksDir, cleanName)
-            var totalRead = 0L
-            var overflow = false
-            try {
-                FileOutputStream(savedFile).use { fos ->
-                    val buf = ByteArray(32768)
-                    var read: Int
-                    var lastMilestone = 0
-
-                    while (input.read(buf).also { read = it } != -1) {
-                        fos.write(buf, 0, read)
-                        totalRead += read
-
-                        // 未声明长度的上传（chunked）在这里兜底：一旦越线立刻停手，避免写满存储
-                        if (uploadExceedsLimit(totalRead)) {
-                            overflow = true
-                            break
-                        }
-
-                        val p = if (contentLength > 0) (totalRead.toFloat() / contentLength).coerceIn(0.05f, 0.98f) else 0.5f
-                        _transferProgress.value = TransferProgress(
-                            isTransferring = true,
-                            fileName = cleanName,
-                            progress = p,
-                            bytesRead = totalRead,
-                            totalBytes = contentLength
-                        )
-
-                        val milestone = (p * 4).toInt()
-                        if (milestone > lastMilestone) {
-                            lastMilestone = milestone
-                            RotaryHapticManager.performScrollTick(context, null)
-                        }
-
-                        if (contentLength > 0 && totalRead >= contentLength) {
-                            break
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                // 异常路径必须清理半成品：否则残缺文件会被 /api/books 当正常书籍展示
-                Log.e(TAG, "Error streaming upload: $cleanName", e)
-                try { savedFile.delete() } catch (_: Exception) {}
-                _transferProgress.value = TransferProgress(isTransferring = false)
-                sendResponse(output, 500, "application/json", """{"status":"error","message":"传输中断，已取消保存"}""")
-                return
-            }
-
-            if (overflow) {
-                // 越线即丢弃半成品：残缺的超大文件既不该留在 books 目录，也不该进书架
-                savedFile.delete()
-                _transferProgress.value = TransferProgress(isTransferring = false)
-                val body = JSONObject()
-                    .put("status", "error")
-                    .put("message", "文件超过 50MB 上传上限")
-                sendResponse(output, 413, "application/json", body.toString())
-                return
-            }
-
-            if (contentLength > 0 && totalRead < contentLength) {
-                savedFile.delete()
-                _transferProgress.value = TransferProgress(isTransferring = false)
-                sendResponse(output, 400, "application/json", """{"status":"error","message":"文件传输中断，已取消保存"}""")
-                return
-            }
-
-            onFileSuccessfullySaved(savedFile, cleanName, output)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in saveDirectStreamUpload", e)
-            _transferProgress.value = TransferProgress(isTransferring = false)
-            val body = JSONObject()
-                .put("status", "error")
-                .put("message", e.localizedMessage ?: "传输失败")
-            sendResponse(output, 500, "application/json", body.toString())
-        }
-    }
-
-    private fun onFileSuccessfullySaved(file: File, fileName: String, output: OutputStream) {
+    /** 上传落盘成功：入库、进度 100%、触感；响应体仍由端点返回 */
+    private fun onFileSuccessfullySaved(file: File, fileName: String) {
         val uri = Uri.fromFile(file)
         val bookTitle = EpubParser.cleanBookTitle(fileName)
         val bookItem = BookItem(
@@ -509,324 +365,10 @@ class WifiTransferServer(
 
         RotaryHapticManager.performSuccessFeedback(context)
 
-        val body = JSONObject().put("status", "ok").put("fileName", fileName)
-        sendResponse(output, 200, "application/json", body.toString())
-
         // 1.2 秒后平滑恢复常驻就绪视图
         scope.launch {
             delay(1200)
             _transferProgress.value = TransferProgress(isTransferring = false)
         }
-    }
-
-    private fun handleGetBooks(output: OutputStream) {
-        val files = booksDir.listFiles()?.filter { BookTextConverter.isSupportedFileName(it.name) }?.sortedByDescending { it.lastModified() } ?: emptyList()
-
-        val entries = files.map { BookFileEntry(it.name, it.length(), it.lastModified()) }
-        sendResponse(output, 200, "application/json; charset=utf-8", bookListJson(entries))
-    }
-
-    private fun handleDownloadBook(rawPath: String, output: OutputStream) {
-        val params = parseQueryParams(rawPath)
-        val targetName = params["name"] ?: params["filename"] ?: ""
-        if (targetName.isEmpty()) {
-            sendResponse(output, 400, "application/json", """{"status":"error","message":"缺少书籍名称"}""")
-            return
-        }
-
-        val cleanName = File(targetName).name
-        val targetFile = File(booksDir, cleanName)
-        if (!targetFile.exists()) {
-            sendResponse(output, 404, "application/json", """{"status":"not_found","message":"书籍不存在"}""")
-            return
-        }
-
-        try {
-            val contentType = when (BookFormat.fromExtension(File(cleanName).extension)) {
-                BookFormat.EPUB -> "application/epub+zip"
-                BookFormat.MOBI -> "application/x-mobipocket-ebook"
-                BookFormat.FB2 -> "text/xml; charset=utf-8"
-                BookFormat.HTML -> "text/html; charset=utf-8"
-                else -> "text/plain; charset=utf-8"
-            }
-            val encodedFilename = try {
-                URLEncoder.encode(cleanName, "UTF-8").replace("+", "%20")
-            } catch (_: Exception) { cleanName }
-
-            val fileLength = targetFile.length()
-            val header = "HTTP/1.1 200 OK\r\n" +
-                "Content-Type: $contentType\r\n" +
-                "Content-Length: $fileLength\r\n" +
-                "Content-Disposition: attachment; filename*=UTF-8''$encodedFilename\r\n" +
-                "Connection: close\r\n\r\n"
-            output.write(header.toByteArray(Charsets.UTF_8))
-            FileInputStream(targetFile).use { fis ->
-                fis.copyTo(output, 32768)
-            }
-            output.flush()
-        } catch (e: Exception) {
-            Log.w(TAG, "Error streaming download file: $cleanName", e)
-        }
-    }
-
-    private fun handleDeleteBook(rawPath: String, output: OutputStream) {
-        val params = parseQueryParams(rawPath)
-        val targetName = params["name"] ?: params["filename"] ?: ""
-        if (targetName.isEmpty()) {
-            sendResponse(output, 400, "application/json", """{"status":"error","message":"缺少书籍名称"}""")
-            return
-        }
-
-        val cleanName = File(targetName).name
-        val targetFile = File(booksDir, cleanName)
-        if (targetFile.exists()) {
-            val deleted = targetFile.delete()
-            if (deleted) {
-                onBookDeleted?.invoke(cleanName)
-                sendResponse(
-                    output,
-                    200,
-                    "application/json",
-                    JSONObject().put("status", "ok").put("deleted", cleanName).toString()
-                )
-            } else {
-                sendResponse(output, 500, "application/json", """{"status":"error","message":"删除失败"}""")
-            }
-        } else {
-            sendResponse(output, 404, "application/json", """{"status":"not_found","message":"书籍不存在"}""")
-        }
-    }
-
-    private fun sendResponse(output: OutputStream, statusCode: Int, contentType: String, content: String) {
-        val bytes = content.toByteArray(Charsets.UTF_8)
-        val statusText = when (statusCode) {
-            200 -> "OK"
-            204 -> "No Content"
-            400 -> "Bad Request"
-            401 -> "Unauthorized"
-            404 -> "Not Found"
-            413 -> "Payload Too Large"
-            else -> "Internal Server Error"
-        }
-        val header = "HTTP/1.1 $statusCode $statusText\r\n" +
-                "Content-Type: $contentType; charset=utf-8\r\n" +
-                "Content-Length: ${bytes.size}\r\n" +
-                "Connection: close\r\n\r\n"
-        output.write(header.toByteArray(Charsets.UTF_8))
-        output.write(bytes)
-        output.flush()
-    }
-
-    private fun serveWebPage(output: OutputStream) {
-        val html = """
-            <!DOCTYPE html>
-            <html lang="zh-CN">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-                <title>WatchReader 腕上无线传书</title>
-                <style>
-                    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-                    body { background: #0f1117; color: #e1e4ea; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 24px 16px; }
-                    .card { background: #1a1d26; border-radius: 16px; width: 100%; max-width: 520px; padding: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #2d3139; }
-                    .title { font-size: 20px; font-weight: 700; color: #58a6ff; text-align: center; margin-bottom: 8px; }
-                    .desc { font-size: 13px; color: #8b949e; text-align: center; margin-bottom: 24px; }
-                    .drop-zone { border: 2px dashed #388bfd; border-radius: 12px; padding: 36px 20px; text-align: center; background: rgba(56,139,253,0.04); cursor: pointer; transition: all 0.2s ease; margin-bottom: 20px; }
-                    .drop-zone:hover, .drop-zone.dragover { background: rgba(56,139,253,0.12); border-color: #58a6ff; }
-                    .drop-text { font-size: 15px; font-weight: 600; color: #c9d1d9; margin-bottom: 6px; }
-                    .drop-sub { font-size: 12px; color: #8b949e; }
-                    .btn { background: #238636; color: #ffffff; border: none; padding: 12px 20px; border-radius: 8px; font-size: 15px; font-weight: 600; cursor: pointer; width: 100%; transition: background 0.2s; }
-                    .btn:hover { background: #2ea043; }
-                    .btn:disabled { background: #234c2e; color: #8b949e; cursor: not-allowed; }
-                    #fileInput { display: none; }
-                    .file-list { margin-top: 20px; list-style: none; }
-                    .file-item { display: flex; flex-direction: column; background: #21262d; padding: 12px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 8px; }
-                    .file-header { display: flex; justify-content: space-between; align-items: center; width: 100%; }
-                    .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70%; font-weight: 500; }
-                    .file-status { font-weight: 600; font-size: 12px; }
-                    .success { color: #3fb950; }
-                    .error { color: #f85149; }
-                    .progress-track { height: 6px; background: #30363d; border-radius: 3px; overflow: hidden; margin-top: 8px; display: none; width: 100%; }
-                    .progress-fill { height: 100%; background: #388bfd; width: 0%; transition: width 0.15s ease-out; }
-                    .del-btn { background: #da3633; color: #ffffff; border: none; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background 0.2s; }
-                    .del-btn:hover { background: #b62324; }
-                    .down-btn { background: #238636; color: #ffffff; text-decoration: none; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background 0.2s; display: inline-block; }
-                    .down-btn:hover { background: #2ea043; }
-                    .book-meta { font-size: 11px; color: #8b949e; margin-top: 2px; }
-                </style>
-            </head>
-            <body>
-                <div class="card">
-                    <div class="title">WatchReader 腕上无线传书</div>
-                    <div class="desc">支持将本地 TXT / EPUB / MOBI / FB2 / HTML 小说直接无线推送到手表书架</div>
-                    <div class="drop-zone" id="dropZone">
-                        <div class="drop-text">点击或拖拽小说文件到此处</div>
-                        <div class="drop-sub">支持 .txt、.epub、.mobi、.azw3、.fb2、.html 格式（自动排版）</div>
-                    </div>
-                    <input type="file" id="fileInput" multiple accept=".txt,.md,.epub,.mobi,.azw3,.azw,.prc,.fb2,.html,.htm">
-                    <button class="btn" id="uploadBtn" disabled>开始传输到手表</button>
-                    <ul class="file-list" id="fileList"></ul>
-                </div>
-
-                <div class="card" style="margin-top: 20px;">
-                    <div class="title" style="font-size: 17px; margin-bottom: 4px;">手表已存书籍管理</div>
-                    <div class="desc" style="margin-bottom: 14px;">查看手表内已存书架，支持网页一键清理</div>
-                    <div id="shelfLoading" style="text-align:center; color:#8b949e; font-size:13px; padding:12px;">正在加载书架...</div>
-                    <ul class="file-list" id="shelfList"></ul>
-                </div>
-
-                <script>
-                    // 访问令牌：从进入 URL 的 query 中取得，所有接口调用统一附带，
-                    // 手表端逐请求校验，防止同网段未授权访问
-                    const TOKEN = new URLSearchParams(location.search).get('token') || '';
-                    function withToken(url) {
-                        return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN);
-                    }
-
-                    const dropZone = document.getElementById('dropZone');
-                    const fileInput = document.getElementById('fileInput');
-                    const uploadBtn = document.getElementById('uploadBtn');
-                    const fileList = document.getElementById('fileList');
-                    let selectedFiles = [];
-
-                    dropZone.addEventListener('click', () => fileInput.click());
-                    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
-                    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-                    dropZone.addEventListener('drop', (e) => {
-                        e.preventDefault();
-                        dropZone.classList.remove('dragover');
-                        handleFiles(e.dataTransfer.files);
-                    });
-                    fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
-
-                    function handleFiles(files) {
-                        for (let f of files) {
-                            if (/\.(txt|md|epub|mobi|azw3|azw|prc|fb2|html|htm)$/i.test(f.name)) {
-                                selectedFiles.push(f);
-                                const li = document.createElement('li');
-                                li.className = 'file-item';
-                                li.innerHTML = `
-                                    <div class="file-header">
-                                        <span class="file-name">${'$'}{f.name}</span>
-                                        <span class="file-status" style="color:#8b949e">待传输</span>
-                                    </div>
-                                    <div class="progress-track"><div class="progress-fill"></div></div>
-                                `;
-                                fileList.appendChild(li);
-                            }
-                        }
-                        if (selectedFiles.length > 0) uploadBtn.disabled = false;
-                    }
-
-                    uploadBtn.addEventListener('click', async () => {
-                        uploadBtn.disabled = true;
-                        const items = fileList.querySelectorAll('.file-item');
-
-                        for (let i = 0; i < selectedFiles.length; i++) {
-                            const file = selectedFiles[i];
-                            const item = items[i];
-                            const statusEl = item.querySelector('.file-status');
-                            const progressTrack = item.querySelector('.progress-track');
-                            const progressFill = item.querySelector('.progress-fill');
-
-                            progressTrack.style.display = 'block';
-                            statusEl.innerText = '正在传输 0%...';
-                            statusEl.style.color = '#58a6ff';
-
-                            await new Promise((resolve) => {
-                                const xhr = new XMLHttpRequest();
-                                const uploadUrl = withToken('/upload?filename=' + encodeURIComponent(file.name));
-                                xhr.open('POST', uploadUrl, true);
-                                xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-                                xhr.setRequestHeader('X-Filename', encodeURIComponent(file.name));
-
-                                xhr.upload.onprogress = (e) => {
-                                    if (e.lengthComputable) {
-                                        const pct = Math.round((e.loaded / e.total) * 100);
-                                        progressFill.style.width = pct + '%';
-                                        statusEl.innerText = `正在传输 ${'$'}{pct}%...`;
-                                    }
-                                };
-
-                                xhr.onload = () => {
-                                    if (xhr.status === 200) {
-                                        progressFill.style.width = '100%';
-                                        progressFill.style.background = '#3fb950';
-                                        statusEl.innerText = '已送达手表';
-                                        statusEl.className = 'file-status success';
-                                    } else {
-                                        statusEl.innerText = '上传失败';
-                                        statusEl.className = 'file-status error';
-                                    }
-                                    resolve();
-                                };
-
-                                xhr.onerror = () => {
-                                    statusEl.innerText = '连接中断';
-                                    statusEl.className = 'file-status error';
-                                    resolve();
-                                };
-
-                                xhr.send(file);
-                            });
-                        }
-                        selectedFiles = [];
-                        loadShelf();
-                    });
-
-                    async function loadShelf() {
-                        const shelfList = document.getElementById('shelfList');
-                        const shelfLoading = document.getElementById('shelfLoading');
-                        try {
-                            const res = await fetch(withToken('/api/books'));
-                            const books = await res.json();
-                            shelfLoading.style.display = 'none';
-                            shelfList.innerHTML = '';
-                            if (books.length === 0) {
-                                shelfList.innerHTML = '<li style="text-align:center; color:#8b949e; font-size:13px; padding:12px;">手表书架暂无书籍</li>';
-                                return;
-                            }
-                            for (let b of books) {
-                                const li = document.createElement('li');
-                                li.className = 'file-item';
-                                const sizeKb = Math.round(b.size / 1024);
-                                li.innerHTML = `
-                                    <div class="file-header">
-                                        <span class="file-name">${'$'}{b.name}</span>
-                                        <div style="display:flex;gap:6px;">
-                                            <a class="down-btn" href="${'$'}{withToken('/api/download?name=' + encodeURIComponent(b.name))}" download>导出</a>
-                                            <button class="del-btn" onclick="deleteBook('${'$'}{encodeURIComponent(b.name)}')">删除</button>
-                                        </div>
-                                    </div>
-                                    <div class="book-meta">${'$'}{sizeKb} KB</div>
-                                `;
-                                shelfList.appendChild(li);
-                            }
-                        } catch (e) {
-                            shelfLoading.innerText = '加载失败';
-                        }
-                    }
-
-                    async function deleteBook(encodedName) {
-                        const name = decodeURIComponent(encodedName);
-                        if (!confirm('确定要从手表中删除《' + name + '》吗？')) return;
-                        try {
-                            const res = await fetch(withToken('/api/books/delete?name=' + encodedName), { method: 'POST' });
-                            if (res.ok) {
-                                loadShelf();
-                            } else {
-                                alert('删除失败');
-                            }
-                        } catch (e) {
-                            alert('网络错误');
-                        }
-                    }
-
-                    window.addEventListener('DOMContentLoaded', loadShelf);
-                </script>
-            </body>
-            </html>
-        """.trimIndent()
-        sendResponse(output, 200, "text/html", html)
     }
 }
