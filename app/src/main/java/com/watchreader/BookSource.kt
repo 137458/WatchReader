@@ -2,8 +2,6 @@ package com.watchreader
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
-import java.io.File
 import java.io.Reader
 import java.util.concurrent.ConcurrentHashMap
 
@@ -123,52 +121,25 @@ interface BookSource {
         /**
          * 各章右端字符偏移（半开区间用）：章节 i 占据 [chapters[i].charOffset, ends[i])。
          *
-         * 末章右端取全书总长；索引倒序或越界（章节起点大于下一章起点、大于总长）时
-         * 夹紧为单调不减，否则切片装配器会把倒序边界当成「本章已结束」，静默产出空章。
+         * 末章右端取全书总长；索引倒序或越界（章节起点大于下一章起点、大于总长）时夹紧为单调不减，
+         * 否则切片装配器会把倒序边界当成「本章已结束」，静默产出空章。判定在 [BookSourceIndex]。
          */
-        fun chapterEndOffsets(chapters: List<Chapter>, totalChars: Int): IntArray {
-            if (chapters.isEmpty()) return IntArray(0)
-            val safeTotal = totalChars.coerceAtLeast(0)
-            val ends = IntArray(chapters.size)
-            var previous = 0
-            for (i in chapters.indices) {
-                val start = chapters[i].charOffset.coerceAtLeast(0)
-                val rawEnd = if (i + 1 < chapters.size) chapters[i + 1].charOffset else safeTotal
-                previous = maxOf(previous, start, rawEnd)
-                ends[i] = previous
-            }
-            return ends
-        }
+        fun chapterEndOffsets(chapters: List<Chapter>, totalChars: Int): IntArray =
+            BookSourceIndex.chapterEndOffsets(chapters, totalChars)
 
         /**
-         * 单章切片边界：起点与终点都夹进 [0, totalChars]，终点不小于起点。
+         * 单章切片边界：起点与终点都夹进 [0, totalChars]，终点不小于起点；
          * 索引越界返回 null（调用方按「无此章」处理，不是读取失败）。
          */
-        fun chapterBounds(chapters: List<Chapter>, index: Int, totalChars: Int): CharBounds? {
-            if (index !in chapters.indices) return null
-            val safeTotal = totalChars.coerceAtLeast(0)
-            val start = chapters[index].charOffset.coerceIn(0, safeTotal)
-            val rawEnd = if (index + 1 < chapters.size) chapters[index + 1].charOffset else safeTotal
-            return CharBounds(start, rawEnd.coerceIn(start, safeTotal))
-        }
+        fun chapterBounds(chapters: List<Chapter>, index: Int, totalChars: Int): CharBounds? =
+            BookSourceIndex.chapterBounds(chapters, index, totalChars)
 
-        /**
-         * 磁盘缓存只留下了章节表、没留下总字符数（旧版缓存）时的估算：
-         * 可定位字节数按编码折算成字符数，再用末章起点 + 3000 兜住「估算值反而比
-         * 已扫到的章节起点还小」的情况，避免总长截断末章。
-         */
+        /** 旧版磁盘缓存只留下章节表时的总长估算，见 [BookSourceIndex.estimateTotalChars]。 */
         internal fun estimateTotalChars(
             chapters: List<Chapter>,
             fileSizeHint: Long,
             encoding: String
-        ): Int {
-            val bytesPerChar = if (encoding.startsWith("UTF-16")) 2L else 1L
-            val estimated = (fileSizeHint.coerceAtLeast(0L) / bytesPerChar)
-                .coerceAtMost(Int.MAX_VALUE.toLong())
-                .toInt()
-            val lastChapter = chapters.lastOrNull() ?: return estimated
-            return maxOf(estimated, lastChapter.charOffset + 3000)
-        }
+        ): Int = BookSourceIndex.estimateTotalChars(chapters, fileSizeHint, encoding)
 
         /**
          * 装载章节索引：内存缓存 → 磁盘缓存 → 全量流式扫描并落盘。
@@ -205,146 +176,3 @@ interface BookSource {
         }
     }
 }
-
-/** 半开字符区间 [start, end)；长度可能为 0（空章），不会为负 */
-data class CharBounds(val start: Int, val end: Int) {
-    val length: Int get() = maxOf(end - start, 0)
-}
-
-/** 章节索引与全书总长（二者来自同一次扫描，必须成对传递） */
-internal data class BookIndex(val chapters: List<Chapter>, val totalChars: Int)
-
-/**
- * 空书 / 章节索引越界时的占位内容：结构合法但正文为空，与读取失败的 null 区分。
- * （调用方对「越界」和「读失败」的处理不同：前者留在当前页，后者报错。）
- */
-internal fun emptyChapterContent(): ChapterContent = ChapterContent(
-    chapterIndex = 0,
-    title = "",
-    formattedBody = "",
-    startCharOffset = 0,
-    endCharOffset = 0,
-    hasPrevChapter = false,
-    prevChapterTitle = "",
-    hasNextChapter = false,
-    nextChapterTitle = ""
-)
-
-/** 转换缓存的可用判据：存在且非空。空文件是上次转换中断的残骸，必须重转 */
-internal fun isUsableCacheFile(file: File): Boolean = file.exists() && file.length() > 0
-
-/**
- * TXT 与转换类格式共用的正文适配器：单章 = 原文切片 + 排版，编码探测与 BOM 处理
- * 由 [readChapterChunkFromUri] 承担，本类只负责把偏移域对齐。
- */
-internal abstract class TextBookSource(
-    private val context: Context,
-    private val encoding: String,
-    override val title: String,
-    override val chapters: List<Chapter>,
-    override val totalChars: Int
-) : BookSource {
-
-    /**
-     * 当前可读文本 URI。TXT 恒为原文件；转换缓存的 URI 可能被系统清理，
-     * 实现方负责按需重建（返回 null 表示重建失败，本次读取按失败上报）。
-     */
-    protected abstract fun resolveReadUri(): Uri?
-
-    final override fun readChapter(index: Int, cleanTypography: Boolean): ChapterContent? {
-        val bounds = BookSource.chapterBounds(chapters, index, totalChars) ?: return emptyChapterContent()
-        val rawChunk = readRawChunk(bounds.start, bounds.end) ?: return null
-        return formatChapterRawText(rawChunk, chapters, index, bounds.start, bounds.end, cleanTypography)
-    }
-
-    final override fun readRawChunk(startCharOffset: Int, endCharOffset: Int): String? {
-        val readUri = resolveReadUri() ?: return null
-        return readChapterChunkFromUri(context, readUri, encoding, startCharOffset, endCharOffset)
-    }
-
-    final override fun openCharStream(): Reader? {
-        val readUri = resolveReadUri() ?: return null
-        return openBookCharStream(context, readUri, encoding)
-    }
-}
-
-/** 纯文本：直接读原文件，编码在打开时探测一次后固定 */
-internal class TxtBookSource(
-    context: Context,
-    private val uri: Uri,
-    encoding: String,
-    title: String,
-    chapters: List<Chapter>,
-    totalChars: Int
-) : TextBookSource(context, encoding, title, chapters, totalChars) {
-
-    override fun resolveReadUri(): Uri = uri
-}
-
-/**
- * MOBI / FB2 / HTML：正文读取源是转换产物 UTF-8 文本缓存，而不是原文件。
- *
- * 「是否需要转换」这个哨兵状态只存在于本类内部：调用方拿到的就是一本书，
- * 不需要知道它背后是原文件还是缓存文件。缓存被系统清理时按需重转——转换是确定性的，
- * 重转后字符偏移域不变，已持久化的阅读进度与书签继续有效。
- */
-internal class ConvertedBookSource(
-    private val context: Context,
-    private val originalUri: Uri,
-    private val format: BookFormat,
-    cacheFile: File,
-    title: String,
-    chapters: List<Chapter>,
-    totalChars: Int
-) : TextBookSource(context, "UTF-8", title, chapters, totalChars) {
-
-    @Volatile
-    private var readUri: Uri? = Uri.fromFile(cacheFile)
-
-    // 预取与搜索可能同时发现缓存失效：只允许一个线程重转，其余等待后复用结果
-    private val convertLock = Any()
-
-    override fun resolveReadUri(): Uri? {
-        readUri?.let { if (isUsable(it)) return it }
-        synchronized(convertLock) {
-            readUri?.let { if (isUsable(it)) return it }
-            val rebuilt = try {
-                Uri.fromFile(BookTextConverter.convertToCacheFile(context, originalUri, format))
-            } catch (e: Exception) {
-                // 重转失败不退回原文件：把 MOBI 压缩字节当正文读会渲染出乱码并污染进度，
-                // 让上层按「读取失败」呈现可重试错误
-                Log.w(TAG_BOOK_SOURCE, "转换缓存重建失败: $originalUri ($format)", e)
-                return null
-            }
-            readUri = rebuilt
-            return rebuilt
-        }
-    }
-
-    private fun isUsable(uri: Uri): Boolean {
-        val path = uri.path ?: return false
-        return isUsableCacheFile(File(path))
-    }
-}
-
-/** EPUB：章节正文是 zip 条目内的 (X)HTML，读取与条目定位都在 EpubParser 内部 */
-internal class EpubBookSource(
-    private val context: Context,
-    private val uri: Uri,
-    private val metadata: EpubMetadata
-) : BookSource {
-
-    override val title: String = metadata.title
-    override val chapters: List<Chapter> = metadata.chapters
-    override val totalChars: Int = metadata.totalChars
-
-    override fun readChapter(index: Int, cleanTypography: Boolean): ChapterContent? {
-        if (index !in chapters.indices) return emptyChapterContent()
-        return EpubParser.readChapterContent(context, uri, index, chapters, cleanTypography)
-    }
-
-    /** EPUB 正文按 zip 条目分别压缩存储，不存在可供切片或单趟扫描的连续字符流 */
-    override fun readRawChunk(startCharOffset: Int, endCharOffset: Int): String? = null
-}
-
-private const val TAG_BOOK_SOURCE = "BookSource"
