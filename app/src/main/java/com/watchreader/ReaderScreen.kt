@@ -116,6 +116,9 @@ fun ReaderScreen(
 
     var isScrolling by remember { mutableStateOf(false) }
     var currentReadingOffset by remember(initialCharOffset) { mutableStateOf(initialCharOffset) }
+    // AndroidView.update 需要读最新阅读位置，但它运行在组合的 apply 阶段：读 Compose 状态会让
+    // 本页在每次滚动事件后整页重组。改用普通字段交换，状态仅服务于下方已去重的进度指示。
+    val liveReadingOffset = remember(initialCharOffset) { intArrayOf(initialCharOffset) }
 
     // 弧形寻道：识别下沉至原生触摸管线，叠加层仅负责绘制（其全屏 pointerInput 曾吞掉正文全部触摸流）。
     // 三项渲染状态聚合于单个状态容器：高频 MOVE 写入经叠加层绘制阶段延迟读取，寻道全程零重组
@@ -568,6 +571,7 @@ fun ReaderScreen(
                             content.startCharOffset + (chapterLen * scrollRatio).toInt()
                         }
                         currentReadingOffset = currentOffset
+                        liveReadingOffset[0] = currentOffset
 
                         if (currentOffset != lastReportedOffset) {
                             lastReportedOffset = currentOffset
@@ -625,7 +629,7 @@ fun ReaderScreen(
                     bindChapterData(holder, chapterContent, fontSize, fontType, lineSpacing, letterSpacing, textColor, titleColor, onSurfaceVariantColor)
                     // 同一章内仅换排版（净化开关只替换正文、不跳页）时，实时偏移仍落在本章区间内，
                     // 以它为准才不会把阅读位置弹回本章最初打开的地方
-                    val liveOffset = currentReadingOffset
+                    val liveOffset = liveReadingOffset[0]
                     val sameChapter = lastChapterIndex == currentChapterIdx
                     val restoreOffset = if (sameChapter && chapterContent != null &&
                         liveOffset in chapterContent.startCharOffset..chapterContent.endCharOffset
