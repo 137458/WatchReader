@@ -441,7 +441,7 @@ fun PillButton(
  * 底部弧形贴边按钮规格：一条环形扇带的标签、外观与点击回调。
  * [focused] 供表冠焦点轮选高亮，不参与点击态。
  */
-class EdgeButtonSpec(
+data class EdgeButtonSpec(
     val label: String,
     val emphasis: PillEmphasis = PillEmphasis.Tonal,
     val active: Boolean = false,
@@ -506,17 +506,15 @@ fun EdgeActionBar(
                 ArcCharRun(layouts, angles)
             }
         }
-        val pressScales = buildList {
-            buttons.forEachIndexed { index, spec ->
-                val pressed by interactions[index].collectIsPressedAsState()
-                add(
-                    animateFloatAsState(
-                        targetValue = if (pressed && spec.enabled) 0.94f else 1f,
-                        animationSpec = spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMedium),
-                        label = "edgePress" + index
-                    ).value
-                )
-            }
+        // 按压缩放只持有 State，逐帧读值下沉到下面的 Canvas 绘制阶段：
+        // 组合期读 .value 会让这条全屏 Canvas（逐键弧线 + 逐字 drawText）每帧重组
+        val pressScales = buttons.mapIndexed { index, spec ->
+            val pressed by interactions[index].collectIsPressedAsState()
+            animateFloatAsState(
+                targetValue = if (pressed && spec.enabled) 0.94f else 1f,
+                animationSpec = spring(dampingRatio = 0.75f, stiffness = Spring.StiffnessMedium),
+                label = "edgePress" + index
+            )
         }
         val screenCenter = Offset(widthPx / 2f, heightPx / 2f)
         // 扇带配色需读 MaterialTheme（@Composable），在绘制外统一解析
@@ -564,7 +562,7 @@ fun EdgeActionBar(
                     close()
                 }
                 val trackPivot = polarOffset(Offset(cx, cy), sector.centerAngleDeg, sector.textRadiusPx)
-                scale(pressScales[index], pivot = trackPivot) {
+                scale(pressScales[index].value, pivot = trackPivot) {
                     drawPath(path, containerColor)
                     if (spec.emphasis == PillEmphasis.Outline) {
                         drawPath(
