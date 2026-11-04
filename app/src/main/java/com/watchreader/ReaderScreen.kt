@@ -74,10 +74,46 @@ private class ReaderViewHolder(
 }
 
 /**
- * 阅读页 — 极致单 TextLayout + 永久 5 节点零分配 View 复用池 + 0 GC Choreographer 自动平滑滚屏 + 双轨调光
+ * 阅读页入口：输入收敛为「一页的全部事实 + 全部回调」两个参数。
+ *
+ * 参数收口不是风格问题：23 个平铺参数会让父级的每一次重组都重新进入本页组合，
+ * 而 [ReaderPaneState] 相等时 Compose 直接跳过整页——阅读时长 tick、传书进度这类
+ * 与正文无关的状态变化不再触碰整章 StaticLayout。
  */
 @Composable
-fun ReaderScreen(
+fun ReaderScreen(state: ReaderPaneState, actions: ReaderPaneActions) {
+    ReaderPane(
+        chapterContent = state.chapterContent,
+        initialCharOffset = state.initialCharOffset,
+        totalChapters = state.totalChapters,
+        fullTextLength = state.fullTextLength,
+        onCharOffsetChange = actions.onCharOffsetChange,
+        onNextChapter = actions.onNextChapter,
+        onPrevChapter = actions.onPrevChapter,
+        onLongPress = actions.onLongPress,
+        onBack = actions.onBack,
+        fontSize = state.fontSize,
+        autoScrollSpeed = state.autoScrollSpeed,
+        isAutoScrolling = state.isAutoScrolling,
+        onAutoScrollToggle = actions.onAutoScrollToggle,
+        onAutoScrollSpeedChange = actions.onAutoScrollSpeedChange,
+        tapPageArea = state.tapPageArea,
+        fontType = state.fontType,
+        lineSpacing = state.lineSpacing,
+        letterSpacing = state.letterSpacing,
+        chapters = state.chapters,
+        currentChapterIndex = state.currentChapterIndex,
+        onSeekChapter = actions.onSeekChapter,
+        onFlushReadingPosition = actions.onFlushReadingPosition,
+        covered = state.covered
+    )
+}
+
+/**
+ * 阅读页实现（接口见 [ReaderScreen]）
+ */
+@Composable
+private fun ReaderPane(
     chapterContent: ChapterContent?,
     initialCharOffset: Int,
     totalChapters: Int = 1,

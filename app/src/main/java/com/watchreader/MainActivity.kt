@@ -45,7 +45,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import kotlin.math.abs
 
 /**
  * MainActivity — 遵循 Android / ColorOS Watch 官方规范的入口 Activity
@@ -242,39 +241,53 @@ class MainActivity : ComponentActivity() {
         RotaryHapticManager.shutdown()
     }
 
+    // 表冠路由：分派顺序在 CrownRoutes 里声明一次，本类只做装配与原生下发适配
+    private val crownRouter: CrownRouter by lazy {
+        CrownRouter(
+            CrownRoutes.ordered(
+                onRsvpRotary = { delta -> viewModel.handleRotaryScroll(delta) },
+                pageTarget = { CrownScrollTargetRegistry.active }
+            )
+        )
+    }
+
     /**
-     * 顶层分发事件：优先处理 RSVP 调速 / 页面注册的表冠滚动目标，再分发给原生 View 树
-     * （阅读页 / 目录页的原生 ScrollView / ListView 保持自身监听路径不变）
+     * 表冠事件唯一入口：表冠事件交给 [CrownRouter] 一次分派；其余通用运动事件保持原生链语义
+     *
+     * 收口前这里串行试探了 5 条路径，谁消费取决于书写顺序；现在顺序由 CrownRoutes 声明，
+     * 原生链 / 焦点视图 / 兜底遍历退化为第 3~5 条策略，实现见 [ActivityCrownDispatch]。
      */
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
         if (CrownScrollHelper.isCrownScrollEvent(event)) {
-            val delta = CrownScrollHelper.extractCrownDelta(event)
-            if (abs(delta) > 0.001f) {
-                if (viewModel.handleRotaryScroll(delta)) {
-                    return true
-                }
-                if (CrownScrollTargetRegistry.active?.onCrownDelta(delta) == true) {
-                    return true
-                }
-            }
+            return crownRouter.onRotary(
+                CrownTurn(CrownScrollHelper.extractCrownDelta(event)),
+                ActivityCrownDispatch(event)
+            )
         }
-        if (super.dispatchGenericMotionEvent(event)) {
-            return true
-        }
-        val focus = currentFocus
-        if (focus != null && focus.dispatchGenericMotionEvent(event)) {
-            return true
-        }
-        // 表冠焦点防死锁兜底路由：当 Compose 悬浮组件夺走焦点导致原生 View 失去焦点时，直接寻址并向内部活跃列表下发
-        if (CrownScrollHelper.isCrownScrollEvent(event)) {
-            val root = window.decorView as? ViewGroup
-            if (root != null && dispatchRotaryToActiveScrollView(root, event)) {
-                return true
-            }
-        }
-        return false
+        return dispatchDefaultChain(event) || (currentFocus?.dispatchGenericMotionEvent(event) == true)
     }
 
+    /** super 调用不能写进 lambda / 内部类，单独包一层供路由策略回调 */
+    private fun dispatchDefaultChain(event: MotionEvent): Boolean = super.dispatchGenericMotionEvent(event)
+
+    /** 路由的原生下发适配器：三条需要真实事件与窗口引用的策略都收敛在这里 */
+    private inner class ActivityCrownDispatch(private val event: MotionEvent) : CrownNativeDispatch {
+
+        override fun dispatchDefault(): Boolean = dispatchDefaultChain(event)
+
+        override fun dispatchToFocused(): Boolean =
+            currentFocus?.dispatchGenericMotionEvent(event) == true
+
+        override fun dispatchToActiveScrollableView(): Boolean {
+            val root = window.decorView as? ViewGroup ?: return false
+            return dispatchRotaryToActiveScrollView(root, event)
+        }
+    }
+
+    /**
+     * 第 5 条策略（活跃滚动容器兜底）的实现：Compose 悬浮组件夺走焦点后原生 View 失去焦点，
+     * 此处直接寻址视图中第一个可见的 ScrollView / ListView 并下发
+     */
     private fun dispatchRotaryToActiveScrollView(viewGroup: ViewGroup, event: MotionEvent): Boolean {
         for (i in 0 until viewGroup.childCount) {
             val child = viewGroup.getChildAt(i)
@@ -310,38 +323,49 @@ class MainActivity : ComponentActivity() {
         // 避免常驻阅读页的 initialCharOffset 抖动引发其内部偏移状态重置
         val readerArgs = remember { mutableStateOf(Screen.Reader()) }
         if (screen is Screen.Reader) readerArgs.value = screen
+        if (screen is Screen.Reader) readerArgs.value = screen
+
+        // 常驻阅读页的输入：状态与回调各收成一个整体对象。
+        // 状态相等时 Compose 整页跳过（阅读时长 tick、传书进度不再重排整章）；
+        // 回调用 remember 固定身份，父级重组不会让它失效。
+        val readerActions = remember(viewModel) {
+            ReaderPaneActions(
+                onCharOffsetChange = { viewModel.updateCharOffset(it) },
+                onNextChapter = { viewModel.goToNextChapter() },
+                onPrevChapter = { viewModel.goToPrevChapter() },
+                onLongPress = { viewModel.navigateTo(Screen.Menu) },
+                onBack = { viewModel.handleBack() },
+                onAutoScrollToggle = {
+                    viewModel.setAutoScrolling(!viewModel.uiState.value.isAutoScrolling)
+                },
+                onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
+                onSeekChapter = { index -> viewModel.goToChapter(index) },
+                onFlushReadingPosition = { viewModel.flushReadingPosition() }
+            )
+        }
+
+        // 行距 / 字距曾长期只写 _uiState 与 DataStore、从未下传阅读页，
+        // 菜单里的两档设置对正文永久无效；这里必须显式带上
+        val readerState = ReaderPaneState(
+            chapterContent = uiState.currentChapterContent,
+            initialCharOffset = readerArgs.value.charOffset,
+            totalChapters = uiState.chapters.size,
+            fullTextLength = uiState.fullTextLength,
+            fontSize = uiState.fontSize,
+            autoScrollSpeed = uiState.autoScrollSpeed,
+            isAutoScrolling = uiState.isAutoScrolling,
+            tapPageArea = uiState.tapPageArea,
+            fontType = uiState.fontType,
+            lineSpacing = uiState.lineSpacing,
+            letterSpacing = uiState.letterSpacing,
+            chapters = uiState.chapters,
+            currentChapterIndex = uiState.currentChapterIndex,
+            covered = screen !is Screen.Reader
+        )
 
         Box(modifier = Modifier.fillMaxSize()) {
             if (readerAlive) {
-                ReaderScreen(
-                    chapterContent = uiState.currentChapterContent,
-                    initialCharOffset = readerArgs.value.charOffset,
-                    totalChapters = uiState.chapters.size,
-                    fullTextLength = uiState.fullTextLength,
-                    onCharOffsetChange = { offset ->
-                        viewModel.updateCharOffset(offset)
-                    },
-                    onNextChapter = { viewModel.goToNextChapter() },
-                    onPrevChapter = { viewModel.goToPrevChapter() },
-                    onLongPress = { viewModel.navigateTo(Screen.Menu) },
-                    onBack = { viewModel.handleBack() },
-                    fontSize = uiState.fontSize,
-                    autoScrollSpeed = uiState.autoScrollSpeed,
-                    isAutoScrolling = uiState.isAutoScrolling,
-                    onAutoScrollToggle = { viewModel.setAutoScrolling(!uiState.isAutoScrolling) },
-                    onAutoScrollSpeedChange = { viewModel.updateAutoScrollSpeed(it) },
-                    tapPageArea = uiState.tapPageArea,
-                    fontType = uiState.fontType,
-                    // 行距 / 字距此前只写了 _uiState 与 DataStore，从未下传阅读页，
-                    // 菜单里的两档设置对正文永久无效（阅读页一直吃 ReaderScreen 的缺省值）
-                    lineSpacing = uiState.lineSpacing,
-                    letterSpacing = uiState.letterSpacing,
-                    chapters = uiState.chapters,
-                    currentChapterIndex = uiState.currentChapterIndex,
-                    onSeekChapter = { index -> viewModel.goToChapter(index) },
-                    onFlushReadingPosition = { viewModel.flushReadingPosition() },
-                    covered = screen !is Screen.Reader
-                )
+                ReaderScreen(state = readerState, actions = readerActions)
             }
 
             ScreenSlot(uiState = uiState, screen = screen)

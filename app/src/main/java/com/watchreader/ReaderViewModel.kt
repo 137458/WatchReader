@@ -100,30 +100,20 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private val appCtx: Context get() = getApplication<Application>()
 
-    @Volatile
-    private var currentEncoding: String = "UTF-8"
+    /**
+     * 阅读会话：一本书的正文、章节定位、章节缓存与相邻预热全部归它所有。
+     *
+     * 收口前这里是四个跨调用哨兵字段（编码 / 转换格式 / 转换读取源 / 当前偏移）加两张
+     * 缓存表，任何一个组合错了都表现为串书或进度错位，且从外部无法观察。
+     */
+    private val reading = ReadingSession(appCtx, viewModelScope)
 
-    // 转换类格式（MOBI/FB2/HTML）的派生读取源：转换产物文本缓存与其格式。
-    // 章节索引与正文一律从缓存文件读取，书架/进度仍持久化原始 URI
-    @Volatile
-    private var convertedFormat: BookFormat? = null
-    @Volatile
-    private var convertedReadUri: Uri? = null
-
-    // 全局章节索引内存缓存（URI+大小为 Key，二次打开 0.00ms 秒开）
-    private val chapterIndexCache = ConcurrentHashMap<String, List<Chapter>>()
-
-    // 前后相邻章节预排版内容缓存池（翻章 0.00ms 绝对秒开）
-    private val chapterContentCache = ConcurrentHashMap<Int, ChapterContent>()
-    private var prefetchJob: Job? = null
     private var cleanTypographyJob: Job? = null
     private var searchJob: Job? = null
 
     // 异步防抖持久化 Job
     private var savePositionJob: Job? = null
     private var loadJob: Job? = null
-    @Volatile
-    private var currentReadingOffset: Int = 0
 
     // Wi-Fi 传书协程监听生命周期托管
     private var wifiCollectJob: Job? = null
@@ -249,14 +239,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 统一出口。偏移取 VM 内的最新值，UI 层不再跨层读取 volatile 字段
      */
     fun returnToReader() {
-        _uiState.update { it.copy(screen = Screen.Reader(currentReadingOffset, it.currentChapterIndex)) }
+        _uiState.update { it.copy(screen = Screen.Reader(reading.currentOffset, it.currentChapterIndex)) }
     }
 
     /**
-     * 异步加载书籍文件（按需流式加载 + 内存即时释放）
+     * 异步加载书籍文件：格式分流、章节索引、首章正文与相邻预热全部交给 `ReadingSession`
      */
     fun loadFile(uri: Uri, initialOffset: Int = 0) {
-        // 重入即取消上一次装载：两本书的流程交错会互相写 currentEncoding 与正文缓存
+        // 重入即取消上一次装载：两本书的流程交错会互相覆盖会话状态
         loadJob?.cancel()
         loadJob = viewModelScope.launch {
             searchJob?.cancel()
@@ -271,330 +261,116 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
 
-            // 读取源哨兵必须在加载入口统一清空：只在非 EPUB 分支重置，
-            // 会让上一本转换缓存的 URI 越界作用到 EPUB 上，正文串成上一本书
-            convertedFormat = null
-            convertedReadUri = null
+            // 净化排版态是本类持有的用户设置，装载前先交给会话，首章直接按该态排版
+            reading.setCleanTypography(_uiState.value.cleanTypography)
 
-            try {
-                val format = withContext(Dispatchers.IO) {
-                    BookTextConverter.resolveFormat(appCtx, uri)
-                }
-
-                val fileName: String
-                val chapters: List<Chapter>
-                val fullLen: Int
-
-                if (format == BookFormat.EPUB) {
-                    // 解析结果由 EpubParser.metadataCache 会话级缓存（URI+大小为键），
-                    // 章节索引磁盘缓存对 EPUB 无消费方，读写皆是死 I/O
-                    val epubMeta = withContext(Dispatchers.IO) {
-                        EpubParser.parseEpub(appCtx, uri)
+            when (val opened = reading.open(uri, initialOffset)) {
+                is SessionOpenResult.Failed -> {
+                    // 装载失败是常规路径（文件被删、权限失效、DRM）：回书架并说明原因
+                    withContext(Dispatchers.IO) { DataStoreManager.clearReadingPosition(appCtx) }
+                    val shelf = withContext(Dispatchers.IO) { DataStoreManager.loadBookShelf(appCtx) }
+                    _uiState.update {
+                        it.copy(
+                            currentUri = null,
+                            chapters = emptyList(),
+                            currentChapterContent = null,
+                            isLoading = false,
+                            bookshelf = shelf,
+                            errorMessage = "读取小说失败: ${opened.reason}",
+                            screen = Screen.Home
+                        )
                     }
-                    fileName = epubMeta.title
-                    chapters = epubMeta.chapters
-                    fullLen = epubMeta.totalChars
-                } else {
-                    fileName = getFileName(appCtx, uri)
-                    val (scannedChapters, scannedLen) = withContext(Dispatchers.IO) {
-                        var readUri = uri
-                        val encoding: String
-                        if (format == BookFormat.TXT) {
-                            encoding = detectFileEncoding(appCtx, uri)
-                        } else {
-                            // 转换类格式先流式生成 UTF-8 文本缓存，随后全部读取走缓存文件
-                            val cacheFile = BookTextConverter.convertToCacheFile(appCtx, uri, format)
-                            convertedFormat = format
-                            convertedReadUri = Uri.fromFile(cacheFile)
-                            readUri = convertedReadUri!!
-                            encoding = "UTF-8"
-                        }
-                        currentEncoding = encoding
+                }
 
-                        val fileSize = getFileSize(appCtx, uri)
-                        scanChapterIndex(readUri, "${uri}_${fileSize}", encoding, fileSize)
+                is SessionOpenResult.Opened -> {
+                    syncReadingState()
+                    val chapterTitle = reading.state.value.content?.title.orEmpty()
+                        .ifEmpty { opened.title }
+                    val updatedShelf = withContext(Dispatchers.IO) {
+                        DataStoreManager.updateBookInShelf(
+                            appCtx, uri, reading.currentOffset, opened.totalChars, chapterTitle
+                        )
                     }
-                    chapters = scannedChapters
-                    fullLen = scannedLen
-                }
-
-                chapterContentCache.clear()
-                val safeOffset = initialOffset.coerceIn(0, fullLen)
-                val chapterIndex = if (chapters.isNotEmpty()) {
-                    findCurrentChapterIndex(chapters, safeOffset).coerceIn(0, chapters.lastIndex)
-                } else 0
-
-                val chapterContent = withContext(Dispatchers.IO) {
-                    getOrLoadChapterContent(uri, chapters, chapterIndex, fullLen)
-                } ?: throw IllegalStateException("章节正文读取失败")
-                val chapterTitle = chapterContent.title.ifEmpty { fileName }
-                currentReadingOffset = safeOffset
-
-                // 异步预热相邻章节
-                prefetchAdjacentChapters(uri, chapters, chapterIndex, fullLen)
-
-                val updatedShelf = withContext(Dispatchers.IO) {
-                    DataStoreManager.updateBookInShelf(appCtx, uri, safeOffset, fullLen, chapterTitle)
-                }
-
-                val loadedBookmarks = withContext(Dispatchers.IO) {
-                    DataStoreManager.loadBookmarks(appCtx, uri.toString())
-                }
-
-                _uiState.update {
-                    it.copy(
-                        fileName = fileName,
-                        chapters = chapters,
-                        currentChapterIndex = chapterIndex,
-                        currentChapterContent = chapterContent,
-                        bookmarks = loadedBookmarks,
-                        fullTextLength = fullLen,
-                        isLoading = false,
-                        bookshelf = updatedShelf,
-                        screen = Screen.Reader(safeOffset, chapterIndex)
-                    )
-                }
-            } catch (e: CancellationException) {
-                // 取消不是读取失败，交给取消方（loadJob 重入 / onCleared）处理
-                throw e
-            } catch (e: Throwable) {
-                withContext(Dispatchers.IO) {
-                    DataStoreManager.clearReadingPosition(appCtx)
-                }
-                val shelf = withContext(Dispatchers.IO) { DataStoreManager.loadBookShelf(appCtx) }
-                _uiState.update {
-                    it.copy(
-                        currentUri = null,
-                        chapters = emptyList(),
-                        currentChapterContent = null,
-                        isLoading = false,
-                        bookshelf = shelf,
-                        errorMessage = "读取小说失败: ${e.localizedMessage ?: "文件不存在或无权限"}",
-                        screen = Screen.Home
-                    )
+                    val loadedBookmarks = withContext(Dispatchers.IO) {
+                        DataStoreManager.loadBookmarks(appCtx, uri.toString())
+                    }
+                    _uiState.update {
+                        it.copy(
+                            fileName = opened.title,
+                            bookmarks = loadedBookmarks,
+                            isLoading = false,
+                            bookshelf = updatedShelf,
+                            screen = Screen.Reader(reading.currentOffset, reading.state.value.chapterIndex)
+                        )
+                    }
                 }
             }
         }
     }
 
     /**
-     * 流式装载章节索引（TXT 与转换类格式共用）：优先内存/磁盘缓存，未命中则
-     * 以恒定 < 64KB 峰值内存单趟流式扫描。[readUri] 为实际读取源；
-     * [fileSizeHint] 供磁盘缓存缺失总长时估算，章节索引键保持书架原始 URI 域稳定
+     * 会话快照 → 屏幕状态：阅读域字段只有这一个出口。
+     *
+     * 屏幕状态保持扁平是因为多个页面共用同一份 ReaderUiState（书架、菜单、搜索都读它），
+     * 但"这份数据从哪来"收敛在这里，阅读页不再需要知道章节正文是怎么装载的。
      */
-    private fun scanChapterIndex(
-        readUri: Uri,
-        cacheKey: String,
-        encoding: String,
-        fileSizeHint: Long
-    ): Pair<List<Chapter>, Int> {
-        var detected = chapterIndexCache[cacheKey]
-        var cachedTotalChars = 0
-        if (detected == null) {
-            val cachedData = ChapterDiskCache.load(appCtx, cacheKey)
-            if (cachedData != null) {
-                detected = cachedData.chapters
-                cachedTotalChars = cachedData.totalChars
-            }
+    private fun syncReadingState() {
+        val session = reading.state.value
+        _uiState.update {
+            it.copy(
+                chapters = session.chapters,
+                currentChapterIndex = session.chapterIndex,
+                currentChapterContent = session.content,
+                fullTextLength = session.totalChars,
+                cleanTypography = session.cleanTypography,
+                fileName = session.title.ifEmpty { it.fileName }
+            )
         }
-
-        val totalChars: Int
-        if (detected == null) {
-            val (scanned, scannedChars) = detectChaptersStream(appCtx, readUri, encoding)
-            if (scanned.isEmpty() && scannedChars == 0) {
-                throw IllegalStateException("文件为空或无法读取")
-            }
-            totalChars = scannedChars
-            ChapterDiskCache.save(appCtx, cacheKey, scanned, scannedChars)
-            chapterIndexCache[cacheKey] = scanned
-            detected = scanned
-        } else {
-            chapterIndexCache[cacheKey] = detected
-            totalChars = if (cachedTotalChars > 0) {
-                cachedTotalChars
-            } else {
-                val lastChap = detected.lastOrNull()
-                val estimated = (fileSizeHint / (if (encoding.startsWith("UTF-16")) 2 else 1)).toInt()
-                if (lastChap != null) {
-                    maxOf(estimated, lastChap.charOffset + 3000)
-                } else estimated
-            }
-        }
-        return detected to totalChars
     }
 
     /**
-     * 极速跳转至指定章节（优先读取预排版缓存，未命中则流式按需分块加载）
+     * 跳转到指定章节：优先命中预热缓存，未命中按需流式装载
      */
     fun goToChapter(chapterIndex: Int, targetCharOffset: Int = -1) {
         val state = _uiState.value
-        val chapters = state.chapters
         val uri = state.currentUri ?: return
-        if (chapterIndex !in chapters.indices) return
+        if (chapterIndex !in state.chapters.indices) return
 
         viewModelScope.launch {
-            val totalLen = state.fullTextLength
-            val chapterContent = chapterContentCache[chapterCacheKey(chapterIndex, state.cleanTypography)]
-                ?: withContext(Dispatchers.IO) {
-                    getOrLoadChapterContent(uri, chapters, chapterIndex, totalLen)
-                } ?: run {
-                    // 正文读取失败不跳章：留在当前页，把原因透出给 UI
-                    _uiState.update { it.copy(errorMessage = "读取章节正文失败") }
-                    return@launch
-                }
-            val offset = if (targetCharOffset >= 0) targetCharOffset else chapterContent.startCharOffset
-            currentReadingOffset = offset
-
-            _uiState.update {
-                it.copy(
-                    currentChapterIndex = chapterIndex,
-                    currentChapterContent = chapterContent,
-                    screen = Screen.Reader(offset, chapterIndex)
-                )
+            if (!reading.goToChapter(chapterIndex, targetCharOffset)) {
+                // 正文读取失败不跳章：留在当前页，把原因透出给 UI
+                _uiState.update { it.copy(errorMessage = "读取章节正文失败") }
+                return@launch
             }
-
-            // 后台异步预热周围章节
-            prefetchAdjacentChapters(uri, chapters, chapterIndex, totalLen)
+            syncReadingState()
+            val offset = reading.currentOffset
+            _uiState.update { it.copy(screen = Screen.Reader(offset, chapterIndex)) }
 
             savePositionJob?.cancel()
             savePositionJob = viewModelScope.launch(Dispatchers.IO) {
-                DataStoreManager.saveReadingPosition(appCtx, uri, offset, totalLen, chapterContent.title)
+                val title = reading.state.value.content?.title.orEmpty()
+                DataStoreManager.saveReadingPosition(appCtx, uri, offset, reading.totalChars, title)
             }
         }
     }
 
     /**
-     * 按需获取或流式加载单章排版内容（净化态与原样态各持一份，切换开关不再丢弃预热成果）
+     * 搜索用单章装载：固定原样态（正文 = 原文切片，坐标可直接换算），且绕过章节预热缓存——
+     * 全书扫描不得把 16 章预热窗口挤掉。格式分流（EPUB 条目 / 文本切片）由 `BookSource` 决定。
      */
-    private fun getOrLoadChapterContent(
-        uri: Uri,
-        chapters: List<Chapter>,
-        chapterIndex: Int,
-        totalChars: Int
-    ): ChapterContent? {
-        val clean = _uiState.value.cleanTypography
-        chapterContentCache[chapterCacheKey(chapterIndex, clean)]?.let { return it }
-
-        if (chapters.isEmpty() || chapterIndex !in chapters.indices) {
-            return ChapterContent(0, "", "", 0, 0, false, "", false, "")
-        }
-
-        val formatted = when {
-            convertedFormat != null -> loadChunkContent(uri, chapters, chapterIndex, totalChars)
-            EpubParser.isEpubFile(appCtx, uri) -> EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters, clean)
-            else -> loadChunkContent(uri, chapters, chapterIndex, totalChars)
-        } ?: return null
-
-        chapterContentCache[chapterCacheKey(chapterIndex, clean)] = formatted
-        return formatted
-    }
-
-    /** TXT 与转换类格式共用的分块正文装载：从读取源取原文切片后按章节排版 */
-    private fun loadChunkContent(
-        originalUri: Uri,
-        chapters: List<Chapter>,
-        chapterIndex: Int,
-        totalChars: Int,
-        clean: Boolean = _uiState.value.cleanTypography
-    ): ChapterContent? {
-        val readUri = if (convertedFormat != null) resolveConvertedReadUri(originalUri) else originalUri
-        val startOffset = chapters[chapterIndex].charOffset.coerceIn(0, totalChars)
-        val endOffset = endOffsetOf(chapters, chapterIndex, totalChars).coerceIn(startOffset, totalChars)
-
-        // 读取失败（通道不可用/IO 异常）与"合法空章"必须分开：前者返回 null 由上层兜底，
-        // 后者仍是带空正文的有效章节，不能当成失败吞掉
-        val rawChunk = readChapterChunkFromUri(appCtx, readUri, currentEncoding, startOffset, endOffset)
-            ?: return null
-        return formatChapterRawText(rawChunk, chapters, chapterIndex, startOffset, endOffset, clean)
-    }
+    private suspend fun loadChapterContentForSearch(chapterIndex: Int): ChapterContent? =
+        reading.readChapterForSearch(chapterIndex)
 
     /**
-     * 解析转换类格式的实际读取源。文本缓存可能被系统清理：确定性转换保证
-     * 字符偏移域不变，重转换后进度、书签与章节索引依旧有效
-     */
-    private fun resolveConvertedReadUri(originalUri: Uri): Uri {
-        val cached = convertedReadUri
-        if (cached != null) {
-            val path = cached.path
-            if (path != null) {
-                val f = File(path)
-                if (f.exists() && f.length() > 0) return cached
-            }
-        }
-        val format = convertedFormat ?: return cached ?: originalUri
-        return try {
-            val fresh = Uri.fromFile(BookTextConverter.convertToCacheFile(appCtx, originalUri, format))
-            convertedReadUri = fresh
-            fresh
-        } catch (_: Exception) {
-            cached ?: originalUri
-        }
-    }
-
-    private fun endOffsetOf(chapters: List<Chapter>, chapterIndex: Int, totalChars: Int): Int =
-        if (chapterIndex + 1 < chapters.size) chapters[chapterIndex + 1].charOffset else totalChars
-
-    /** 章节正文缓存键：章节索引左移一位，末位编码净化态，两种排版并存互不驱逐 */
-    private fun chapterCacheKey(chapterIndex: Int, clean: Boolean): Int =
-        (chapterIndex shl 1) or if (clean) 1 else 0
-
-    /**
-     * 异步后台预热前后相邻章节（N+1, N-1, N+2, N-2），消除翻章排版计算
-     */
-    private fun prefetchAdjacentChapters(
-        uri: Uri,
-        chapters: List<Chapter>,
-        centerIdx: Int,
-        totalChars: Int
-    ) {
-        if (chapters.isEmpty()) return
-        prefetchJob?.cancel()
-        val clean = _uiState.value.cleanTypography
-        prefetchJob = viewModelScope.launch(Dispatchers.IO) {
-            val targets = intArrayOf(centerIdx + 1, centerIdx - 1, centerIdx + 2, centerIdx - 2)
-            for (idx in targets) {
-                if (idx in chapters.indices && !chapterContentCache.containsKey(chapterCacheKey(idx, clean))) {
-                    getOrLoadChapterContent(uri, chapters, idx, totalChars)
-                }
-            }
-            // 维持轻量缓存窗口（净化态与原样态各 8 章），及时释放较远章节以节省内存
-            if (chapterContentCache.size > 16) {
-                val keysToRemove = chapterContentCache.keys.filter { Math.abs((it shr 1) - centerIdx) > 3 }
-                for (k in keysToRemove) {
-                    chapterContentCache.remove(k)
-                }
-            }
-        }
-    }
-
-    /**
-     * 搜索用单章装载：固定净化关闭态（正文 = 原文切片后缀，坐标可直接换算），
-     * 且绕过章节内容缓存——全书扫描不得污染 16 章预热窗口
-     */
-    private suspend fun loadChapterContentForSearch(
-        uri: Uri,
-        chapters: List<Chapter>,
-        chapterIndex: Int
-    ): ChapterContent? = withContext(Dispatchers.IO) {
-        val totalChars = _uiState.value.fullTextLength
-        when {
-            convertedFormat != null -> loadChunkContent(uri, chapters, chapterIndex, totalChars, clean = false)
-            EpubParser.isEpubFile(appCtx, uri) -> EpubParser.readChapterContent(appCtx, uri, chapterIndex, chapters, false)
-            else -> loadChunkContent(uri, chapters, chapterIndex, totalChars, clean = false)
-        }
-    }
-
-    /**
-     * 书内全文搜索：非 EPUB 走全书单趟流式扫描（顺序解码 + [ChapterSliceAssembler]
-     * 边界切片，替代每章从头 skip 解码的 O(n²)），EPUB 逐章读取（各条目独立，
+     * 书内全文搜索：有连续字符流（TXT / 转换类格式）时单趟顺序解码 + [ChapterSliceAssembler]
+     * 边界切片，逐章从头 skip 解码的 O(n²) 只剩"没有流"的格式（EPUB 条目各自为政，
      * 总代价本就是各章之和）；命中即增量上报，全书命中总数受 MAX_RESULTS 封顶
      */
     fun searchInBook(query: String) {
         val state = _uiState.value
-        val uri = state.currentUri ?: return
-        val chapters = state.chapters
+        if (state.currentUri == null) return
         val q = query.trim()
-        if (chapters.isEmpty() || q.isEmpty()) return
+        if (state.chapters.isEmpty() || q.isEmpty()) return
 
         searchJob?.cancel()
         _uiState.update {
@@ -605,55 +381,35 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 isSearching = true,
                 searchResults = emptyList(),
                 searchScannedChapters = 0,
-                searchTotalChapters = chapters.size
+                searchTotalChapters = state.chapters.size
             )
         }
         searchJob = viewModelScope.launch {
             val hits = mutableListOf<SearchHit>()
             try {
                 withContext(Dispatchers.IO) {
-                    val totalChars = state.fullTextLength
-                    if (convertedFormat == null && EpubParser.isEpubFile(appCtx, uri)) {
-                        for ((idx, chapter) in chapters.withIndex()) {
+                    val chapters = reading.chapters
+                    val stream = reading.openCharStream()
+                    if (stream == null) {
+                        // 没有连续流（EPUB）或流打不开：逐章装载，坐标域与单趟扫描一致，仅慢
+                        for ((idx, _) in chapters.withIndex()) {
                             if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
-                            scanChapterByLoading(uri, chapters, idx, q, hits)
+                            scanChapterByLoading(idx, q, hits)
                             reportSearchProgress(idx + 1, hits)
                         }
                     } else {
-                        val readUri = if (convertedFormat != null) resolveConvertedReadUri(uri) else uri
-                        val ends = IntArray(chapters.size) { i -> endOffsetOf(chapters, i, totalChars) }
-                        val assembler = ChapterSliceAssembler(ends)
-                        val reader = openBookCharStream(appCtx, readUri, currentEncoding)
-                        if (reader == null) {
-                            // 单趟流打开失败（如 provider 不支持 fd）回退逐章装载：坐标域一致，仅慢
-                            for ((idx, chapter) in chapters.withIndex()) {
-                                if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
-                                scanChapterByLoading(uri, chapters, idx, q, hits)
-                                reportSearchProgress(idx + 1, hits)
+                        stream.use { reader ->
+                            val assembler = ChapterSliceAssembler(reading.chapterEndOffsets())
+                            val buf = CharArray(24576)
+                            while (isActive && hits.size < BookSearchEngine.MAX_RESULTS) {
+                                val n = reader.read(buf)
+                                if (n < 0) break
+                                if (n > 0) assembler.feed(buf, 0, n)
+                                drainSearchSlices(assembler.drain(), q, hits)
                             }
-                        } else {
-                            reader.use { r ->
-                                val buf = CharArray(24576)
-                                while (isActive && hits.size < BookSearchEngine.MAX_RESULTS) {
-                                    val n = r.read(buf)
-                                    if (n < 0) break
-                                    if (n > 0) assembler.feed(buf, 0, n)
-                                    val done = assembler.drain()
-                                    if (done.isNotEmpty()) {
-                                        for ((idx, slice) in done) {
-                                            if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
-                                            scanChapterSlice(slice, chapters, idx, totalChars, q, hits)
-                                        }
-                                        reportSearchProgress(done.last().first + 1, hits)
-                                    }
-                                }
-                                assembler.finish()
-                                for ((idx, slice) in assembler.drain()) {
-                                    if (!isActive || hits.size >= BookSearchEngine.MAX_RESULTS) break
-                                    scanChapterSlice(slice, chapters, idx, totalChars, q, hits)
-                                }
-                                reportSearchProgress(chapters.size, hits)
-                            }
+                            assembler.finish()
+                            drainSearchSlices(assembler.drain(), q, hits)
+                            reportSearchProgress(chapters.size, hits)
                         }
                     }
                 }
@@ -674,42 +430,69 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     /** 单章装载→匹配（EPUB 与流打开失败的回退路径），坐标语义与流式切片一致 */
     private suspend fun scanChapterByLoading(
-        uri: Uri,
-        chapters: List<Chapter>,
         chapterIndex: Int,
         query: String,
         hits: MutableList<SearchHit>
     ) {
-        val content = loadChapterContentForSearch(uri, chapters, chapterIndex) ?: return
-        appendSearchHits(content.formattedBody, content.rawParagraphStarts.firstOrNull() ?: 0, content.startCharOffset, chapters, chapterIndex, query, hits)
+        val content = loadChapterContentForSearch(chapterIndex) ?: return
+        appendSearchHits(
+            content.formattedBody,
+            content.rawParagraphStarts.firstOrNull() ?: 0,
+            content.startCharOffset,
+            chapterIndex,
+            query,
+            hits
+        )
     }
 
     /** 流式切片→与逐章装载同语义的净化关闭态排版→匹配（单趟扫描核心步） */
     private fun scanChapterSlice(
         slice: String,
-        chapters: List<Chapter>,
         chapterIndex: Int,
-        totalChars: Int,
         query: String,
         hits: MutableList<SearchHit>
     ) {
+        val chapters = reading.chapters
         if (chapterIndex !in chapters.indices || slice.isEmpty()) return
-        val startOffset = chapters[chapterIndex].charOffset.coerceIn(0, totalChars)
-        val endOffset = endOffsetOf(chapters, chapterIndex, totalChars).coerceIn(startOffset, totalChars)
-        val content = formatChapterRawText(slice, chapters, chapterIndex, startOffset, endOffset, cleanTypography = false)
-        appendSearchHits(content.formattedBody, content.rawParagraphStarts.firstOrNull() ?: 0, startOffset, chapters, chapterIndex, query, hits)
+        val bounds = BookSource.chapterBounds(chapters, chapterIndex, reading.totalChars) ?: return
+        val content = formatChapterRawText(
+            slice, chapters, chapterIndex, bounds.start, bounds.end, cleanTypography = false
+        )
+        appendSearchHits(
+            content.formattedBody,
+            content.rawParagraphStarts.firstOrNull() ?: 0,
+            bounds.start,
+            chapterIndex,
+            query,
+            hits
+        )
+    }
+
+    /** 单趟扫描吐出的整章切片批量匹配，并按最后完成的章节上报进度 */
+    private fun drainSearchSlices(
+        slices: List<Pair<Int, String>>,
+        query: String,
+        hits: MutableList<SearchHit>
+    ) {
+        if (slices.isEmpty()) return
+        for ((idx, slice) in slices) {
+            if (hits.size >= BookSearchEngine.MAX_RESULTS) break
+            scanChapterSlice(slice, idx, query, hits)
+        }
+        reportSearchProgress(slices.last().first + 1, hits)
     }
 
     private fun appendSearchHits(
         body: String,
         bodyStartInRaw: Int,
         baseCharOffset: Int,
-        chapters: List<Chapter>,
         chapterIndex: Int,
         query: String,
         hits: MutableList<SearchHit>
     ) {
         if (body.isEmpty()) return
+        val chapters = reading.chapters
+        if (chapterIndex !in chapters.indices) return
         hits += BookSearchEngine.findMatches(
             body = body,
             query = query,
@@ -792,7 +575,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun updateCharOffset(offset: Int) {
         val state = _uiState.value
         val uri = state.currentUri ?: return
-        currentReadingOffset = offset
+        reading.updateOffset(offset)
         notifyUserActive()
 
         savePositionJob?.cancel()
@@ -825,7 +608,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         if (uri == null) return
-        val offset = currentReadingOffset
+        val offset = reading.currentOffset
         savePositionJob?.cancel()
         viewModelScope.launch(Dispatchers.IO) {
             val currentChapTitle = state.currentChapterContent?.title ?: ""
@@ -960,7 +743,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val state = _uiState.value
         val uri = state.currentUri ?: return
         val chap = state.currentChapterContent ?: return
-        val currentOffset = currentReadingOffset
+        val currentOffset = reading.currentOffset
         val body = chap.formattedBody
         // 正文坐标必须经排版映射换算：formattedBody 补过段首缩进并重排换行，
         // 直接相减会落在错位的段落里，书签摘录与持久化位置一起漂移
@@ -1041,7 +824,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 true
             }
             is Screen.Loading -> {
-                prefetchJob?.cancel()
+                reading.close()
                 viewModelScope.launch(Dispatchers.IO) {
                     DataStoreManager.saveLastScreen(appCtx, "home")
                     val shelf = DataStoreManager.loadBookShelf(appCtx)
@@ -1073,9 +856,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     /** 关书统一路径：落盘进度 + 取消预热/搜索 + 清空章节缓存 + 复位到书架 */
     private fun closeBookInternal() {
         flushReadingPosition()
-        prefetchJob?.cancel()
         searchJob?.cancel()
-        chapterContentCache.clear()
+        reading.close()
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.saveLastScreen(appCtx, "home")
             val shelf = DataStoreManager.loadBookShelf(appCtx)
@@ -1095,7 +877,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun getCurrentReadingOffset(): Int = currentReadingOffset
+    fun getCurrentReadingOffset(): Int = reading.currentOffset
 
     // RSVP 表冠调速阻尼器（算法见 RsvpRotaryDamper，测试覆盖 RsvpRotaryDamperTest）
     private val rsvpDamper = RsvpRotaryDamper()
@@ -1360,22 +1142,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             DataStoreManager.saveCleanTypography(appCtx, enabled)
         }
 
-        val state = _uiState.value
-        val uri = state.currentUri ?: return
-        val chapterIndex = state.currentChapterIndex
-        if (state.chapters.isEmpty() || chapterIndex !in state.chapters.indices) return
+        if (_uiState.value.currentUri == null) return
 
         // 快速连点时取消上一次切换：只有最新排版态的正文允许落回 UI，避免旧协程晚归覆盖
         cleanTypographyJob?.cancel()
         cleanTypographyJob = viewModelScope.launch {
-            val chapterContent = chapterContentCache[chapterCacheKey(chapterIndex, enabled)]
-                ?: withContext(Dispatchers.IO) {
-                    getOrLoadChapterContent(uri, state.chapters, chapterIndex, state.fullTextLength)
-                } ?: return@launch
-            if (isActive && _uiState.value.cleanTypography == enabled) {
-                _uiState.update { it.copy(currentChapterContent = chapterContent) }
-                prefetchAdjacentChapters(uri, state.chapters, chapterIndex, state.fullTextLength)
-            }
+            if (!reading.setCleanTypography(enabled)) return@launch
+            if (isActive && _uiState.value.cleanTypography == enabled) syncReadingState()
         }
     }
 
@@ -1430,7 +1203,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      */
     override fun onCleared() {
         loadJob?.cancel()
-        prefetchJob?.cancel()
+        reading.close()
         cleanTypographyJob?.cancel()
         searchJob?.cancel()
         savePositionJob?.cancel()

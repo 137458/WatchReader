@@ -40,8 +40,8 @@ data class RsvpToken(
 /**
  * RSVP 动态闪读 / 单行速读屏幕（极简防裁切 + 物理表冠高精度调速 + 触屏档位切换）
  *
- * 表冠统一走 Activity 顶层管线（MainActivity → ReaderViewModel.handleRotaryScroll），
- * 本页不再自带 onRotaryScrollEvent —— 该路径在顶层管线消费事件后永远收不到输入，
+ * 表冠统一走 Activity 顶层分派（MainActivity → CrownRouter 第 1 条策略 → ReaderViewModel.handleRotaryScroll），
+ * 本页不再自带 onRotaryScrollEvent —— 该路径在路由消费事件后永远收不到输入，
  * 历史上属于与主管线调参互不相认的第二套死代码。
  */
 @Composable

@@ -1,5 +1,6 @@
 package com.watchreader
 
+import androidx.compose.runtime.Immutable
 import kotlin.math.abs
 
 /**
@@ -442,3 +443,47 @@ object ChapterOffsetMapper {
             .coerceIn(0, bodyLength)
     }
 }
+
+/**
+ * 阅读页的组合输入：一页需要知道的全部事实。
+ *
+ * 此前阅读页有 23 个平铺参数，父级 [ReaderUiState] 任意字段变化（阅读时长 tick、
+ * 传书进度、搜索进度）都会重新进入阅读页的组合，逐项 setTextSize / setTextColor
+ * 各自触发整章 StaticLayout 重建。收成一个整体后，父级只需比较一次：相等即整页跳过。
+ *
+ * 标记 [Immutable] 是承诺而非猜测——本类每次都由当前状态重新构造，构造后不再被改写。
+ */
+@Immutable
+data class ReaderPaneState(
+    val chapterContent: ChapterContent?,
+    val initialCharOffset: Int,
+    val totalChapters: Int,
+    val fullTextLength: Int,
+    val fontSize: Int,
+    val autoScrollSpeed: Float,
+    val isAutoScrolling: Boolean,
+    val tapPageArea: Int,
+    val fontType: Int,
+    val lineSpacing: Int,
+    val letterSpacing: Int,
+    val chapters: List<Chapter>,
+    val currentChapterIndex: Int,
+    val covered: Boolean
+)
+
+/**
+ * 阅读页的回调出口：与 [ReaderPaneState] 分离，使常驻阅读页在状态不变时
+ * 不会因为父级重新构造 lambda 而失效跳过比较。
+ */
+@Immutable
+class ReaderPaneActions(
+    val onCharOffsetChange: (Int) -> Unit,
+    val onNextChapter: () -> Unit,
+    val onPrevChapter: () -> Unit,
+    val onLongPress: () -> Unit,
+    val onBack: () -> Unit,
+    val onAutoScrollToggle: () -> Unit,
+    val onAutoScrollSpeedChange: (Float) -> Unit,
+    val onSeekChapter: (Int) -> Unit,
+    val onFlushReadingPosition: () -> Unit
+)

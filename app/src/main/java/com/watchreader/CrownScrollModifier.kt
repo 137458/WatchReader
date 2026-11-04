@@ -460,21 +460,24 @@ class CrownTickGate(
  * 页面级表冠滚动目标：由非原生滚动容器的 Compose 页面（书架 / 菜单 / 无线传书等）实现
  *
  * 与阅读页（原生 ScrollView 自持 OnGenericMotionListener）、目录页（原生 ListView）并列的
- * 第三条表冠路径：Activity 顶层管线在 RSVP 调速分支之后优先寻址，彻底取代
- * "1dp 隐形焦点锚点"方案 —— 后者依赖原生焦点存活，触点命中与焦点迁移都会使事件丢失，
+ * 第三条表冠路径：CrownRouter 的第二条策略（RSVP 调速之后、原生 View 树之前）优先寻址，
+ * 彻底取代 "1dp 隐形焦点锚点"方案 —— 后者依赖原生焦点存活，触点命中与焦点迁移都会使事件丢失，
  * 造成表冠无响应、无振感。
  */
 fun interface CrownScrollTarget {
     /**
      * 处理一次表冠旋转增量（已经 CrownScrollHelper 极性归一化：顺时针向下为正）
      *
-     * @return true 表示本次增量已消费，Activity 管线终止继续分发
+     * @return true 表示本次增量已消费，CrownRouter 终止继续尝试后续策略
      */
     fun onCrownDelta(delta: Float): Boolean
 }
 
 /**
  * 表冠滚动目标注册表（当前前台页面唯一持有者）
+ *
+ * 这是一个显式的注册接缝而不是分派器：Compose 页面在组合期登记、离开时注销，
+ * 何时消费以及消费失败后继续下沉到哪条策略，全部由 CrownRouter 的声明顺序决定。
  */
 object CrownScrollTargetRegistry {
 
