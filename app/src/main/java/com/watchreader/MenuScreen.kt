@@ -237,10 +237,10 @@ fun MenuScreen(
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PillButton("减速", Modifier.weight(1f), verticalPadding = 8.dp) {
-                            onAutoScrollSpeedChange((autoScrollSpeed - 10f).coerceAtLeast(15f))
+                            onAutoScrollSpeedChange(AutoScrollSpeed.clamp(autoScrollSpeed - 10f))
                         }
                         PillButton("加速", Modifier.weight(1f), verticalPadding = 8.dp) {
-                            onAutoScrollSpeedChange((autoScrollSpeed + 10f).coerceAtMost(200f))
+                            onAutoScrollSpeedChange(AutoScrollSpeed.clamp(autoScrollSpeed + 10f))
                         }
                     }
                 }
@@ -569,18 +569,34 @@ private fun Stepper(onMinus: () -> Unit, onPlus: () -> Unit) {
     }
 }
 
+/**
+ * 步进键连发策略（由 MenuStepperRepeatTest 锁定）：离散步进只由 clickable 在抬起时派发一次，
+ * 本对象只描述「按住超过 [HOLD_DELAY_MS] 之后」的补充连发，因此一次点按恰好一步。
+ */
+internal object StepperRepeat {
+    /** 按住多久开始连发 */
+    const val HOLD_DELAY_MS = 400L
+
+    /** 连发间隔 */
+    const val INTERVAL_MS = 90L
+
+    /** 按住 [holdMs] 毫秒时，除首步之外应补充的连发次数 */
+    fun repeatCount(holdMs: Long): Int =
+        if (holdMs < HOLD_DELAY_MS) 0 else 1 + ((holdMs - HOLD_DELAY_MS) / INTERVAL_MS).toInt()
+}
+
 @Composable
 private fun StepperKey(symbol: String, colors: ColorScheme, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    // 首步交给 clickable 的抬起回调；此处只补「按住不放」的连发。
+    // 旧实现在按下瞬间就 onClick() 一次，与 clickable 抬起那一次叠加 —— 一次点按步进两步
     LaunchedEffect(pressed) {
-        if (pressed) {
+        if (!pressed) return@LaunchedEffect
+        delay(StepperRepeat.HOLD_DELAY_MS)
+        while (true) {
             onClick()
-            delay(400L)
-            while (true) {
-                onClick()
-                delay(90L)
-            }
+            delay(StepperRepeat.INTERVAL_MS)
         }
     }
     Box(

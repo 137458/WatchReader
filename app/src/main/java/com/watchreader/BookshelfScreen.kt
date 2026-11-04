@@ -9,6 +9,8 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,11 +23,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
@@ -114,7 +114,7 @@ fun BookshelfScreen(
         }
     }
 
-    val scrollState = rememberScrollState()
+    val listState = rememberLazyListState()
 
     // 表冠目标注册：非空态滚动列表（连续跟手 + 距离门限微振）；
     // 空态无可滚内容，改走焦点轮选——复刻系统设置「对齐模式」，单事件钳 ±79px、
@@ -131,7 +131,7 @@ fun BookshelfScreen(
                 tick()
             }
         } else {
-            CrownScrollHelper.dispatchScroll(delta, scrollState, context)
+            CrownScrollHelper.dispatchScroll(delta, listState, context)
         }
         true
     }
@@ -143,282 +143,299 @@ fun BookshelfScreen(
             .fillMaxSize()
             .swipeDismissBack(onDismiss = onExitApp)
     ) {
-        Column(
+        LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(scrollState)
-                .padding(horizontal = 24.dp)
-                .padding(top = 44.dp, bottom = 84.dp),
+                .padding(horizontal = 24.dp),
+            // 上下留白随内容滚动（与旧的 padding 在 verticalScroll 内同语义）
+            contentPadding = PaddingValues(top = 44.dp, bottom = 84.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-        // ── 头部：栏目标签 + 主标题 ──
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .staggeredEnter(0),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Bottom
-        ) {
-            Column {
-                SectionLabel("正在阅读", color = colors.primary)
-                Text(
-                    text = "我的书架",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = colors.onBackground
-                )
-            }
-            Text(
-                text = "${bookshelf.size} 本",
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.onSurfaceVariant
-            )
-        }
-
-        // ── 继续阅读主卡：MD3 primaryContainer 强调卡 + 圆头进度轨 ──
-        if (latestBook != null) {
-            Card(
-                modifier = Modifier
-                    .staggeredEnter(1)
-                    .fillMaxWidth(),
-                onClick = {
-                    tick()
-                    onOpenBook(latestBook)
-                },
-                shape = RoundedCornerShape(WatchShapes.Card),
-                colors = CardDefaults.cardColors(containerColor = colors.primaryContainer),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(7.dp)
+            item {
+                // ── 头部：栏目标签 + 主标题 ──
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .staggeredEnter(0),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Bottom
                 ) {
-                    SectionLabel("继续阅读", color = colors.onPrimaryContainer)
-                    Text(
-                        text = latestBook.title,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = colors.onPrimaryContainer,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = latestBook.lastChapterTitle.ifBlank { "从上次阅读位置继续" },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onPrimaryContainer,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        ProgressTrack(
-                            progress = (latestBook.progressPercent / 100f).coerceIn(0f, 1f),
-                            modifier = Modifier.weight(1f),
-                            fillColor = colors.primary,
-                            trackColor = colors.outlineVariant
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        SectionLabel("正在阅读", color = colors.primary)
                         Text(
-                            text = "${latestBook.progressPercent}%",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = colors.onPrimaryContainer
+                            text = "我的书架",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = colors.onBackground
                         )
                     }
-                }
-            }
-        } else {
-            SurfaceCard(
-                modifier = Modifier
-                    .staggeredEnter(1)
-                    .fillMaxWidth()
-                    .padding(0.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text("建立你的第一座书架", style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
                     Text(
-                        "导入 TXT 或 EPUB，阅读进度会自动保存。",
-                        style = MaterialTheme.typography.bodySmall,
+                        text = "${bookshelf.size} 本",
+                        style = MaterialTheme.typography.labelMedium,
                         color = colors.onSurfaceVariant
                     )
                 }
             }
-        }
 
-        // ── 双入口操作卡 ──
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .staggeredEnter(2),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            BookshelfAction(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Add,
-                title = "导入书籍",
-                value = "TXT · EPUB",
-                onClick = onOpenFile
-            )
-            BookshelfAction(
-                modifier = Modifier.weight(1f),
-                icon = Icons.Default.Share,
-                title = "无线传书",
-                value = "扫码直连",
-                onClick = onOpenWifiTransfer
-            )
-        }
+            item {
+                if (latestBook != null) {
+                    Card(
+                        modifier = Modifier
+                            .staggeredEnter(1)
+                            .fillMaxWidth(),
+                        onClick = {
+                            tick()
+                            onOpenBook(latestBook)
+                        },
+                        shape = RoundedCornerShape(WatchShapes.Card),
+                        colors = CardDefaults.cardColors(containerColor = colors.primaryContainer),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp)
+                        ) {
+                            SectionLabel("继续阅读", color = colors.onPrimaryContainer)
+                            Text(
+                                text = latestBook.title,
+                                style = MaterialTheme.typography.titleLarge,
+                                color = colors.onPrimaryContainer,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = latestBook.lastChapterTitle.ifBlank { "从上次阅读位置继续" },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onPrimaryContainer,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                ProgressTrack(
+                                    progress = (latestBook.progressPercent / 100f).coerceIn(0f, 1f),
+                                    modifier = Modifier.weight(1f),
+                                    fillColor = colors.primary,
+                                    trackColor = colors.outlineVariant
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "${latestBook.progressPercent}%",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = colors.onPrimaryContainer
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    SurfaceCard(
+                        modifier = Modifier
+                            .staggeredEnter(1)
+                            .fillMaxWidth()
+                            .padding(0.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text("建立你的第一座书架", style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
+                            Text(
+                                "导入 TXT 或 EPUB，阅读进度会自动保存。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
 
-        AnimatedVisibility(
-            visible = !errorMessage.isNullOrBlank(),
-            enter = fadeIn(tween(WatchMotion.DUR_FADE)) + expandVertically(),
-            exit = fadeOut(tween(WatchMotion.DUR_FADE_OUT)) + shrinkVertically()
-        ) {
-            Text(
-                text = errorMessage.orEmpty(),
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.error
-            )
-        }
-
-        AnimatedVisibility(
-            visible = !infoMessage.isNullOrBlank(),
-            enter = fadeIn(tween(WatchMotion.DUR_FADE)) + expandVertically(),
-            exit = fadeOut(tween(WatchMotion.DUR_FADE_OUT)) + shrinkVertically()
-        ) {
-            Text(
-                text = infoMessage.orEmpty(),
-                modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.labelSmall,
-                // 成功类信息用格式绿，与错误红区分
-                color = colors.secondary
-            )
-        }
-
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = onSearchChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .staggeredEnter(3),
-            singleLine = true,
-            placeholder = { Text("搜索书名", style = MaterialTheme.typography.bodyMedium) },
-            leadingIcon = {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = null,
-                    tint = colors.onSurfaceVariant
-                )
-            },
-            textStyle = MaterialTheme.typography.bodyMedium,
-            shape = MaterialTheme.shapes.large,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() })
-        )
-
-        // ── 书库列表 ──
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .staggeredEnter(4),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("书库", style = MaterialTheme.typography.titleMedium, color = colors.onBackground)
-            Text(
-                text = if (searchQuery.isBlank()) "最近阅读优先" else "${filteredBooks.size} 个结果",
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.onSurfaceVariant
-            )
-        }
-
-        if (filteredBooks.isEmpty()) {
-            SurfaceCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .staggeredEnter(5)
-            ) {
-                Column(
+            item {
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 18.dp, horizontal = 16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                        .staggeredEnter(2),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    BookshelfAction(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.Add,
+                        title = "导入书籍",
+                        value = "TXT · EPUB",
+                        onClick = onOpenFile
+                    )
+                    BookshelfAction(
+                        modifier = Modifier.weight(1f),
+                        icon = Icons.Default.Share,
+                        title = "无线传书",
+                        value = "扫码直连",
+                        onClick = onOpenWifiTransfer
+                    )
+                }
+            }
+
+            item {
+                AnimatedVisibility(
+                    visible = !errorMessage.isNullOrBlank(),
+                    enter = fadeIn(tween(WatchMotion.DUR_FADE)) + expandVertically(),
+                    exit = fadeOut(tween(WatchMotion.DUR_FADE_OUT)) + shrinkVertically()
                 ) {
                     Text(
-                        text = if (bookshelf.isEmpty()) "书架还是空的" else "没有匹配的书籍",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = colors.onSurface
+                        text = errorMessage.orEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.error
                     )
+                }
+            }
+
+            item {
+                AnimatedVisibility(
+                    visible = !infoMessage.isNullOrBlank(),
+                    enter = fadeIn(tween(WatchMotion.DUR_FADE)) + expandVertically(),
+                    exit = fadeOut(tween(WatchMotion.DUR_FADE_OUT)) + shrinkVertically()
+                ) {
                     Text(
-                        text = if (bookshelf.isEmpty()) "从上方导入或扫码传入第一本书" else "换个书名关键词试试",
+                        text = infoMessage.orEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.labelSmall,
+                        // 成功类信息用格式绿，与错误红区分
+                        color = colors.secondary
+                    )
+                }
+            }
+
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = onSearchChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .staggeredEnter(3),
+                    singleLine = true,
+                    placeholder = { Text("搜索书名", style = MaterialTheme.typography.bodyMedium) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = colors.onSurfaceVariant
+                        )
+                    },
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    shape = MaterialTheme.shapes.large,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() })
+                )
+            }
+
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .staggeredEnter(4),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("书库", style = MaterialTheme.typography.titleMedium, color = colors.onBackground)
+                    Text(
+                        text = if (searchQuery.isBlank()) "最近阅读优先" else "${filteredBooks.size} 个结果",
                         style = MaterialTheme.typography.labelSmall,
                         color = colors.onSurfaceVariant
                     )
                 }
             }
-        } else {
-            filteredBooks.forEachIndexed { index, book ->
-                BookshelfBookRow(
-                    book = book,
-                    isPendingDelete = pendingDeleteUri == book.uriString,
-                    // 点按反馈（tick + 按压缩放）统一在行内处理，父层不再叠加
-                    onOpen = { onOpenBook(book) },
-                    onTogglePin = { onTogglePin(book) },
-                    onRequestDelete = { pendingDeleteUri = book.uriString },
-                    onConfirmDelete = {
-                        pendingDeleteUri = null
-                        onDeleteBook(book)
-                    },
-                    enterOrder = 5 + index
-                )
-            }
-        }
 
-        // ── 底部显示调节区 ──
-        // 圆屏底部弦宽小于屏宽，定宽并排会整排伸出屏幕右侧被裁切（"日/夜"键首当其冲：
-        // 旧版一行塞下 标签 + 字号值 + 三枚胶囊共约 188dp > 可用 185dp）。
-        // 故拆为标签行 + 权重行：标签与数值单独占一行，控制键按权重均分剩余宽度，
-        // 任何屏宽 / 字号下都由布局本身保证不溢出。
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .staggeredEnter(6 + filteredBooks.size.coerceAtMost(6)),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                SectionLabel("显示")
-                Text(
-                    text = "字号 $fontSize",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = colors.primary
-                )
+            if (filteredBooks.isEmpty()) {
+                item {
+                    SurfaceCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .staggeredEnter(5)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 18.dp, horizontal = 16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = if (bookshelf.isEmpty()) "书架还是空的" else "没有匹配的书籍",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = colors.onSurface
+                            )
+                            Text(
+                                text = if (bookshelf.isEmpty()) "从上方导入或扫码传入第一本书" else "换个书名关键词试试",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            } else {
+                // 书籍行不带入场动画：LazyColumn 回收后会重新组合，重放 alpha 淡入会变成滚动闪变
+                items(filteredBooks.size) { index ->
+                    val book = filteredBooks[index]
+                    BookshelfBookRow(
+                        book = book,
+                        isPendingDelete = pendingDeleteUri == book.uriString,
+                        // 点按反馈（tick + 按压缩放）统一在行内处理，父层不再叠加
+                        onOpen = { onOpenBook(book) },
+                        onTogglePin = { onTogglePin(book) },
+                        onRequestDelete = { pendingDeleteUri = book.uriString },
+                        onConfirmDelete = {
+                            pendingDeleteUri = null
+                            onDeleteBook(book)
+                        }
+                    )
+                }
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                PillButton(
-                    "−",
-                    Modifier.weight(1f),
-                    verticalPadding = 8.dp,
-                    horizontalPadding = 0.dp
-                ) { onFontSizeChange(fontSize - 1) }
-                PillButton(
-                    "+",
-                    Modifier.weight(1f),
-                    verticalPadding = 8.dp,
-                    horizontalPadding = 0.dp
-                ) { onFontSizeChange(fontSize + 1) }
-                PillButton(
-                    if (isDarkMode) "夜间" else "日间",
-                    Modifier.weight(1.7f),
-                    active = isDarkMode,
-                    verticalPadding = 8.dp,
-                    horizontalPadding = 0.dp
-                ) { onToggleDarkMode() }
+
+            item {
+                // ── 底部显示调节区 ──
+                // 圆屏底部弦宽小于屏宽，定宽并排会整排伸出屏幕右侧被裁切（"日/夜"键首当其冲：
+                // 旧版一行塞下 标签 + 字号值 + 三枚胶囊共约 188dp > 可用 185dp）。
+                // 故拆为标签行 + 权重行：标签与数值单独占一行，控制键按权重均分剩余宽度，
+                // 任何屏宽 / 字号下都由布局本身保证不溢出。
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .staggeredEnter(6 + filteredBooks.size.coerceAtMost(6)),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SectionLabel("显示")
+                        Text(
+                            text = "字号 $fontSize",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.primary
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        PillButton(
+                            "−",
+                            Modifier.weight(1f),
+                            verticalPadding = 8.dp,
+                            horizontalPadding = 0.dp
+                        ) { onFontSizeChange(fontSize - 1) }
+                        PillButton(
+                            "+",
+                            Modifier.weight(1f),
+                            verticalPadding = 8.dp,
+                            horizontalPadding = 0.dp
+                        ) { onFontSizeChange(fontSize + 1) }
+                        PillButton(
+                            if (isDarkMode) "夜间" else "日间",
+                            Modifier.weight(1.7f),
+                            active = isDarkMode,
+                            verticalPadding = 8.dp,
+                            horizontalPadding = 0.dp
+                        ) { onToggleDarkMode() }
+                    }
+                }
             }
-        }
 
         }
 
@@ -507,8 +524,7 @@ private fun BookshelfBookRow(
     onOpen: () -> Unit,
     onTogglePin: () -> Unit,
     onRequestDelete: () -> Unit,
-    onConfirmDelete: () -> Unit,
-    enterOrder: Int
+    onConfirmDelete: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val formatBadge = remember(book.uriString, book.title) {
@@ -521,8 +537,7 @@ private fun BookshelfBookRow(
 
     SurfaceCard(
         modifier = Modifier
-            .fillMaxWidth()
-            .staggeredEnter(enterOrder),
+            .fillMaxWidth(),
         cornerRadius = WatchShapes.Row
     ) {
         Column(

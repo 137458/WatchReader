@@ -14,7 +14,8 @@ import kotlin.math.sin
  * 背景约束：底部操作条由「环形扇带贴死圆边」改为「弧形胶囊离边悬浮」——
  * 1. 外缘半径 = 屏幕半径 − 离边 inset（不触圆弧），内缘 = 外缘 − 径向厚度；
  * 2. 槽位角度沿用既有口径：单键 90°，双键 125°/55°，三键 140°/90°/40°；
- * 3. 相邻按钮之间保留间隙角，单键半跨度有固定上限；
+ * 3. 相邻按钮之间保留间隙角（缺省按 EdgeActionBar 的自动值：两键 24°、三键 16°、单键 6°），
+ *    单键半跨度有固定上限；
  * 4. 文字沿弧逐字排布：阅读方向沿屏幕 +x（向右），底部弧上向右行进角度递减，
  *    整段文字按累计字宽在中点角两侧对称展开。
  */
@@ -22,8 +23,15 @@ class ArcButtonGeometryTest {
 
     private companion object {
         const val SCREEN = 466f
-        const val THICKNESS = 26f
-        const val GAP = 6f
+
+        /** 与 EdgeActionBar 默认径向厚度对齐（UiKit.kt:468：thickness = 20.dp） */
+        const val THICKNESS = 20f
+
+        /** 与 EdgeActionBar 缺省间隙角自动值对齐（UiKit.kt:483-488） */
+        const val GAP_SINGLE_KEY = 6f
+        const val GAP_TWO_KEY = 24f
+        const val GAP_THREE_KEY = 16f
+
         const val EDGE_INSET = 6f
         const val CENTER = 233f
     }
@@ -47,7 +55,7 @@ class ArcButtonGeometryTest {
 
     @Test
     fun testOuterEdgeSitsAtEdgeInset() {
-        val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP, EDGE_INSET)
+        val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP_THREE_KEY, EDGE_INSET)
         // 外缘 = 屏幕半径 − 离边距离，按钮悬空不触圆弧
         assertTrue(sectors.all { abs(it.outerRadiusPx - (SCREEN / 2f - EDGE_INSET)) < 0.01f })
         // 内缘 = 外缘 − 径向厚度
@@ -58,14 +66,14 @@ class ArcButtonGeometryTest {
 
     @Test
     fun testDefaultInsetIsZero() {
-        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, THICKNESS, GAP)
+        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, THICKNESS, GAP_SINGLE_KEY)
         assertTrue(sectors.all { abs(it.outerRadiusPx - SCREEN / 2f) < 0.01f })
     }
 
     @Test
     fun testInsetClampStillHolds() {
         // 厚度吃穿半径时钳制语义在带 inset 时同样成立
-        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, thicknessPx = 400f, gapDeg = GAP, edgeInsetPx = EDGE_INSET)
+        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, thicknessPx = 400f, gapDeg = GAP_SINGLE_KEY, edgeInsetPx = EDGE_INSET)
         val outer = SCREEN / 2f - EDGE_INSET
         assertEquals(outer / 2f, sectors[0].innerRadiusPx, 0.01f)
     }
@@ -73,7 +81,7 @@ class ArcButtonGeometryTest {
     @Test
     fun testThicknessSurvivesClampWhenTooDeep() {
         // 厚度大于半径时不得产生负内缘：钳制为半径的一半
-        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, thicknessPx = 400f, gapDeg = GAP)
+        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, thicknessPx = 400f, gapDeg = GAP_SINGLE_KEY)
         assertEquals(SCREEN / 4f, sectors[0].innerRadiusPx, 0.01f)
     }
 
@@ -81,22 +89,22 @@ class ArcButtonGeometryTest {
 
     @Test
     fun testSectorSpanCenteredOnSlotAngle() {
-        val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP)
+        val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP_THREE_KEY)
         val centers = sectors.map { (it.startAngleDeg + it.endAngleDeg) / 2f }
         assertEquals(listOf(140f, 90f, 40f), centers)
     }
 
     @Test
     fun testAdjacentSectorsKeepGap() {
-        val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP)
-        // 125° 与 90° 两槽之间的间隙
-        assertEquals(GAP, sectors[0].startAngleDeg - sectors[1].endAngleDeg, 0.01f)
-        assertEquals(GAP, sectors[1].startAngleDeg - sectors[2].endAngleDeg, 0.01f)
+        val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP_THREE_KEY)
+        // 140° 与 90° 两槽之间的间隙等于生产传入的缺省间隙角
+        assertEquals(GAP_THREE_KEY, sectors[0].startAngleDeg - sectors[1].endAngleDeg, 0.01f)
+        assertEquals(GAP_THREE_KEY, sectors[1].startAngleDeg - sectors[2].endAngleDeg, 0.01f)
     }
 
     @Test
     fun testSingleButtonUsesWideSpan() {
-        val single = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, THICKNESS, GAP)
+        val single = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, THICKNESS, GAP_SINGLE_KEY)
         val span = single[0].endAngleDeg - single[0].startAngleDeg
         // 单键长标签（如「自动滚屏 350 px/s」）需要宽扇带，跨度 = 2 × 32°
         assertEquals(64f, span, 0.01f)
@@ -104,15 +112,27 @@ class ArcButtonGeometryTest {
 
     @Test
     fun testTripleButtonSpanFitsBetweenNeighbors() {
-        val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP)
+        val sectors = ArcButtonGeometry.sectors(3, SCREEN, SCREEN, THICKNESS, GAP_THREE_KEY)
         val span = sectors[1].endAngleDeg - sectors[1].startAngleDeg
-        // 三键：中心距 50°（140/90/40），去 6° 间隙后每槽 44°，未触 32° 上限
-        assertEquals(44f, span, 0.01f)
+        // 三键：中心距 50°（140/90/40），去 16° 间隙后每槽 34°（17° 半跨度），未触 32° 上限
+        assertEquals(34f, span, 0.01f)
+        // 与 hitTest 用例里的 [123°,157°] / [23°,57°] 扇带边界自洽
+        assertEquals(123f, sectors[0].startAngleDeg, 0.01f)
+        assertEquals(157f, sectors[0].endAngleDeg, 0.01f)
+    }
+
+    @Test
+    fun testDoubleButtonSpanFitsBetweenNeighbors() {
+        val sectors = ArcButtonGeometry.sectors(2, SCREEN, SCREEN, THICKNESS, GAP_TWO_KEY)
+        val span = sectors[1].endAngleDeg - sectors[1].startAngleDeg
+        // 两键：中心距 70°（125/55），去 24° 间隙后每槽 46°（23° 半跨度）
+        assertEquals(46f, span, 0.01f)
+        assertEquals(GAP_TWO_KEY, (125f - 23f) - (55f + 23f), 0.01f)
     }
 
     @Test
     fun testSectorStartBeforeEnd() {
-        ArcButtonGeometry.sectors(2, SCREEN, SCREEN, THICKNESS, GAP).forEach {
+        ArcButtonGeometry.sectors(2, SCREEN, SCREEN, THICKNESS, GAP_TWO_KEY).forEach {
             assertTrue(it.startAngleDeg < it.endAngleDeg)
         }
     }
@@ -179,7 +199,7 @@ class ArcButtonGeometryTest {
 
     @Test
     fun testTextRadiusSitsAtBandMiddle() {
-        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, THICKNESS, GAP, EDGE_INSET)
+        val sectors = ArcButtonGeometry.sectors(1, SCREEN, SCREEN, THICKNESS, GAP_SINGLE_KEY, EDGE_INSET)
         assertEquals(SCREEN / 2f - EDGE_INSET - THICKNESS / 2f, sectors[0].textRadiusPx, 0.01f)
     }
 

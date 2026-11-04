@@ -680,6 +680,68 @@ private class ChapterListAdapter(
     }
 }
 
+/** 只在颜色真正变化时写 TextView 文字色（复用时避免每帧 invalidate） */
+private fun TextView.setTextColorIfChanged(color: Int) {
+    if (currentTextColor != color) setTextColor(color)
+}
+
+/**
+ * 书签删除键的两段式视觉口径（纯参数，由 BookmarkRowStyleTest 锁定）：
+ * 热区恒 ≥48dp（ADR-018 自定义可点组件最小触控尺寸），视觉只是文字不铺底色，
+ * 因此扩热区不改观感；待确认态放宽宽度容纳「确认删除」四字。
+ */
+internal data class BookmarkDeleteVisual(
+    val label: String,
+    val minWidthDp: Int,
+    val touchDp: Int,
+    val bold: Boolean
+)
+
+internal object BookmarkRowStyle {
+    /** ADR-018：自定义可点组件最小触控尺寸 */
+    const val TOUCH_DP = 48
+
+    /** 待确认态宽度：四字文案不折行 */
+    private const val PENDING_WIDTH_DP = 76
+
+    /** 摘要单行最多展示字数，超出才补省略号 */
+    private const val SNIPPET_MAX_CHARS = 30
+
+    fun deleteVisual(isPending: Boolean) = BookmarkDeleteVisual(
+        label = if (isPending) "确认删除" else "✕",
+        minWidthDp = if (isPending) PENDING_WIDTH_DP else TOUCH_DP,
+        touchDp = TOUCH_DP,
+        bold = isPending
+    )
+
+    /**
+     * 书签摘要单行文案：空摘要返回 null（整行不占位）；只有真正被截断时才补省略号
+     * （旧实现无条件追加「…」，完整短摘要被显示成疑似未完的片段）。
+     */
+    fun snippetLabel(snippet: String): String? {
+        if (snippet.isEmpty()) return null
+        val clipped = snippet.length > SNIPPET_MAX_CHARS
+        val body = if (clipped) snippet.take(SNIPPET_MAX_CHARS) else snippet
+        return if (clipped) "“$body…”" else "“$body”"
+    }
+}
+
+/**
+ * 书签行视图缓存：ListView 复用 convertView 时按 tag 取回，绑定阶段不再新建任何 View/Drawable
+ * （旧实现每次 getView 重建 4 个 View + 3 个 GradientDrawable，滚动期逐帧分配引发 GC 抖动）
+ */
+private class BookmarkRowViewHolder(
+    val container: LinearLayout,
+    val background: android.graphics.drawable.GradientDrawable,
+    val titleTv: TextView,
+    val snippetTv: TextView,
+    val dateTv: TextView,
+    val delTv: TextView
+) {
+    /** 上次写入的背景色：颜色没变就不 setColor，避免无谓失效重绘 */
+    var backgroundArgb: Int = Int.MIN_VALUE
+}
+
 private class BookmarkListAdapter(
     var bookmarks: List<Bookmark>,
     var colorScheme: ColorScheme,
@@ -705,96 +767,59 @@ private class BookmarkListAdapter(
     override fun getItemId(position: Int): Long = position.toLong()
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val context = parent.context
         val bm = bookmarks[position]
         val isPending = pendingDeleteId == bm.id
+
+        // convertView 复用的唯一入口：tag 命中即零分配绑定，未命中才装配一次
+        val holder = (convertView?.tag as? BookmarkRowViewHolder)
+            ?: createRow(parent.context).also { it.container.tag = it }
+        val container = holder.container
+        val context = container.context
+
         // 书签标题用 tertiary 书签琥珀：与目录条目（primary）在色彩语义上分离
-        val activeColor = colorScheme.tertiary.toArgb()
         val surfaceVariantColor = colorScheme.surfaceContainerHigh.toArgb()
-        val onSurfaceColor = colorScheme.onSurface.toArgb()
-        val normalColor = colorScheme.onSurfaceVariant.toArgb()
-        val errorColor = colorScheme.error.toArgb()
-
-        val container = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = (48 * density).toInt()
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(surfaceVariantColor)
-                cornerRadius = 12 * density
-            }
-            setPadding((10 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+        if (holder.backgroundArgb != surfaceVariantColor) {
+            holder.background.setColor(surfaceVariantColor)
+            holder.backgroundArgb = surfaceVariantColor
         }
 
-        val textLayout = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        holder.titleTv.text = bm.chapterTitle.ifEmpty { "第 ${bm.chapterIndex + 1} 章" }
+        holder.titleTv.setTextColorIfChanged(colorScheme.tertiary.toArgb())
+
+        val snippetLabel = BookmarkRowStyle.snippetLabel(bm.snippet)
+        if (snippetLabel == null) {
+            holder.snippetTv.visibility = View.GONE
+        } else {
+            holder.snippetTv.visibility = View.VISIBLE
+            holder.snippetTv.text = snippetLabel
+            holder.snippetTv.setTextColorIfChanged(colorScheme.onSurface.toArgb())
         }
 
-        val titleTv = TextView(context).apply {
-            text = bm.chapterTitle.ifEmpty { "第 ${bm.chapterIndex + 1} 章" }
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(activeColor)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        }
-        textLayout.addView(titleTv)
+        holder.dateTv.text = timeFormat.format(Date(bm.time))
+        holder.dateTv.setTextColorIfChanged(colorScheme.onSurfaceVariant.toArgb())
 
-        if (bm.snippet.isNotEmpty()) {
-            val snippetTv = TextView(context).apply {
-                text = "“${bm.snippet.take(30)}…”"
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-                setTextColor(onSurfaceColor)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                setPadding(0, (2 * density).toInt(), 0, 0)
-            }
-            textLayout.addView(snippetTv)
-        }
-
-        val dateTv = TextView(context).apply {
-            text = timeFormat.format(Date(bm.time))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-            setTextColor(normalColor)
-            setPadding(0, (2 * density).toInt(), 0, 0)
-        }
-        textLayout.addView(dateTv)
-        container.addView(textLayout)
-
-        // 删除按钮：热区 42dp+；与文本区之间留 6dp 死区，降低误触 ✕ 概率
-        val delBtn = TextView(context).apply {
-            text = if (isPending) "确认删除" else "✕"
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            setTextColor(errorColor)
-            typeface = if (isPending) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            gravity = Gravity.CENTER
-            minWidth = ((if (isPending) 76 else 42) * density).toInt()
-            minHeight = (42 * density).toInt()
-            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { leftMargin = (6 * density).toInt() }
-            setOnClickListener {
-                if (isPending) {
-                    revertHandler.removeCallbacks(revertRunnable)
-                    pendingDeleteId = null
-                    onDeleteBookmark(bm)
-                } else {
-                    pendingDeleteId = bm.id
-                    RotaryHapticManager.performScrollTick(context, null)
-                    notifyDataSetChanged()
-                    revertHandler.removeCallbacks(revertRunnable)
-                    revertHandler.postDelayed(revertRunnable, 3200L)
-                }
+        val visual = BookmarkRowStyle.deleteVisual(isPending)
+        holder.delTv.text = visual.label
+        holder.delTv.typeface = if (visual.bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+        holder.delTv.setTextColorIfChanged(colorScheme.error.toArgb())
+        // 尺寸只在两段式状态翻转时写一次：minWidth/minHeight 的 setter 每次都 requestLayout
+        val delMinWidth = (visual.minWidthDp * density).toInt()
+        if (holder.delTv.minWidth != delMinWidth) holder.delTv.minWidth = delMinWidth
+        val delMinHeight = (visual.touchDp * density).toInt()
+        if (holder.delTv.minHeight != delMinHeight) holder.delTv.minHeight = delMinHeight
+        holder.delTv.setOnClickListener {
+            if (isPending) {
+                revertHandler.removeCallbacks(revertRunnable)
+                pendingDeleteId = null
+                onDeleteBookmark(bm)
+            } else {
+                pendingDeleteId = bm.id
+                RotaryHapticManager.performScrollTick(context, null)
+                notifyDataSetChanged()
+                revertHandler.removeCallbacks(revertRunnable)
+                revertHandler.postDelayed(revertRunnable, 3200L)
             }
         }
-        container.addView(delBtn)
 
         container.setOnClickListener {
             if (pendingDeleteId != null) {
@@ -809,5 +834,66 @@ private class BookmarkListAdapter(
         applyPressFeedback(container)
 
         return container
+    }
+
+    /** 首次装配行视图：之后仅按 tag 复用，不再新建任何 View/Drawable */
+    private fun createRow(context: Context): BookmarkRowViewHolder {
+        val container = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = (BookmarkRowStyle.TOUCH_DP * density).toInt()
+            setPadding((10 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+        }
+        val background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 12 * density
+        }
+        container.background = background
+
+        val textLayout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        val titleTv = TextView(context).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+        }
+        textLayout.addView(titleTv)
+
+        val snippetTv = TextView(context).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            setPadding(0, (2 * density).toInt(), 0, 0)
+        }
+        textLayout.addView(snippetTv)
+
+        val dateTv = TextView(context).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+            setPadding(0, (2 * density).toInt(), 0, 0)
+        }
+        textLayout.addView(dateTv)
+        container.addView(textLayout)
+
+        // 删除键：热区 48dp（ADR-018），视觉只有文字不铺底色，扩热区不改观感；
+        // 与文本区之间留 6dp 死区，降低误触 ✕ 概率
+        val delTv = TextView(context).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            gravity = Gravity.CENTER
+            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = (6 * density).toInt() }
+        }
+        container.addView(delTv)
+
+        return BookmarkRowViewHolder(container, background, titleTv, snippetTv, dateTv, delTv)
     }
 }
