@@ -9,7 +9,6 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -137,6 +136,41 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     @Volatile
     private var lastActiveTime: Long = android.os.SystemClock.uptimeMillis()
+
+    /**
+     * 阅读时长结算循环：攒批落盘、目标庆祝、挂机判定都在它里面，
+     * 本类只提供状态读写与时间源的适配
+     */
+    private val readingTimer = ReadingTimerController(
+        scope = viewModelScope,
+        isReading = { _uiState.value.screen is Screen.Reader },
+        clock = {
+            val state = _uiState.value
+            ReadingClock(
+                readDurationSec = state.readDurationSec,
+                readDays = state.readDays,
+                readGoalMinutes = state.readGoalMinutes,
+                readGoalCelebrated = state.readGoalCelebrated
+            )
+        },
+        settle = { clock ->
+            _uiState.update {
+                it.copy(
+                    readDurationSec = clock.readDurationSec,
+                    readDays = clock.readDays,
+                    readGoalCelebrated = clock.readGoalCelebrated
+                )
+            }
+        },
+        uptimeMs = { android.os.SystemClock.uptimeMillis() },
+        lastActiveUptimeMs = { lastActiveTime },
+        wallClockMs = { System.currentTimeMillis() },
+        persistSeconds = { todayKey, seconds ->
+            DataStoreManager.addReadingSeconds(appCtx, seconds, todayKey)
+        },
+        celebrate = { RotaryHapticManager.performSuccessFeedback(appCtx) },
+        saveCelebrated = { todayKey -> DataStoreManager.saveReadGoalCelebrated(appCtx, todayKey) }
+    )
 
     @Volatile
     private var initialized = false
@@ -737,56 +771,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
      * 每 10s 结算一次：总时长与当日秒数同事务落盘；每日目标首次达成时轻振庆祝
      */
     private fun startReadingTimer() {
-        readingTimerJob?.cancel()
-        readingTimerJob = viewModelScope.launch(Dispatchers.IO) {
-            val persistBuffer = ReadingSecondsBuffer()
-            try {
-            while (true) {
-                kotlinx.coroutines.delay(10_000L)
-                val state = _uiState.value
-                if (state.screen is Screen.Reader) {
-                    val now = android.os.SystemClock.uptimeMillis()
-                    if (now - lastActiveTime <= 60_000L) {
-                        val todayKey = ReadingStats.dateKeyOf(System.currentTimeMillis())
-                        // 每 10s 结算一次状态，落盘按 60s 攒批：DataStore 每次 edit
-                        // 都会重写整份 preferences（含书架 JSON），不能按秒写
-                        val flushSeconds = persistBuffer.record(10L)
-                        if (flushSeconds > 0L) {
-                            DataStoreManager.addReadingSeconds(appCtx, flushSeconds, todayKey)
-                        }
-
-                        val newSec = state.readDurationSec + 10L
-                        val newDays = ReadingStats.addSeconds(state.readDays, todayKey, 10L)
-                        var celebrated = state.readGoalCelebrated
-                        if (ReadingStats.shouldCelebrate(newDays[todayKey] ?: 0L, state.readGoalMinutes, celebrated, todayKey)) {
-                            RotaryHapticManager.performSuccessFeedback(appCtx)
-                            DataStoreManager.saveReadGoalCelebrated(appCtx, todayKey)
-                            celebrated = todayKey
-                        }
-                        _uiState.update {
-                            it.copy(
-                                readDurationSec = newSec,
-                                readDays = newDays,
-                                readGoalCelebrated = celebrated
-                            )
-                        }
-                    }
-                }
-            }
-            } finally {
-                // Job 被取消（退出阅读/onCleared）时冲刷余量，不足 60s 的碎片不丢
-                val remainder = persistBuffer.drain()
-                if (remainder > 0L) {
-                    withContext(NonCancellable) {
-                        DataStoreManager.addReadingSeconds(
-                            appCtx,
-                            remainder,
-                            ReadingStats.dateKeyOf(System.currentTimeMillis())
-                        )
-                    }
-                }
-            }
-        }
+        readingTimerJob = readingTimer.start()
     }
 
     /**
@@ -824,97 +809,39 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     // ── 书架备份与恢复 ──
 
+    /**
+     * 备份/恢复三段状态机：待确认原文、书目计数与提示条写入都收在它里面，
+     * 本类只留同名薄委托，屏幕侧调用点不变
+     */
+    private val backup = BackupRestoreController(
+        uiState = _uiState,
+        exportJson = { DataStoreManager.exportBackupJson(appCtx) },
+        restoreFromJson = { json -> DataStoreManager.restoreBackup(appCtx, json) },
+        loadConfig = { DataStoreManager.loadInitialConfig(appCtx) }
+    )
+
     /** 生成备份 JSON（调用方负责写入 SAF 目标文件） */
-    suspend fun exportBackup(): String = withContext(Dispatchers.IO) {
-        DataStoreManager.exportBackupJson(appCtx)
-    }
+    suspend fun exportBackup(): String = backup.export()
 
-    /**
-     * 从备份 JSON 恢复：成功后重载全部配置与书架到当前状态
-     * @return 是否恢复成功
-     */
-    // 待确认的恢复备份原文：SAF 选完文件先解析预览，用户在确认浮层点头后才覆盖
-    @Volatile
-    private var pendingRestoreJson: String? = null
-
-    /**
-     * 解析备份供确认浮层预览：合法则记录原文并返回书目数，非法返回 null（文件不是有效备份）
-     */
-    fun previewBackupRestore(json: String): Int? {
-        val payload = when (val decoded = BackupCodec.decodeResult(json)) {
-            is BackupCodec.DecodeResult.Success -> decoded.payload
-            is BackupCodec.DecodeResult.Failure -> {
-                // 失败原因逐码透出：结构损坏与「类型/版本不符」是两种完全不同的误操作
-                _uiState.update { it.copy(errorMessage = "恢复失败：${decoded.message}") }
-                return null
-            }
-        }
-        pendingRestoreJson = json
-        _uiState.update { it.copy(pendingRestoreCount = payload.shelf.size) }
-        return payload.shelf.size
-    }
+    /** 解析备份供确认浮层预览：合法则记录原文并返回书目数，非法返回 null（文件不是有效备份） */
+    fun previewBackupRestore(json: String): Int? = backup.preview(json)
 
     /** 取消恢复：丢弃待确认备份 */
-    fun cancelBackupRestore() {
-        pendingRestoreJson = null
-        _uiState.update { it.copy(pendingRestoreCount = null) }
-    }
+    fun cancelBackupRestore() = backup.cancel()
 
-    /** 确认恢复：走原 restoreBackup 覆盖路径 */
-    suspend fun confirmBackupRestore() {
-        val json = pendingRestoreJson
-        pendingRestoreJson = null
-        _uiState.update { it.copy(pendingRestoreCount = null) }
-        if (json != null) {
-            restoreBackup(json)
-        }
-    }
+    /** 确认恢复：覆盖当前配置与书架 */
+    suspend fun confirmBackupRestore() = backup.confirm()
 
-    suspend fun restoreBackup(json: String): Boolean {
-        val count = withContext(Dispatchers.IO) { DataStoreManager.restoreBackup(appCtx, json) }
-        if (count < 0) return false
-        val config = withContext(Dispatchers.IO) { DataStoreManager.loadInitialConfig(appCtx) }
-        _uiState.update {
-            it.copy(
-                fontSize = config.fontSize,
-                autoScrollSpeed = config.autoScrollSpeed,
-                appBrightness = config.appBrightness,
-                bookshelf = config.bookshelf,
-                themeMode = config.themeMode,
-                tapPageArea = config.tapPageArea,
-                cleanTypography = config.cleanTypography,
-                fontType = config.fontType,
-                readDurationSec = config.readDurationSec,
-                readDays = config.readDays,
-                readGoalMinutes = config.readGoalMinutes,
-                readGoalCelebrated = config.readGoalCelebrated,
-                lineSpacing = config.lineSpacing,
-                letterSpacing = config.letterSpacing,
-                infoMessage = "已恢复 ${count} 本书与全部设置"
-            )
-        }
-        return true
-    }
+    /** 从备份 JSON 恢复：成功后重载全部配置与书架到当前状态 */
+    suspend fun restoreBackup(json: String): Boolean = backup.restore(json)
 
     /** 备份导出结果提示（导出本身不改变状态，无需重载） */
-    fun notifyBackupExported(success: Boolean) {
-        _uiState.update {
-            if (success) {
-                it.copy(infoMessage = "备份已导出")
-            } else {
-                it.copy(errorMessage = "备份导出失败：无法写入所选文件")
-            }
-        }
-    }
+    fun notifyBackupExported(success: Boolean) = backup.notifyExported(success)
 
-    fun notifyBackupRestoreFailed() {
-        _uiState.update { it.copy(errorMessage = "恢复失败：不是有效的备份文件") }
-    }
+    fun notifyBackupRestoreFailed() = backup.notifyRestoreFailed()
 
     /** 信息条自动消失 */
-    fun clearInfoMessage() {
-        _uiState.update { it.copy(infoMessage = null) }
-    }
+    fun clearInfoMessage() = backup.clearInfoMessage()
 
     /**
      * 设置主题模式（0: 浅色, 1: 深色；历史值经 [ThemeMode.fromValue] 归一）
