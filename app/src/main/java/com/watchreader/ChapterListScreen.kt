@@ -1,15 +1,11 @@
 package com.watchreader
 
-import android.content.Context
 import android.graphics.Typeface
-import android.text.TextUtils
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
-import android.widget.FrameLayout
-import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
@@ -22,7 +18,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -35,71 +30,7 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import java.text.SimpleDateFormat
-import java.util.*
-
-private class ChapterCardViewHolder(
-    val indicatorTv: TextView,
-    val titleTv: TextView,
-    val tagTv: TextView
-)
-
-/**
- * 原生 ListView 背景守卫：View.setBackgroundColor 每次调用都会新建 ColorDrawable 并失效重绘，
- * 而 AndroidView 的 update 在每次父级重组都会执行 —— 仅在颜色真正变化时才设置
- */
-internal fun applyListViewBg(view: View, color: Int) {
-    val current = (view.background as? android.graphics.drawable.ColorDrawable)?.color
-    if (current != color) {
-        view.setBackgroundColor(color)
-    }
-}
-
-/**
- * 原生 View 行按压反馈：按下轻陷（alpha 0.65）、抬起/取消恢复。
- * 不消费事件，项点击回调不受影响 —— 与 Compose 侧 pressScale 对齐的"点了有动静"底线
- */
-internal fun applyPressFeedback(view: View) {
-    view.setOnTouchListener { v, ev ->
-        when (ev.actionMasked) {
-            android.view.MotionEvent.ACTION_DOWN -> v.animate().alpha(0.65f).setDuration(60L).start()
-            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
-                v.animate().alpha(1f).setDuration(120L).start()
-        }
-        false
-    }
-}
-
-/**
- * 章节范围分卷模型
- */
-data class ChapterRange(
-    val startIndex: Int,
-    val endIndex: Int,
-    val label: String
-)
-
-/**
- * 智能根据章节总数生成适宜手表的范围分卷
- */
-fun generateChapterRanges(totalCount: Int): List<ChapterRange> {
-    if (totalCount <= 30) return emptyList()
-    val step = when {
-        totalCount <= 150 -> 25
-        totalCount <= 600 -> 50
-        else -> 100
-    }
-    val list = ArrayList<ChapterRange>(totalCount / step + 1)
-    var start = 0
-    while (start < totalCount) {
-        val end = minOf(start + step, totalCount)
-        list.add(ChapterRange(start, end - 1, "第 ${start + 1} ~ ${end} 章"))
-        start = end
-    }
-    return list
-}
 
 /**
  * 章节目录与书签列表 — 原生 ListView 极速架构 + 双 Tab 切换 + 千章范围快速分卷直达
@@ -400,19 +331,10 @@ fun ChapterListScreen(
                 update = { listView ->
                     currentListView = listView
                     applyListViewBg(listView, bgColor)
-                    // notifyDataSetChanged 会强制全部可见行重布局：仅在数据/主题真正变化时调用，
-                    // 杜绝父级每次重组（如阅读时长 tick）都触发目录整页 invalidate
-                    val adapter = listView.adapter as? ChapterListAdapter
-                    if (adapter != null &&
-                        (adapter.chapters !== chapters ||
-                            adapter.currentChapterIndex != currentChapterIndex ||
-                            adapter.colorScheme !== colorScheme)
-                    ) {
-                        adapter.chapters = chapters
-                        adapter.currentChapterIndex = currentChapterIndex
-                        adapter.colorScheme = colorScheme
-                        adapter.notifyDataSetChanged()
-                    }
+                    // 重绘判重收进适配器：章节表/当前章/配色都没变时不会整页 invalidate
+                    // （父级每次重组都会执行 update，如阅读时长 tick）
+                    (listView.adapter as? ChapterListAdapter)
+                        ?.setData(chapters, currentChapterIndex, colorScheme)
                 }
             )
         } else {
@@ -466,14 +388,9 @@ fun ChapterListScreen(
                     },
                     update = { bookmarkListView ->
                         applyListViewBg(bookmarkListView, bgColor)
-                        val adapter = bookmarkListView.adapter as? BookmarkListAdapter
-                        if (adapter != null &&
-                            (adapter.bookmarks !== bookmarks || adapter.colorScheme !== colorScheme)
-                        ) {
-                            adapter.bookmarks = bookmarks
-                            adapter.colorScheme = colorScheme
-                            adapter.notifyDataSetChanged()
-                        }
+                        // 判重与重绘时机由适配器守（见 BookmarkListAdapter.setData）
+                        (bookmarkListView.adapter as? BookmarkListAdapter)
+                            ?.setData(bookmarks, colorScheme)
                     }
                 )
             }
@@ -543,349 +460,5 @@ private fun TabCapsule(label: String, selected: Boolean, onClick: () -> Unit) {
             style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
             color = textColor
         )
-    }
-}
-
-private class ChapterListAdapter(
-    var chapters: List<Chapter>,
-    var currentChapterIndex: Int,
-    var colorScheme: ColorScheme,
-    val density: Float
-) : BaseAdapter() {
-
-    // 缓存两级卡片背景，杜绝快速滚动期逐帧 GradientDrawable 分配引发的 GC 抖动
-    private var cachedNormalBg: android.graphics.drawable.GradientDrawable? = null
-    private var cachedCurrentBg: android.graphics.drawable.GradientDrawable? = null
-    private var drawableCacheKey: ColorScheme? = null
-
-    private fun cachedDrawables(): Pair<android.graphics.drawable.GradientDrawable, android.graphics.drawable.GradientDrawable> {
-        if (drawableCacheKey !== colorScheme || cachedNormalBg == null) {
-            cachedNormalBg = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = 12 * density
-                setColor(colorScheme.surfaceContainerHigh.toArgb())
-            }
-            cachedCurrentBg = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = 12 * density
-                // 当前章走预混容器角色：primaryContainer 实底 + primary 强调描边（零 alpha 糊底）
-                setColor(colorScheme.primaryContainer.toArgb())
-                setStroke((1.5f * density).toInt(), colorScheme.primary.toArgb())
-            }
-            drawableCacheKey = colorScheme
-        }
-        return cachedNormalBg!! to cachedCurrentBg!!
-    }
-
-    override fun getCount(): Int = chapters.size
-    override fun getItem(position: Int): Any = chapters[position]
-    override fun getItemId(position: Int): Long = position.toLong()
-
-    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val context = parent.context
-        val isCurrent = position == currentChapterIndex
-        val chapter = chapters[position]
-        val activeColor = colorScheme.primary.toArgb()
-        val onSurfaceColor = colorScheme.onSurface.toArgb()
-        // 当前章标题落在 primaryContainer 实底上，用配对内容色保证 AA（primary 在该底上不足 4.5:1）
-        val onPrimaryContainerColor = colorScheme.onPrimaryContainer.toArgb()
-
-        val container: FrameLayout
-        val holder: ChapterCardViewHolder
-
-        if (convertView == null) {
-            container = FrameLayout(context).apply {
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-                minimumHeight = (48 * density).toInt()
-                setPadding((11 * density).toInt(), (8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt())
-            }
-
-            val textLayout = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    gravity = Gravity.CENTER_VERTICAL
-                }
-                gravity = Gravity.CENTER_VERTICAL
-            }
-
-            val indicatorTv = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-                typeface = Typeface.DEFAULT_BOLD
-                setPadding(0, 0, (5 * density).toInt(), 0)
-            }
-            textLayout.addView(indicatorTv)
-
-            val titleTv = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            }
-            textLayout.addView(titleTv)
-
-            val tagTv = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
-                typeface = Typeface.DEFAULT_BOLD
-                setPadding((6 * density).toInt(), (1.5f * density).toInt(), (6 * density).toInt(), (1.5f * density).toInt())
-                background = android.graphics.drawable.GradientDrawable().apply {
-                    // 标签实底 primary + 配对 onPrimary 文字（预混角色，替代 25% alpha 糊底）
-                    setColor(colorScheme.primary.toArgb())
-                    cornerRadius = 6 * density
-                }
-            }
-            textLayout.addView(tagTv)
-
-            container.addView(textLayout)
-            holder = ChapterCardViewHolder(indicatorTv, titleTv, tagTv)
-            container.tag = holder
-        } else {
-            container = convertView as FrameLayout
-            holder = container.tag as ChapterCardViewHolder
-        }
-
-        val (normalBg, currentBg) = cachedDrawables()
-        container.background = if (isCurrent) currentBg else normalBg
-        applyPressFeedback(container)
-
-        holder.titleTv.text = chapter.title
-
-        if (isCurrent) {
-            holder.indicatorTv.visibility = View.VISIBLE
-            holder.indicatorTv.text = "●"
-            holder.indicatorTv.setTextColor(activeColor)
-            holder.titleTv.setTextColor(onPrimaryContainerColor)
-            holder.titleTv.typeface = Typeface.DEFAULT_BOLD
-
-            holder.tagTv.visibility = View.VISIBLE
-            holder.tagTv.text = "正在读"
-            holder.tagTv.setTextColor(colorScheme.onPrimary.toArgb())
-        } else {
-            holder.indicatorTv.visibility = View.GONE
-            holder.titleTv.setTextColor(onSurfaceColor)
-            holder.titleTv.typeface = Typeface.DEFAULT
-
-            holder.tagTv.visibility = View.GONE
-        }
-
-        return container
-    }
-}
-
-/** 只在颜色真正变化时写 TextView 文字色（复用时避免每帧 invalidate） */
-private fun TextView.setTextColorIfChanged(color: Int) {
-    if (currentTextColor != color) setTextColor(color)
-}
-
-/**
- * 书签删除键的两段式视觉口径（纯参数，由 BookmarkRowStyleTest 锁定）：
- * 热区恒 ≥48dp（ADR-018 自定义可点组件最小触控尺寸），视觉只是文字不铺底色，
- * 因此扩热区不改观感；待确认态放宽宽度容纳「确认删除」四字。
- */
-internal data class BookmarkDeleteVisual(
-    val label: String,
-    val minWidthDp: Int,
-    val touchDp: Int,
-    val bold: Boolean
-)
-
-internal object BookmarkRowStyle {
-    /** ADR-018：自定义可点组件最小触控尺寸 */
-    const val TOUCH_DP = 48
-
-    /** 待确认态宽度：四字文案不折行 */
-    private const val PENDING_WIDTH_DP = 76
-
-    /** 摘要单行最多展示字数，超出才补省略号 */
-    private const val SNIPPET_MAX_CHARS = 30
-
-    fun deleteVisual(isPending: Boolean) = BookmarkDeleteVisual(
-        label = if (isPending) "确认删除" else "✕",
-        minWidthDp = if (isPending) PENDING_WIDTH_DP else TOUCH_DP,
-        touchDp = TOUCH_DP,
-        bold = isPending
-    )
-
-    /**
-     * 书签摘要单行文案：空摘要返回 null（整行不占位）；只有真正被截断时才补省略号
-     * （旧实现无条件追加「…」，完整短摘要被显示成疑似未完的片段）。
-     */
-    fun snippetLabel(snippet: String): String? {
-        if (snippet.isEmpty()) return null
-        val clipped = snippet.length > SNIPPET_MAX_CHARS
-        val body = if (clipped) snippet.take(SNIPPET_MAX_CHARS) else snippet
-        return if (clipped) "“$body…”" else "“$body”"
-    }
-}
-
-/**
- * 书签行视图缓存：ListView 复用 convertView 时按 tag 取回，绑定阶段不再新建任何 View/Drawable
- * （旧实现每次 getView 重建 4 个 View + 3 个 GradientDrawable，滚动期逐帧分配引发 GC 抖动）
- */
-private class BookmarkRowViewHolder(
-    val container: LinearLayout,
-    val background: android.graphics.drawable.GradientDrawable,
-    val titleTv: TextView,
-    val snippetTv: TextView,
-    val dateTv: TextView,
-    val delTv: TextView
-) {
-    /** 上次写入的背景色：颜色没变就不 setColor，避免无谓失效重绘 */
-    var backgroundArgb: Int = Int.MIN_VALUE
-}
-
-private class BookmarkListAdapter(
-    var bookmarks: List<Bookmark>,
-    var colorScheme: ColorScheme,
-    val density: Float,
-    val onBookmarkClick: (Bookmark) -> Unit,
-    val onDeleteBookmark: (Bookmark) -> Unit
-) : BaseAdapter() {
-    private val timeFormat = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-
-    // 两段式删除（与书架删书同款）：首按进入待确认，3.2s 无操作自动回滚。
-    // 书签删除不可恢复，防护等级必须与删书对齐，不能 ✕ 一下就没
-    private var pendingDeleteId: String? = null
-    private val revertHandler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val revertRunnable = Runnable {
-        if (pendingDeleteId != null) {
-            pendingDeleteId = null
-            notifyDataSetChanged()
-        }
-    }
-
-    override fun getCount(): Int = bookmarks.size
-    override fun getItem(position: Int): Any = bookmarks[position]
-    override fun getItemId(position: Int): Long = position.toLong()
-
-    override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val bm = bookmarks[position]
-        val isPending = pendingDeleteId == bm.id
-
-        // convertView 复用的唯一入口：tag 命中即零分配绑定，未命中才装配一次
-        val holder = (convertView?.tag as? BookmarkRowViewHolder)
-            ?: createRow(parent.context).also { it.container.tag = it }
-        val container = holder.container
-        val context = container.context
-
-        // 书签标题用 tertiary 书签琥珀：与目录条目（primary）在色彩语义上分离
-        val surfaceVariantColor = colorScheme.surfaceContainerHigh.toArgb()
-        if (holder.backgroundArgb != surfaceVariantColor) {
-            holder.background.setColor(surfaceVariantColor)
-            holder.backgroundArgb = surfaceVariantColor
-        }
-
-        holder.titleTv.text = bm.chapterTitle.ifEmpty { "第 ${bm.chapterIndex + 1} 章" }
-        holder.titleTv.setTextColorIfChanged(colorScheme.tertiary.toArgb())
-
-        val snippetLabel = BookmarkRowStyle.snippetLabel(bm.snippet)
-        if (snippetLabel == null) {
-            holder.snippetTv.visibility = View.GONE
-        } else {
-            holder.snippetTv.visibility = View.VISIBLE
-            holder.snippetTv.text = snippetLabel
-            holder.snippetTv.setTextColorIfChanged(colorScheme.onSurface.toArgb())
-        }
-
-        holder.dateTv.text = timeFormat.format(Date(bm.time))
-        holder.dateTv.setTextColorIfChanged(colorScheme.onSurfaceVariant.toArgb())
-
-        val visual = BookmarkRowStyle.deleteVisual(isPending)
-        holder.delTv.text = visual.label
-        holder.delTv.typeface = if (visual.bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-        holder.delTv.setTextColorIfChanged(colorScheme.error.toArgb())
-        // 尺寸只在两段式状态翻转时写一次：minWidth/minHeight 的 setter 每次都 requestLayout
-        val delMinWidth = (visual.minWidthDp * density).toInt()
-        if (holder.delTv.minWidth != delMinWidth) holder.delTv.minWidth = delMinWidth
-        val delMinHeight = (visual.touchDp * density).toInt()
-        if (holder.delTv.minHeight != delMinHeight) holder.delTv.minHeight = delMinHeight
-        holder.delTv.setOnClickListener {
-            if (isPending) {
-                revertHandler.removeCallbacks(revertRunnable)
-                pendingDeleteId = null
-                onDeleteBookmark(bm)
-            } else {
-                pendingDeleteId = bm.id
-                RotaryHapticManager.performScrollTick(context, null)
-                notifyDataSetChanged()
-                revertHandler.removeCallbacks(revertRunnable)
-                revertHandler.postDelayed(revertRunnable, 3200L)
-            }
-        }
-
-        container.setOnClickListener {
-            if (pendingDeleteId != null) {
-                // 待确认期点击行体 = 取消删除，避免误跳转
-                revertHandler.removeCallbacks(revertRunnable)
-                pendingDeleteId = null
-                notifyDataSetChanged()
-            } else {
-                onBookmarkClick(bm)
-            }
-        }
-        applyPressFeedback(container)
-
-        return container
-    }
-
-    /** 首次装配行视图：之后仅按 tag 复用，不再新建任何 View/Drawable */
-    private fun createRow(context: Context): BookmarkRowViewHolder {
-        val container = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            )
-            gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = (BookmarkRowStyle.TOUCH_DP * density).toInt()
-            setPadding((10 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
-        }
-        val background = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = 12 * density
-        }
-        container.background = background
-
-        val textLayout = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        val titleTv = TextView(context).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            typeface = Typeface.DEFAULT_BOLD
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        }
-        textLayout.addView(titleTv)
-
-        val snippetTv = TextView(context).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-            setPadding(0, (2 * density).toInt(), 0, 0)
-        }
-        textLayout.addView(snippetTv)
-
-        val dateTv = TextView(context).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
-            setPadding(0, (2 * density).toInt(), 0, 0)
-        }
-        textLayout.addView(dateTv)
-        container.addView(textLayout)
-
-        // 删除键：热区 48dp（ADR-018），视觉只有文字不铺底色，扩热区不改观感；
-        // 与文本区之间留 6dp 死区，降低误触 ✕ 概率
-        val delTv = TextView(context).apply {
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            gravity = Gravity.CENTER
-            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { leftMargin = (6 * density).toInt() }
-        }
-        container.addView(delTv)
-
-        return BookmarkRowViewHolder(container, background, titleTv, snippetTv, dateTv, delTv)
     }
 }
