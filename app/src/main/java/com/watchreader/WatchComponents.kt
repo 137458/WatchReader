@@ -15,8 +15,6 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -32,6 +30,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material3.Card as WearCard
+import androidx.wear.compose.material3.CardDefaults as WearCardDefaults
 import kotlinx.coroutines.delay
 import kotlin.math.max
 
@@ -43,8 +43,9 @@ import kotlin.math.max
  */
 
 /**
- * MD3 卡片：默认 filled card（surfaceContainer 底、零阴影、圆角走 shape scale）。
+ * MD3 卡片：Wear Compose Material 3 官方 Card（surfaceContainer 底、圆角走 shape scale）。
  * 传 [borderWidth] > 0 时追加 outline 描边，供需要明确边界的浮层使用。
+ * 官方 Card 自带 64dp 最小容器高度与按压/禁用态，取代原先手写的 elevation 处理。
  */
 @Composable
 fun SurfaceCard(
@@ -55,11 +56,13 @@ fun SurfaceCard(
     borderWidth: Dp = 0.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Card(
+    WearCard(
         modifier = modifier,
         shape = RoundedCornerShape(cornerRadius),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        colors = WearCardDefaults.cardColors(
+            containerColor = containerColor,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
         border = if (borderWidth > 0.dp) BorderStroke(borderWidth, borderColor) else null
     ) {
         content()

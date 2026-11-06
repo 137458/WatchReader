@@ -3,10 +3,15 @@ package com.watchreader
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -20,6 +25,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material3.LinearProgressIndicator as WearLinearProgressIndicator
+import androidx.wear.compose.material3.MaterialTheme as WearMaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults as WearProgressIndicatorDefaults
+import androidx.wear.compose.material3.Text as WearText
 
 /**
  * RSVP 单个词元单元（包含 ORP 最佳注视焦点索引）
@@ -176,7 +185,7 @@ private fun isPunctuation(c: Char): Boolean {
 }
 
 /**
- * 屏幕正中心 RSVP 闪读文字呈现区：ORP 焦点高亮 + 上下对齐微标 + 进度小字。
+ * 屏幕正中心 RSVP 闪读文字呈现区：ORP 焦点高亮 + 上下对齐微标 + 官方线性进度条 + 进度小字。
  * 轻触该区域切换 暂停/继续（触觉与播放状态由页面注入）。
  */
 @Composable
@@ -187,7 +196,7 @@ internal fun RsvpWordStage(
     totalTokens: Int,
     onTogglePlay: () -> Unit
 ) {
-    val colorScheme = MaterialTheme.colorScheme
+    val colorScheme = WearMaterialTheme.colorScheme
 
     Column(
         modifier = Modifier
@@ -232,9 +241,9 @@ internal fun RsvpWordStage(
                 }
             }
 
-            Text(
+            WearText(
                 text = annotatedString,
-                style = MaterialTheme.typography.displayMedium.copy(
+                style = WearMaterialTheme.typography.displayMedium.copy(
                     fontSize = 36.sp,
                     letterSpacing = 1.sp,
                     textAlign = TextAlign.Center
@@ -242,9 +251,9 @@ internal fun RsvpWordStage(
                 maxLines = 1
             )
         } else {
-            Text(
+            WearText(
                 text = if (fullText.isEmpty()) "加载中…" else "全章阅读完毕",
-                style = MaterialTheme.typography.titleLarge.copy(color = colorScheme.onSurfaceVariant)
+                style = WearMaterialTheme.typography.titleLarge.copy(color = colorScheme.onSurfaceVariant)
             )
         }
 
@@ -255,10 +264,28 @@ internal fun RsvpWordStage(
 
         Spacer(modifier = Modifier.height(8.dp))
 
+        // 官方线性进度条：全章阅读进度（进度值以 lambda 传入，由组件内部按帧读取）
+        WearLinearProgressIndicator(
+            progress = {
+                if (totalTokens > 0) {
+                    (currentIndex.toFloat() / totalTokens).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            colors = WearProgressIndicatorDefaults.colors(
+                indicatorColor = colorScheme.primary,
+                trackColor = colorScheme.outlineVariant
+            )
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
         // 进度小字
-        Text(
+        WearText(
             text = RsvpPacing.progressLabel(currentIndex, totalTokens),
-            style = MaterialTheme.typography.labelSmall.copy(color = colorScheme.onSurfaceVariant)
+            style = WearMaterialTheme.typography.labelSmall.copy(color = colorScheme.onSurfaceVariant)
         )
     }
 }

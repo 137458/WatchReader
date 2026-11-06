@@ -1,13 +1,19 @@
 package com.watchreader
 
 import android.graphics.Bitmap
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
@@ -21,15 +27,19 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.CircularProgressIndicator as WearCircularProgressIndicator
+import androidx.wear.compose.material3.LinearProgressIndicator as WearLinearProgressIndicator
+import androidx.wear.compose.material3.MaterialTheme as WearMaterialTheme
+import androidx.wear.compose.material3.OutlinedCard as WearOutlinedCard
+import androidx.wear.compose.material3.ProgressIndicatorDefaults as WearProgressIndicatorDefaults
+import androidx.wear.compose.material3.Text as WearText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.math.min
 
 /**
  * 传书页的判定与文案口径：全部为纯函数，不引用任何 Android / Compose 类型，
@@ -102,7 +112,7 @@ internal fun transferBarSpecs(
 }
 
 /**
- * 视图 A：极简传输进度展示（大号整数百分比 + 文件名 + 状态行）
+ * 视图 A：极简传输进度展示（大号整数百分比 + 官方线性进度条 + 文件名 + 状态行）
  */
 @Composable
 internal fun TransferProgressPanel(
@@ -110,28 +120,40 @@ internal fun TransferProgressPanel(
     transferFileName: String,
     pendingExit: Boolean
 ) {
-    val colorScheme = MaterialTheme.colorScheme
+    val colors = WearMaterialTheme.colorScheme
 
     Column(
         modifier = Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
             .padding(horizontal = 36.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        Text(
+        WearText(
             text = "$progressPercent%",
-            style = MaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace),
-            color = colorScheme.primary
+            style = WearMaterialTheme.typography.displaySmall.copy(fontFamily = FontFamily.Monospace),
+            color = colors.primary
         )
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        Text(
+        // 官方线性进度条：进度值以 lambda 传入，由组件内部按帧读取，避免逐帧重组
+        WearLinearProgressIndicator(
+            progress = { (progressPercent / 100f).coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth(),
+            colors = WearProgressIndicatorDefaults.colors(
+                indicatorColor = colors.primary,
+                trackColor = colors.outlineVariant
+            )
+        )
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        WearText(
             text = TransferPanelText.fileNameLabel(transferFileName),
-            style = MaterialTheme.typography.bodySmall.copy(
+            style = WearMaterialTheme.typography.bodySmall.copy(
                 fontWeight = FontWeight.Medium,
-                color = colorScheme.onSurface
+                color = colors.onSurface
             ),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -140,20 +162,20 @@ internal fun TransferProgressPanel(
 
         Spacer(modifier = Modifier.height(2.dp))
 
-        Text(
+        WearText(
             text = TransferPanelText.transferStatusLabel(progressPercent),
-            style = MaterialTheme.typography.labelSmall.copy(
-                color = colorScheme.onSurfaceVariant
+            style = WearMaterialTheme.typography.labelSmall.copy(
+                color = colors.onSurfaceVariant
             ),
             textAlign = TextAlign.Center
         )
 
         if (pendingExit) {
             Spacer(modifier = Modifier.height(6.dp))
-            Text(
+            WearText(
                 text = "再按一次返回键将中断传输",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    color = colorScheme.error
+                style = WearMaterialTheme.typography.labelSmall.copy(
+                    color = colors.error
                 ),
                 textAlign = TextAlign.Center
             )
@@ -171,8 +193,9 @@ internal fun QrCodePanel(
     accessToken: String?,
     uploadedCount: Int
 ) {
-    val primaryColor = MaterialTheme.colorScheme.primary
-    val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
+    val colors = WearMaterialTheme.colorScheme
+    val primaryColor = colors.primary
+    val onSurfaceVariant = colors.onSurfaceVariant
 
     // 二维码载荷携带访问令牌：网页与全部接口调用均凭 token 鉴权，
     // 防止同网段未授权设备或网页直接访问传书服务
@@ -192,7 +215,7 @@ internal fun QrCodePanel(
             .size(96.dp)
             .drawBehind {
                 val corner = 12.dp.toPx()
-                val stroke = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+                val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
                 drawArc(primaryColor, 180f, 90f, false, Offset.Zero, Size(corner * 2, corner * 2), style = stroke)
                 drawArc(primaryColor, 270f, 90f, false, Offset(size.width - corner * 2, 0f), Size(corner * 2, corner * 2), style = stroke)
                 drawArc(primaryColor, 0f, 90f, false, Offset(size.width - corner * 2, size.height - corner * 2), Size(corner * 2, corner * 2), style = stroke)
@@ -212,10 +235,15 @@ internal fun QrCodePanel(
                 Image(
                     bitmap = qrImage,
                     contentDescription = "扫码直传二维码",
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxWidth()
                 )
             } else {
-                LoadingIndicator(size = 16.dp, strokeWidth = 2.dp, color = WatchFixed.QrPanelInk)
+                WearCircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    colors = WearProgressIndicatorDefaults.colors(
+                        indicatorColor = WatchFixed.QrPanelInk
+                    )
+                )
             }
         }
     }
@@ -227,14 +255,14 @@ internal fun QrCodePanel(
     Box(
         modifier = Modifier
             .clip(WatchShapes.Pill)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+            .background(colors.surfaceContainerHigh)
             .padding(horizontal = 10.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "http://${ipAddress}:$port",
-                style = MaterialTheme.typography.labelMedium.copy(
+            WearText(
+                text = "http://$ipAddress:$port",
+                style = WearMaterialTheme.typography.labelMedium.copy(
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace,
                     color = primaryColor
@@ -243,9 +271,9 @@ internal fun QrCodePanel(
                 softWrap = false
             )
             if (!accessToken.isNullOrEmpty()) {
-                Text(
+                WearText(
                     text = "令牌 $accessToken",
-                    style = MaterialTheme.typography.labelSmall.copy(
+                    style = WearMaterialTheme.typography.labelSmall.copy(
                         fontFamily = FontFamily.Monospace,
                         color = onSurfaceVariant
                     ),
@@ -262,16 +290,16 @@ internal fun QrCodePanel(
     Row(verticalAlignment = Alignment.CenterVertically) {
         PulsingDot(color = primaryColor)
         Spacer(modifier = Modifier.width(4.dp))
-        Text(
+        WearText(
             text = TransferPanelText.readyLine(uploadedCount),
-            style = MaterialTheme.typography.labelSmall.copy(color = onSurfaceVariant)
+            style = WearMaterialTheme.typography.labelSmall.copy(color = onSurfaceVariant)
         )
     }
 }
 
 /**
- * 贴圆屏边沿的 MD3 环形进度：细轨 + 圆头进度弧，仅传输时呈现。
- * 纯 Canvas 绘制，进度值在绘制阶段读取，不触发页面重组。
+ * 贴圆屏边沿的环形进度：官方 CircularProgressIndicator 定值版（细轨 + 圆头进度弧），
+ * 仅传输时呈现。进度值以 lambda 传入，组件内部按帧读取，不触发页面重组。
  */
 @Composable
 internal fun EdgeProgressRing(
@@ -279,74 +307,63 @@ internal fun EdgeProgressRing(
     color: Color,
     trackColor: Color
 ) {
-    val strokeWidth = 3.dp
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val strokePx = strokeWidth.toPx()
-        val radius = min(size.width, size.height) / 2f - strokePx / 2f
-        val center = Offset(size.width / 2f, size.height / 2f)
-        drawCircle(
-            color = trackColor,
-            radius = radius,
-            center = center,
-            style = Stroke(width = strokePx)
-        )
-        drawArc(
-            color = color,
-            startAngle = -90f,
-            sweepAngle = progress.coerceIn(0f, 1f) * 360f,
-            useCenter = false,
-            topLeft = Offset(center.x - radius, center.y - radius),
-            size = Size(radius * 2f, radius * 2f),
-            style = Stroke(width = strokePx, cap = StrokeCap.Round)
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        WearCircularProgressIndicator(
+            progress = { progress.coerceIn(0f, 1f) },
+            modifier = Modifier.size(56.dp),
+            colors = WearProgressIndicatorDefaults.colors(
+                indicatorColor = color,
+                trackColor = trackColor
+            )
         )
     }
 }
 
 /**
- * 离线提示面板：Wi-Fi 未连接状态 + 连接指引卡片
+ * 离线提示面板：Wi-Fi 未连接状态 + 连接指引卡片（官方 OutlinedCard 承载指引文案）
  */
 @Composable
 internal fun OfflinePanel() {
-    val colorScheme = MaterialTheme.colorScheme
+    val colors = WearMaterialTheme.colorScheme
 
     Row(verticalAlignment = Alignment.CenterVertically) {
-        StaticDot(color = colorScheme.error)
+        StaticDot(color = colors.error)
         Spacer(modifier = Modifier.width(5.dp))
-        Text(
+        WearText(
             text = "Wi-Fi 未连接",
-            style = MaterialTheme.typography.labelMedium.copy(
+            style = WearMaterialTheme.typography.labelMedium.copy(
                 fontWeight = FontWeight.SemiBold,
-                color = colorScheme.error
+                color = colors.error
             )
         )
     }
 
     Spacer(modifier = Modifier.height(9.dp))
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(WatchShapes.Row))
-            .background(colorScheme.surfaceContainerHigh)
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        contentAlignment = Alignment.Center
+    WearOutlinedCard(
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)
     ) {
         Column(
+            modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(3.dp)
         ) {
-            Text(
+            WearText(
                 text = "请在手表设置中连接 Wi-Fi",
-                style = MaterialTheme.typography.bodySmall.copy(
+                style = WearMaterialTheme.typography.bodySmall.copy(
                     fontWeight = FontWeight.Medium,
-                    color = colorScheme.onSurfaceVariant
+                    color = colors.onSurfaceVariant
                 ),
                 textAlign = TextAlign.Center
             )
-            Text(
+            WearText(
                 text = "与手机处于同个局域网即可扫码传书",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    color = colorScheme.onSurfaceVariant
+                style = WearMaterialTheme.typography.labelSmall.copy(
+                    color = colors.onSurfaceVariant
                 ),
                 textAlign = TextAlign.Center
             )

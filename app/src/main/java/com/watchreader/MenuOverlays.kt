@@ -4,7 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,6 +11,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,15 +21,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -38,21 +32,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.ListHeader as WearListHeader
+import androidx.wear.compose.material3.RadioButton as WearRadioButton
+import androidx.wear.compose.material3.Text as WearText
 
 /**
  * 菜单浮层：配色选择。
  *
  * 从 MenuBlocks.kt 分出 —— 浮层的生命周期（进出场、返回键、右滑关闭、表冠寻址）与
- * 设置行骨架无关，唯一共用的只有 [SectionLabel] 与排版本体，因此单独一层，
+ * 设置行骨架无关，唯一共用的只有列表头与排版本体，因此单独一层，
  * 由菜单页的 overlay 槽承载（留在 content 内会被遮罩与操作条压住）。
  */
 
 /**
- * 配色选择浮层单行：主题底色胶囊内嵌强调色圆点作色样（所见即所得），
- * 选中行强调描边 + 高亮文字；行热区 ≥48dp
+ * 配色选择浮层单行：Wear RadioButton（官方单选控件）承载选中态与点按，
+ * icon 槽放「底色胶囊 + 强调色圆点」色样（所见即所得），标题随选中态过渡强调色。
+ * 行热区 ≥48dp
  */
 @Composable
 internal fun ThemeOptionRow(
@@ -63,39 +59,22 @@ internal fun ThemeOptionRow(
     val colors = MaterialTheme.colorScheme
     val scheme = watchColorSchemeOf(mode)
     val tick = rememberTickHaptic()
-    // 选中描边与标题色随选中态过渡（swap 档），替代硬切换；
-    // 未选中时描边透明化而非移除，BorderStroke 宽度恒定避免布局参数跳变
-    val borderColor by animateColorAsState(
-        targetValue = if (selected) colors.primary else Color.Transparent,
-        animationSpec = tween(WatchMotion.DUR_SWAP_IN, easing = WatchMotion.EnterEasing),
-        label = "themeOptionBorder"
-    )
+    // 标题色随选中态过渡（swap 档），替代硬切换
     val titleColor by animateColorAsState(
         targetValue = if (selected) colors.primary else colors.onSurface,
         animationSpec = tween(WatchMotion.DUR_SWAP_IN, easing = WatchMotion.EnterEasing),
         label = "themeOptionTitle"
     )
-    Card(
+    WearRadioButton(
+        selected = selected,
+        onSelect = {
+            tick()
+            onSelect()
+        },
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .selectable(
-                selected = selected,
-                onClick = {
-                    tick()
-                    onSelect()
-                },
-                role = Role.RadioButton
-            ),
-        shape = RoundedCornerShape(WatchShapes.Row),
-        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerHigh),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        border = BorderStroke(1.5.dp, borderColor)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+            .heightIn(min = 48.dp),
+        icon = {
             // 色样：底色胶囊 + 强调色圆点
             Box(
                 modifier = Modifier
@@ -112,17 +91,15 @@ internal fun ThemeOptionRow(
                         .background(scheme.primary)
                 )
             }
-            Spacer(modifier = Modifier.width(10.dp))
-            Text(
+        },
+        label = {
+            WearText(
                 text = mode.label,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                style = WearType.labelLarge,
                 color = titleColor
             )
-            Spacer(modifier = Modifier.weight(1f))
-            RadioButton(selected = selected, onClick = null)
         }
-    }
+    )
 }
 
 /**
@@ -175,7 +152,17 @@ internal fun ThemePickerOverlay(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                SectionLabel("选择配色", color = colors.primary)
+                WearListHeader(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                    contentColor = colors.primary
+                ) {
+                    WearText(
+                        text = "选择配色",
+                        style = WearType.titleLarge,
+                        color = colors.primary
+                    )
+                }
                 ThemeMode.entries.forEach { mode ->
                     ThemeOptionRow(
                         mode = mode,

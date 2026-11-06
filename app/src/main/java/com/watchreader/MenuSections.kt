@@ -2,21 +2,24 @@ package com.watchreader
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material3.ButtonDefaults as WearButtonDefaults
+import androidx.wear.compose.material3.CardDefaults as WearCardDefaults
+import androidx.wear.compose.material3.CompactButton as WearCompactButton
+import androidx.wear.compose.material3.FilledTonalButton as WearFilledTonalButton
+import androidx.wear.compose.material3.ListHeader as WearListHeader
+import androidx.wear.compose.material3.SwitchButton as WearSwitchButton
+import androidx.wear.compose.material3.Text as WearText
+import androidx.wear.compose.material3.TitleCard as WearTitleCard
 
 /**
  * 菜单分区内容：阅读控制 + 滚动 / 显示 / 偏好三段设置。
@@ -25,6 +28,10 @@ import androidx.compose.ui.unit.sp
  * 「哪个分区有哪些行、行里的值怎么来」。行里那些「值 → 文案」的换算不在组合函数中现算，
  * 而是收进 [MenuValueText] 与 [BrightnessStep] 两个纯对象：它们不碰 Compose 运行时，
  * 因此可以在 JVM 测试里逐档锁定文案（MenuSectionLogicTest）。
+ *
+ * 组件口径（ADR-021）：卡片、列表头、按钮、开关、步进器一律用 Wear Compose Material 3
+ * 官方件（TitleCard / ListHeader / Button / CompactButton / SwitchButton / Stepper），
+ * 不再手绘控件；按钮标签统一走旧式重载的 [content] 具名槽（与项目其余页面一致）。
  */
 
 /**
@@ -72,7 +79,8 @@ internal object MenuValueText {
 }
 
 /**
- * 阅读控制块：当前章节主卡 + 章节导航 + 2×2 快捷操作。
+ * 阅读控制块：分区列表头（Wear ListHeader）+ 当前章节主卡（Wear TitleCard）+
+ * 章节导航 + 2×2 快捷操作。
  * 入场错峰序号 0~3 由本块自己持有，页面只保证块的先后顺序
  */
 @Composable
@@ -89,39 +97,53 @@ internal fun ReadingControlBlock(
     onOpenSearch: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    SectionLabel("阅读控制", modifier = Modifier.staggeredEnter(0), color = colors.primary)
 
-    // ── 当前章节主卡（MD3 primaryContainer 强调卡） ──
-    Card(
+    // ── 分区头：Wear ListHeader（官方列表头，48dp 高） ──
+    WearListHeader(
+        modifier = Modifier
+            .fillMaxWidth()
+            .staggeredEnter(0),
+        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+        contentColor = colors.primary,
+        content = {
+            WearText(
+                text = "阅读控制",
+                style = WearType.titleLarge,
+                color = colors.primary
+            )
+        }
+    )
+
+    // ── 当前章节主卡：Wear TitleCard（标题槽 + 副标题槽） ──
+    WearTitleCard(
         modifier = Modifier
             .staggeredEnter(1)
             .fillMaxWidth(),
-        shape = RoundedCornerShape(WatchShapes.Card),
-        colors = CardDefaults.cardColors(containerColor = colors.primaryContainer),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
+        title = {
             AnimatedValue(chapterTitle.ifBlank { "当前章节" }) { title ->
-                Text(
+                WearText(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = colors.onPrimaryContainer,
+                    style = WearType.titleMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Text(
+        },
+        subtitle = {
+            WearText(
                 text = ReadDurationFormatter.format(readDurationSec),
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.onPrimaryContainer
+                style = WearType.labelMedium
             )
-        }
-    }
+        },
+        colors = WearCardDefaults.cardColors(
+            containerColor = colors.primaryContainer,
+            contentColor = colors.onPrimaryContainer,
+            titleColor = colors.onPrimaryContainer,
+            subtitleColor = colors.onPrimaryContainer
+        )
+    )
 
-    // ── 章节导航 ──
+    // ── 章节导航：官方 tonal 按钮并排（各占一半权重） ──
     if (hasPrevChapter || hasNextChapter) {
         Row(
             modifier = Modifier
@@ -129,12 +151,28 @@ internal fun ReadingControlBlock(
                 .staggeredEnter(2),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (hasPrevChapter) PillButton("上一章", Modifier.weight(1f), onClick = onPrevChapter)
-            if (hasNextChapter) PillButton("下一章", Modifier.weight(1f), onClick = onNextChapter)
+            if (hasPrevChapter) {
+                WearFilledTonalButton(
+                    onClick = onPrevChapter,
+                    modifier = Modifier.weight(1f),
+                    content = {
+                        WearText(text = "上一章", style = WearType.labelLarge)
+                    }
+                )
+            }
+            if (hasNextChapter) {
+                WearFilledTonalButton(
+                    onClick = onNextChapter,
+                    modifier = Modifier.weight(1f),
+                    content = {
+                        WearText(text = "下一章", style = WearType.labelLarge)
+                    }
+                )
+            }
         }
     }
 
-    // ── 快捷操作（2×2 网格：每键约 88×48dp，满足 Google 48dp 触控基线） ──
+    // ── 快捷操作（2×2 网格：官方 CompactButton 容器高 48dp，恰为腕上最小交互尺寸） ──
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -142,17 +180,57 @@ internal fun ReadingControlBlock(
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PillButton("书签", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onOpenBookmarks)
-            PillButton("速读", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onOpenRsvp)
+            WearCompactButton(
+                onClick = onOpenBookmarks,
+                modifier = Modifier.weight(1f),
+                colors = WearButtonDefaults.buttonColors(
+                    containerColor = colors.surfaceContainerHigh,
+                    contentColor = colors.onSurface
+                ),
+                content = {
+                    WearText(text = "书签", style = WearType.labelLarge)
+                }
+            )
+            WearCompactButton(
+                onClick = onOpenRsvp,
+                modifier = Modifier.weight(1f),
+                colors = WearButtonDefaults.buttonColors(
+                    containerColor = colors.surfaceContainerHigh,
+                    contentColor = colors.onSurface
+                ),
+                content = {
+                    WearText(text = "速读", style = WearType.labelLarge)
+                }
+            )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PillButton("目录", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onChapterListClick)
-            PillButton("搜索", Modifier.weight(1f), verticalPadding = 10.dp, onClick = onOpenSearch)
+            WearCompactButton(
+                onClick = onChapterListClick,
+                modifier = Modifier.weight(1f),
+                colors = WearButtonDefaults.buttonColors(
+                    containerColor = colors.surfaceContainerHigh,
+                    contentColor = colors.onSurface
+                ),
+                content = {
+                    WearText(text = "目录", style = WearType.labelLarge)
+                }
+            )
+            WearCompactButton(
+                onClick = onOpenSearch,
+                modifier = Modifier.weight(1f),
+                colors = WearButtonDefaults.buttonColors(
+                    containerColor = colors.surfaceContainerHigh,
+                    contentColor = colors.onSurface
+                ),
+                content = {
+                    WearText(text = "搜索", style = WearType.labelLarge)
+                }
+            )
         }
     }
 }
 
-/** 滚动分区：自动滚屏开关 + 速度档 */
+/** 滚动分区：自动滚屏开关（Wear SwitchButton）+ 速度档 */
 @Composable
 internal fun ScrollSettingsBlock(
     isAutoScrolling: Boolean,
@@ -162,29 +240,46 @@ internal fun ScrollSettingsBlock(
 ) {
     val colors = MaterialTheme.colorScheme
     SettingSection("滚动", modifier = Modifier.staggeredEnter(4)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                AnimatedValue(MenuValueText.autoScrollState(isAutoScrolling)) { label ->
-                    Text(label, color = colors.onSurface, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                }
-                AnimatedValue(MenuValueText.autoScrollSpeed(autoScrollSpeed)) { speed ->
-                    Text(speed, color = colors.primary, fontSize = 11.sp)
+        WearSwitchButton(
+            checked = isAutoScrolling,
+            onCheckedChange = { onToggleAutoScroll() },
+            modifier = Modifier.fillMaxWidth(),
+            label = {
+                Column {
+                    AnimatedValue(MenuValueText.autoScrollState(isAutoScrolling)) { label ->
+                        WearText(text = label, style = WearType.bodyMedium)
+                    }
+                    WearText(
+                        text = MenuValueText.autoScrollSpeed(autoScrollSpeed),
+                        style = WearType.labelMedium,
+                        color = colors.primary
+                    )
                 }
             }
-            PillButton(
-                if (isAutoScrolling) "暂停" else "开启",
-                active = isAutoScrolling,
-                verticalPadding = 8.dp,
-                onClick = onToggleAutoScroll
-            )
-        }
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PillButton("减速", Modifier.weight(1f), verticalPadding = 8.dp) {
-                onAutoScrollSpeedChange(AutoScrollSpeed.clamp(autoScrollSpeed - 10f))
-            }
-            PillButton("加速", Modifier.weight(1f), verticalPadding = 8.dp) {
-                onAutoScrollSpeedChange(AutoScrollSpeed.clamp(autoScrollSpeed + 10f))
-            }
+            WearCompactButton(
+                onClick = { onAutoScrollSpeedChange(AutoScrollSpeed.clamp(autoScrollSpeed - 10f)) },
+                modifier = Modifier.weight(1f),
+                colors = WearButtonDefaults.buttonColors(
+                    containerColor = colors.surfaceContainerHigh,
+                    contentColor = colors.onSurface
+                ),
+                content = {
+                    WearText(text = "减速", style = WearType.labelLarge)
+                }
+            )
+            WearCompactButton(
+                onClick = { onAutoScrollSpeedChange(AutoScrollSpeed.clamp(autoScrollSpeed + 10f)) },
+                modifier = Modifier.weight(1f),
+                colors = WearButtonDefaults.buttonColors(
+                    containerColor = colors.surfaceContainerHigh,
+                    contentColor = colors.onSurface
+                ),
+                content = {
+                    WearText(text = "加速", style = WearType.labelLarge)
+                }
+            )
         }
     }
 }
@@ -197,36 +292,71 @@ internal fun DisplaySettingsBlock(
     appBrightness: Float,
     onBrightnessChange: (Float) -> Unit
 ) {
+    val colors = MaterialTheme.colorScheme
     SettingSection("显示", modifier = Modifier.staggeredEnter(5)) {
         SettingLine("字号", "$fontSize") {
             Stepper(
-                onMinus = { onFontSizeChange(fontSize - 1) },
-                onPlus = { onFontSizeChange(fontSize + 1) }
+                value = fontSize,
+                onValueChange = onFontSizeChange,
+                valueProgression = 10..24
             )
         }
         HairlineDivider()
+        // 亮度是「系统档 + 百分比档」混合量：系统档（负值）无对应刻度，
+        // 步进器落在 [BrightnessManager.SYSTEM_STEP_BASE] 的百分比刻度上，
+        // 回调再按 ±0.05 的语义换算回应用域亮度（系统档从 50% 起跳）。
+        val effectiveBrightness = if (appBrightness < 0f) {
+            BrightnessManager.SYSTEM_STEP_BASE
+        } else {
+            appBrightness
+        }
         SettingLine("亮度", BrightnessManager.formatBrightnessText(appBrightness)) {
             Stepper(
-                onMinus = { onBrightnessChange(BrightnessStep.step(appBrightness, -0.05f)) },
-                onPlus = { onBrightnessChange(BrightnessStep.step(appBrightness, 0.05f)) }
+                value = effectiveBrightness,
+                onValueChange = { target ->
+                    onBrightnessChange(BrightnessStep.step(appBrightness, target - effectiveBrightness))
+                },
+                valueRange = 0f..1f,
+                steps = 19,
+                valueLabel = BrightnessManager.formatBrightnessText(appBrightness)
             )
         }
         HairlineDivider()
         // 亮度预设 2×2 网格：避免四键并排把单键压到 48dp 以下
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PillButton("系统", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(BrightnessManager.BRIGHTNESS_SYSTEM_DEFAULT) }
-                PillButton("暗", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(BrightnessManager.LEVEL_ULTRA_DARK) }
+                BrightnessPresetButton("系统", colors) { onBrightnessChange(BrightnessManager.BRIGHTNESS_SYSTEM_DEFAULT) }
+                BrightnessPresetButton("暗", colors) { onBrightnessChange(BrightnessManager.LEVEL_ULTRA_DARK) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PillButton("中", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(BrightnessManager.LEVEL_2_MEDIUM) }
-                PillButton("亮", Modifier.weight(1f), verticalPadding = 8.dp) { onBrightnessChange(BrightnessManager.LEVEL_3_STRONG) }
+                BrightnessPresetButton("中", colors) { onBrightnessChange(BrightnessManager.LEVEL_2_MEDIUM) }
+                BrightnessPresetButton("亮", colors) { onBrightnessChange(BrightnessManager.LEVEL_3_STRONG) }
             }
         }
     }
 }
 
-/** 偏好分区：主题（开浮层）/ 点按翻页 / 排版净化 / 字体 / 行距 / 字距的循环档位 */
+/** 亮度预设按钮：官方 CompactButton + tonal 配色，四键两行排布 */
+@Composable
+private fun RowScope.BrightnessPresetButton(
+    label: String,
+    colors: ColorScheme,
+    onClick: () -> Unit
+) {
+    WearCompactButton(
+        onClick = onClick,
+        modifier = Modifier.weight(1f),
+        colors = WearButtonDefaults.buttonColors(
+            containerColor = colors.surfaceContainerHigh,
+            contentColor = colors.onSurface
+        ),
+        content = {
+            WearText(text = label, style = WearType.labelLarge)
+        }
+    )
+}
+
+/** 偏好分区：主题（开浮层）/ 点按翻页 / 排版净化（开关）/ 字体 / 行距 / 字距的循环档位 */
 @Composable
 internal fun PreferenceSettingsBlock(
     themeMode: Int,
@@ -242,6 +372,7 @@ internal fun PreferenceSettingsBlock(
     letterSpacing: Int,
     onCycleLetterSpacing: () -> Unit
 ) {
+    val colors = MaterialTheme.colorScheme
     val themeLabel = ThemeMode.fromValue(themeMode).label
     val tapLabel = MenuValueText.tapPageArea(TapPageArea.fromValue(tapPageArea))
     val fontLabel = MenuValueText.fontType(FontType.fromValue(fontType))
@@ -250,9 +381,25 @@ internal fun PreferenceSettingsBlock(
         HairlineDivider()
         CycleLine("点按翻页", tapLabel) { onCycleTapPageArea() }
         HairlineDivider()
-        CycleLine("排版净化", MenuValueText.cleanTypography(cleanTypography)) {
-            onToggleCleanTypography()
-        }
+        WearSwitchButton(
+            checked = cleanTypography,
+            onCheckedChange = { onToggleCleanTypography() },
+            modifier = Modifier.fillMaxWidth(),
+            label = {
+                WearText(
+                    text = "排版净化",
+                    style = WearType.bodyMedium,
+                    color = colors.onSurface
+                )
+            },
+            secondaryLabel = {
+                WearText(
+                    text = MenuValueText.cleanTypography(cleanTypography),
+                    style = WearType.labelMedium,
+                    color = colors.primary
+                )
+            }
+        )
         HairlineDivider()
         CycleLine("字体", fontLabel) { onCycleFontType() }
         HairlineDivider()

@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import androidx.wear.compose.material3.MaterialTheme as WearMaterialTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -133,6 +134,14 @@ class MainActivity : ComponentActivity() {
                 typography = WatchTypography,
                 shapes = WatchShapesM3
             ) {
+              // Wear M3 主题层：把同一套 MD3 令牌映射到官方手表组件树（ADR-021），
+              // 使 Wear 官方 Button / Card / 进度指示与既有页面共用一套配色与排版
+              WearMaterialTheme(
+                colorScheme = watchWearColorSchemeOf(colorScheme),
+                typography = watchWearTypography(),
+                shapes = watchWearShapes(),
+                motionScheme = watchWearMotionScheme()
+              ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     WatchAppContent(
                         uiState = uiState,
@@ -217,6 +226,7 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+              }
             }
         }
     }

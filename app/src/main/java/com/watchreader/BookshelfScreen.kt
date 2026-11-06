@@ -1,25 +1,19 @@
 package com.watchreader
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,21 +23,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.CircularProgressIndicator as WearCircularProgressIndicator
+import androidx.wear.compose.material3.LinearProgressIndicator as WearLinearProgressIndicator
+import androidx.wear.compose.material3.ProgressIndicatorDefaults as WearProgressIndicatorDefaults
+import androidx.wear.compose.material3.Text as WearText
+import androidx.wear.compose.material3.TextButton as WearTextButton
+import androidx.wear.compose.material3.TextButtonDefaults as WearTextButtonDefaults
+import androidx.wear.compose.material3.TitleCard as WearTitleCard
 import kotlinx.coroutines.delay
 
 // ═════════════════════════════════════
-//  书架主页（Compose 腕上设计系统）
+//  书架主页（Wear Compose Material 3）
 // ═════════════════════════════════════
 
 /**
- * 书架主页 — 圆屏黄金安全区排版 + 发丝描边层次 + 错峰入场
+ * 书架主页 — 圆屏黄金安全区排版 + Wear M3 官方组件 + 表冠滚动
  *
  * 本函数只保留「屏幕级状态 + LazyColumn 编排」：搜索过滤排序、两段式删除的待确认定时器、
- * 表冠目标（非空态滚列表 / 空态焦点轮选）、底部弧带操作条。各分段视图见 BookshelfSections.kt。
+ * 表冠目标（非空态滚列表 / 空态焦点轮选）、底部弧带操作条。
+ * 各分段视图见 BookshelfSections.kt，卡片 / 列表头 / 进度 / 按钮一律走 Wear M3 官方组件。
  */
 @Composable
 fun BookshelfScreen(
@@ -137,85 +137,91 @@ fun BookshelfScreen(
             )
         }
     ) {
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = insets.horizontal),
-            // 上下留白随内容滚动（与旧的 padding 在 verticalScroll 内同语义）
-            contentPadding = PaddingValues(top = insets.top, bottom = insets.bottom),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
-                // ── 头部：栏目标签 + 主标题 ──
-                BookshelfHeader(bookCount = bookshelf.size)
-            }
-
-            item {
-                BookshelfContinueCard(latestBook = latestBook, onOpen = onOpenBook)
-            }
-
-            item {
-                BookshelfActionPair(
-                    onOpenFile = onOpenFile,
-                    onOpenWifiTransfer = onOpenWifiTransfer
-                )
-            }
-
-            item {
-                BookshelfMessageBanner(message = errorMessage, color = MaterialTheme.colorScheme.error)
-            }
-
-            item {
-                // 成功类信息用格式绿，与错误红区分
-                BookshelfMessageBanner(message = infoMessage, color = MaterialTheme.colorScheme.secondary)
-            }
-
-            item {
-                BookshelfSearchField(query = searchQuery, onQueryChange = onSearchChange)
-            }
-
-            item {
-                BookshelfLibraryHeader(searchQuery = searchQuery, resultCount = filteredBooks.size)
-            }
-
-            if (filteredBooks.isEmpty()) {
+        WearBookshelfTheme {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = insets.horizontal),
+                // 上下留白随内容滚动（与旧的 padding 在 verticalScroll 内同语义）
+                contentPadding = PaddingValues(top = insets.top, bottom = insets.bottom),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 item {
-                    BookshelfEmptyState(bookshelfSize = bookshelf.size)
+                    // ── 头部：列表头 + 书籍总数 ──
+                    BookshelfHeader(bookCount = bookshelf.size)
                 }
-            } else {
-                // 书籍行不带入场动画：LazyColumn 回收后会重新组合，重放 alpha 淡入会变成滚动闪变
-                items(filteredBooks.size) { index ->
-                    val book = filteredBooks[index]
-                    BookshelfBookRow(
-                        book = book,
-                        isPendingDelete = pendingDeleteUri == book.uriString,
-                        // 点按反馈（tick + 按压缩放）统一在行内处理，父层不再叠加
-                        onOpen = { onOpenBook(book) },
-                        onTogglePin = { onTogglePin(book) },
-                        onRequestDelete = { pendingDeleteUri = book.uriString },
-                        onConfirmDelete = {
-                            pendingDeleteUri = null
-                            onDeleteBook(book)
-                        }
+
+                item {
+                    BookshelfContinueCard(latestBook = latestBook, onOpen = onOpenBook)
+                }
+
+                item {
+                    BookshelfActionPair(
+                        onOpenFile = onOpenFile,
+                        onOpenWifiTransfer = onOpenWifiTransfer
                     )
                 }
-            }
 
-            item {
-                // ── 底部显示调节区 ──
-                BookshelfDisplayControls(
-                    fontSize = fontSize,
-                    isDarkMode = isDarkMode,
-                    onFontSizeChange = onFontSizeChange,
-                    onToggleDarkMode = onToggleDarkMode,
-                    staggerIndex = 6 + filteredBooks.size.coerceAtMost(6)
-                )
+                item {
+                    BookshelfMessageBanner(message = errorMessage, color = MaterialTheme.colorScheme.error)
+                }
+
+                item {
+                    // 成功类信息用格式绿，与错误红区分
+                    BookshelfMessageBanner(message = infoMessage, color = MaterialTheme.colorScheme.secondary)
+                }
+
+                item {
+                    BookshelfSearchField(query = searchQuery, onQueryChange = onSearchChange)
+                }
+
+                item {
+                    BookshelfLibraryHeader(searchQuery = searchQuery, resultCount = filteredBooks.size)
+                }
+
+                if (filteredBooks.isEmpty()) {
+                    item {
+                        BookshelfEmptyState(bookshelfSize = bookshelf.size)
+                    }
+                } else {
+                    // 书籍行不带入场动画：LazyColumn 回收后会重新组合，重放 alpha 淡入会变成滚动闪变
+                    items(filteredBooks.size) { index ->
+                        val book = filteredBooks[index]
+                        BookshelfBookRow(
+                            book = book,
+                            isPendingDelete = pendingDeleteUri == book.uriString,
+                            // 点按反馈（tick + 按压缩放）统一在行内处理，父层不再叠加
+                            onOpen = { onOpenBook(book) },
+                            onTogglePin = { onTogglePin(book) },
+                            onRequestDelete = { pendingDeleteUri = book.uriString },
+                            onConfirmDelete = {
+                                pendingDeleteUri = null
+                                onDeleteBook(book)
+                            }
+                        )
+                    }
+                }
+
+                item {
+                    // ── 底部显示调节区 ──
+                    BookshelfDisplayControls(
+                        fontSize = fontSize,
+                        isDarkMode = isDarkMode,
+                        onFontSizeChange = onFontSizeChange,
+                        onToggleDarkMode = onToggleDarkMode,
+                        staggerIndex = 6 + filteredBooks.size.coerceAtMost(6)
+                    )
+                }
             }
         }
     }
 }
 
+/**
+ * 书籍行：Wear TitleCard 承载「标题 + 章节 + 进度 + 操作」，
+ * 进度条用 Wear LinearProgressIndicator，操作用 Wear TextButton。
+ */
 @Composable
 private fun BookshelfBookRow(
     book: BookItem,
@@ -231,103 +237,92 @@ private fun BookshelfBookRow(
     }
     // 书名清洗含正则替换：随书名 remember，避免父级每次重组（搜索逐键 / 时长 tick）逐行重算
     val displayTitle = remember(book.title) { EpubParser.cleanBookTitle(book.title) }
-    val rowInteraction = remember { MutableInteractionSource() }
     val rowTick = rememberTickHaptic()
 
-    SurfaceCard(
-        modifier = Modifier
-            .fillMaxWidth(),
-        cornerRadius = WatchShapes.Row
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .pressScale(rowInteraction, pressedScale = 0.985f)
-                .clickable(
-                    interactionSource = rowInteraction,
-                    indication = null,
-                    role = Role.Button
-                ) {
-                    rowTick()
-                    onOpen()
-                }
-                .padding(horizontal = 12.dp, vertical = 11.dp),
-            verticalArrangement = Arrangement.spacedBy(7.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextBadge(
-                    text = formatBadge,
-                    container = if (formatBadge == "TXT") colors.secondaryContainer else colors.primaryContainer,
-                    content = if (formatBadge == "TXT") colors.onSecondaryContainer else colors.onPrimaryContainer
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = displayTitle,
-                    style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                    color = colors.onSurface,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = ShelfProgress.label(book.progressPercent),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = colors.primary
-                )
-            }
-            Text(
+    WearTitleCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = {
+            rowTick()
+            onOpen()
+        },
+        title = {
+            WearText(
+                text = formatBadge,
+                style = WearType.labelMedium,
+                color = if (formatBadge == "TXT") colors.secondary else colors.primary
+            )
+            androidx.compose.foundation.layout.Spacer(modifier = Modifier.width(6.dp))
+            WearText(
+                text = displayTitle,
+                style = WearType.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+        },
+        subtitle = {
+            WearText(
                 text = book.lastChapterTitle.ifBlank { "尚未开始" },
-                style = MaterialTheme.typography.labelSmall,
+                style = WearType.labelSmall,
                 color = colors.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                ProgressTrack(
-                    progress = ShelfProgress.fraction(book.progressPercent),
-                    modifier = Modifier.weight(1f),
-                    height = 3.dp
+        },
+        time = {
+            WearText(
+                text = ShelfProgress.label(book.progressPercent),
+                style = WearType.labelMedium,
+                color = colors.primary
+            )
+        },
+        content = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                WearLinearProgressIndicator(
+                    progress = { ShelfProgress.fraction(book.progressPercent) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = WearProgressIndicatorDefaults.colors(
+                        indicatorColor = colors.primary,
+                        trackColor = colors.outlineVariant
+                    ),
+                    strokeWidth = 8.dp
                 )
-                TextButton(
-                    onClick = {
-                        rowTick()
-                        onTogglePin()
-                    },
-                    modifier = Modifier.heightIn(min = 48.dp),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                    colors = ButtonDefaults.textButtonColors(contentColor = colors.primary)
-                ) {
-                    Text(
-                        text = if (book.isPinned) "已置顶" else "置顶",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                }
-                TextButton(
-                    onClick = {
-                        rowTick()
-                        if (isPendingDelete) onConfirmDelete() else onRequestDelete()
-                    },
-                    modifier = Modifier.heightIn(min = 48.dp),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
-                    colors = ButtonDefaults.textButtonColors(
-                        contentColor = if (isPendingDelete) colors.error else colors.onSurfaceVariant
-                    )
-                ) {
-                    Text(
-                        text = if (isPendingDelete) "确认删除？" else "删除",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontWeight = if (isPendingDelete) FontWeight.Bold else FontWeight.Normal
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    WearTextButton(
+                        onClick = {
+                            rowTick()
+                            onTogglePin()
+                        },
+                        colors = WearTextButtonDefaults.textButtonColors(contentColor = colors.primary)
+                    ) {
+                        WearText(
+                            text = if (book.isPinned) "已置顶" else "置顶",
+                            style = WearType.labelSmall
                         )
-                    )
+                    }
+                    WearTextButton(
+                        onClick = {
+                            rowTick()
+                            if (isPendingDelete) onConfirmDelete() else onRequestDelete()
+                        },
+                        colors = WearTextButtonDefaults.textButtonColors(
+                            contentColor = if (isPendingDelete) colors.error else colors.onSurfaceVariant
+                        )
+                    ) {
+                        WearText(
+                            text = if (isPendingDelete) "确认删除？" else "删除",
+                            style = WearType.labelSmall
+                        )
+                    }
                 }
             }
         }
-    }
+    )
 }
 
 /**
- * 加载中界面：旋转弧环 + 呼吸文字；返回键取消加载回书架
- * （此前 handleBack 的 Loading 分支无 BackHandler 可达，按返回会直接退出应用）
+ * 加载中界面：Wear CircularProgressIndicator 旋转弧环 + 说明文字；
+ * 返回键取消加载回书架（此前 handleBack 的 Loading 分支无 BackHandler 可达，按返回会直接退出应用）
  */
 @Composable
 fun LoadingScreen(onBack: () -> Unit = {}) {
@@ -340,16 +335,23 @@ fun LoadingScreen(onBack: () -> Unit = {}) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            LoadingIndicator(size = 30.dp, strokeWidth = 2.6.dp)
+            WearCircularProgressIndicator(
+                modifier = Modifier.size(30.dp),
+                colors = WearProgressIndicatorDefaults.colors(
+                    indicatorColor = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.outlineVariant
+                ),
+                strokeWidth = 3.dp
+            )
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
+                WearText(
                     text = "正在打开",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = WearType.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
-                Text(
+                WearText(
                     text = "加载中…",
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = WearType.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }

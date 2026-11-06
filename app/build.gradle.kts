@@ -66,6 +66,11 @@ dependencies {
 
     // Material 3 — 应用唯一组件与设计令牌来源（ADR-018）
     implementation("androidx.compose.material3:material3")
+
+    // Wear Compose Material 3 — 圆屏手表专用组件树（ADR-021）
+    // 提供 Card / Button / Stepper / Slider / ScrollIndicator / ScalingLazyColumn 等官方组件，
+    // 用于替代手写件；配色与排版仍由本项目 MaterialTheme 令牌映射注入。
+    implementation("androidx.wear.compose:compose-material3:1.7.1")
     // 基础图标集：仅使用 core 的少量字形，避免引入体积巨大的 extended
     implementation("androidx.compose.material:material-icons-core")
 

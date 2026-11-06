@@ -11,9 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -21,13 +19,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,9 +31,29 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.Button as WearButton
+import androidx.wear.compose.material3.ButtonDefaults as WearButtonDefaults
+import androidx.wear.compose.material3.Card as WearCard
+import androidx.wear.compose.material3.CardDefaults as WearCardDefaults
+import androidx.wear.compose.material3.Icon as WearIcon
+import androidx.wear.compose.material3.LinearProgressIndicator as WearLinearProgressIndicator
+import androidx.wear.compose.material3.ListHeader as WearListHeader
+import androidx.wear.compose.material3.ListSubHeader as WearListSubHeader
+import androidx.wear.compose.material3.MaterialTheme as WearMaterialTheme
+import androidx.wear.compose.material3.OutlinedCard as WearOutlinedCard
+import androidx.wear.compose.material3.ProgressIndicatorDefaults as WearProgressIndicatorDefaults
+import androidx.wear.compose.material3.Text as WearText
+import androidx.wear.compose.material3.TitleCard as WearTitleCard
+import androidx.wear.compose.material3.Typography as WearTypography
 
 /**
  * 书架页的分段视图：每个 LazyColumn item 一枚，入参即该段需要的全部数据。
+ *
+ * 组件口径（ADR-021）：本页 UI 全部走 Wear Compose Material 3 官方组件——
+ * 卡片用 Card / TitleCard / OutlinedCard，列表头用 ListHeader / ListSubHeader，
+ * 进度用 LinearProgressIndicator，按钮用 Button / TextButton，文本用 wear 的 Text。
+ * 唯一保留的手写件是搜索输入框：wear M3 没有 TextField 组件，只能沿用 MD3 OutlinedTextField。
+ * 底部弧带操作条（EdgeActionBar）与圆屏安全区壳（WatchScreenScaffold）不在本页维护。
  *
  * 抽出动机：BookshelfScreen 原先把这些段全内联在一个 390 行的函数体里，
  * 屏幕级状态（表冠焦点、待确认删除、搜索词）与纯展示段耦合，改一处动效要横穿整页。
@@ -46,6 +61,26 @@ import androidx.compose.ui.unit.dp
  * 入场错峰序号（[BookshelfHeader] 0 → [BookshelfActionPair] 2 → 搜索 3 → 书库 4 →
  * 空态 5 → 显示区 6+行数）沿用旧值，动效时序零变化。
  */
+
+/** 本页共用的 Wear M3 排版令牌（与 wear 主题一致，避免各处散写字号） */
+internal val WearType: WearTypography = watchWearTypography()
+
+/**
+ * Wear M3 主题壳：把手表既有的 MD3 令牌桥接成 Wear 令牌，
+ * 使官方 Wear 组件与既有页面共享同一套配色与排版，不出现两套视觉体系。
+ */
+@Composable
+internal fun WearBookshelfTheme(content: @Composable () -> Unit) {
+    val md3Colors = MaterialTheme.colorScheme
+    val type = remember { watchWearTypography() }
+    WearMaterialTheme(
+        colorScheme = watchWearColorSchemeOf(md3Colors),
+        typography = type,
+        shapes = watchWearShapes(),
+        motionScheme = watchWearMotionScheme(),
+        content = content
+    )
+}
 
 /**
  * 书架进度的纯参数口径（由 ShelfProgressTest 锁定）：百分比字段既驱动进度条比例，
@@ -60,43 +95,39 @@ internal object ShelfProgress {
     fun label(percent: Int): String = "$percent%"
 }
 
-/** 头部：栏目标签 + 主标题 + 书籍总数 */
+/** 头部：列表头（Wear ListHeader）给主标题 + 书籍总数 */
 @Composable
 internal fun BookshelfHeader(bookCount: Int) {
     val colors = MaterialTheme.colorScheme
-    Row(
+    WearListHeader(
         modifier = Modifier
             .fillMaxWidth()
-            .staggeredEnter(0),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.Bottom
+            .staggeredEnter(0)
     ) {
-        Column {
-            SectionLabel("正在阅读", color = colors.primary)
-            Text(
-                text = "我的书架",
-                style = MaterialTheme.typography.headlineSmall,
-                color = colors.onBackground
-            )
-        }
-        Text(
+        WearText(
+            text = "我的书架",
+            style = WearType.titleLarge,
+            color = colors.onBackground
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        WearText(
             text = "$bookCount 本",
-            style = MaterialTheme.typography.labelMedium,
+            style = WearType.labelMedium,
             color = colors.onSurfaceVariant
         )
     }
 }
 
 /**
- * 继续阅读卡：有最近阅读的书时给主容器卡（标题 + 上次章节 + 进度），
- * 否则给「建立你的第一座书架」引导卡。
+ * 继续阅读卡：Wear TitleCard（标题 + 副标题 + 时间位 + 内容槽）承载最近阅读的书，
+ * 无书时给描边引导卡（Wear OutlinedCard）。
  */
 @Composable
 internal fun BookshelfContinueCard(latestBook: BookItem?, onOpen: (BookItem) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val tick = rememberTickHaptic()
     if (latestBook != null) {
-        Card(
+        WearTitleCard(
             modifier = Modifier
                 .staggeredEnter(1)
                 .fillMaxWidth(),
@@ -104,68 +135,68 @@ internal fun BookshelfContinueCard(latestBook: BookItem?, onOpen: (BookItem) -> 
                 tick()
                 onOpen(latestBook)
             },
-            shape = RoundedCornerShape(WatchShapes.Card),
-            colors = CardDefaults.cardColors(containerColor = colors.primaryContainer),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                SectionLabel("继续阅读", color = colors.onPrimaryContainer)
-                Text(
+            title = {
+                WearText(
                     text = latestBook.title,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = colors.onPrimaryContainer,
+                    style = WearType.titleLarge,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
+            },
+            subtitle = {
+                WearText(
                     text = latestBook.lastChapterTitle.ifBlank { "从上次阅读位置继续" },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onPrimaryContainer,
+                    style = WearType.bodySmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    ProgressTrack(
-                        progress = ShelfProgress.fraction(latestBook.progressPercent),
-                        modifier = Modifier.weight(1f),
-                        fillColor = colors.primary,
+            },
+            time = {
+                WearText(
+                    text = ShelfProgress.label(latestBook.progressPercent),
+                    style = WearType.labelMedium
+                )
+            },
+            colors = WearCardDefaults.cardColors(
+                containerColor = colors.primaryContainer,
+                contentColor = colors.onPrimaryContainer,
+                titleColor = colors.onPrimaryContainer,
+                subtitleColor = colors.onPrimaryContainer,
+                timeColor = colors.onPrimaryContainer
+            ),
+            content = {
+                WearLinearProgressIndicator(
+                    progress = { ShelfProgress.fraction(latestBook.progressPercent) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = WearProgressIndicatorDefaults.colors(
+                        indicatorColor = colors.primary,
                         trackColor = colors.outlineVariant
+                    ),
+                    strokeWidth = 8.dp
+                )
+            }
+        )
+    } else {
+        WearOutlinedCard(
+            modifier = Modifier
+                .staggeredEnter(1)
+                .fillMaxWidth(),
+            colors = WearCardDefaults.outlinedCardColors(contentColor = colors.onSurface),
+            content = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    WearText(
+                        text = "建立你的第一座书架",
+                        style = WearType.titleMedium,
+                        color = colors.onSurface
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = ShelfProgress.label(latestBook.progressPercent),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.onPrimaryContainer
+                    WearText(
+                        text = "导入 TXT 或 EPUB，阅读进度会自动保存。",
+                        style = WearType.bodySmall,
+                        color = colors.onSurfaceVariant
                     )
                 }
             }
-        }
-    } else {
-        SurfaceCard(
-            modifier = Modifier
-                .staggeredEnter(1)
-                .fillMaxWidth()
-                .padding(0.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                Text(
-                    text = "建立你的第一座书架",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = colors.onSurface
-                )
-                Text(
-                    text = "导入 TXT 或 EPUB，阅读进度会自动保存。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant
-                )
-            }
-        }
+        )
     }
 }
 
@@ -206,16 +237,19 @@ internal fun BookshelfMessageBanner(message: String?, color: Color) {
         enter = fadeIn(tween(WatchMotion.DUR_FADE)) + expandVertically(),
         exit = fadeOut(tween(WatchMotion.DUR_FADE_OUT)) + shrinkVertically()
     ) {
-        Text(
+        WearText(
             text = message.orEmpty(),
             modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.labelSmall,
+            style = WearType.labelSmall,
             color = color
         )
     }
 }
 
-/** 搜索框：回车收起软键盘（手表上键盘占掉半屏，必须能主动收） */
+/**
+ * 搜索框：回车收起软键盘（手表上键盘占掉半屏，必须能主动收）。
+ * Wear M3 没有文本输入组件，只能保留 MD3 OutlinedTextField——本页唯一的手写例外。
+ */
 @Composable
 internal fun BookshelfSearchField(query: String, onQueryChange: (String) -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -227,9 +261,9 @@ internal fun BookshelfSearchField(query: String, onQueryChange: (String) -> Unit
             .fillMaxWidth()
             .staggeredEnter(3),
         singleLine = true,
-        placeholder = { Text("搜索书名", style = MaterialTheme.typography.bodyMedium) },
+        placeholder = { WearText("搜索书名", style = WearType.bodyMedium) },
         leadingIcon = {
-            Icon(
+            androidx.compose.material3.Icon(
                 imageVector = Icons.Default.Search,
                 contentDescription = null,
                 tint = colors.onSurfaceVariant
@@ -246,50 +280,54 @@ internal fun BookshelfSearchField(query: String, onQueryChange: (String) -> Unit
 @Composable
 internal fun BookshelfLibraryHeader(searchQuery: String, resultCount: Int) {
     val colors = MaterialTheme.colorScheme
-    Row(
+    WearListSubHeader(
         modifier = Modifier
             .fillMaxWidth()
             .staggeredEnter(4),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text("书库", style = MaterialTheme.typography.titleMedium, color = colors.onBackground)
-        Text(
-            text = if (searchQuery.isBlank()) "最近阅读优先" else "$resultCount 个结果",
-            style = MaterialTheme.typography.labelSmall,
-            color = colors.onSurfaceVariant
-        )
-    }
+        label = {
+            WearText(
+                text = "书库",
+                style = WearType.titleMedium,
+                color = colors.onBackground
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            WearText(
+                text = if (searchQuery.isBlank()) "最近阅读优先" else "$resultCount 个结果",
+                style = WearType.labelSmall,
+                color = colors.onSurfaceVariant
+            )
+        }
+    )
 }
 
 /** 空态卡：区分「书架本身为空」与「搜索无命中」两种文案 */
 @Composable
 internal fun BookshelfEmptyState(bookshelfSize: Int) {
     val colors = MaterialTheme.colorScheme
-    SurfaceCard(
+    WearOutlinedCard(
         modifier = Modifier
             .fillMaxWidth()
-            .staggeredEnter(5)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 18.dp, horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                text = if (bookshelfSize == 0) "书架还是空的" else "没有匹配的书籍",
-                style = MaterialTheme.typography.labelLarge,
-                color = colors.onSurface
-            )
-            Text(
-                text = if (bookshelfSize == 0) "从上方导入或扫码传入第一本书" else "换个书名关键词试试",
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.onSurfaceVariant
-            )
+            .staggeredEnter(5),
+        colors = WearCardDefaults.outlinedCardColors(contentColor = colors.onSurface),
+        content = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                WearText(
+                    text = if (bookshelfSize == 0) "书架还是空的" else "没有匹配的书籍",
+                    style = WearType.labelLarge,
+                    color = colors.onSurface
+                )
+                WearText(
+                    text = if (bookshelfSize == 0) "从上方导入或扫码传入第一本书" else "换个书名关键词试试",
+                    style = WearType.labelSmall,
+                    color = colors.onSurfaceVariant
+                )
+            }
         }
-    }
+    )
 }
 
 /**
@@ -313,17 +351,18 @@ internal fun BookshelfDisplayControls(
         modifier = Modifier
             .fillMaxWidth()
             .staggeredEnter(staggerIndex),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            SectionLabel("显示")
-            Text(
+        WearListHeader(modifier = Modifier.fillMaxWidth()) {
+            WearText(
+                text = "显示",
+                style = WearType.titleMedium,
+                color = colors.onBackground
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            WearText(
                 text = "字号 $fontSize",
-                style = MaterialTheme.typography.labelMedium,
+                style = WearType.labelMedium,
                 color = colors.primary
             )
         }
@@ -331,25 +370,42 @@ internal fun BookshelfDisplayControls(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            PillButton(
-                "−",
-                Modifier.weight(1f),
-                verticalPadding = 8.dp,
-                horizontalPadding = 0.dp
-            ) { onFontSizeChange(fontSize - 1) }
-            PillButton(
-                "+",
-                Modifier.weight(1f),
-                verticalPadding = 8.dp,
-                horizontalPadding = 0.dp
-            ) { onFontSizeChange(fontSize + 1) }
-            PillButton(
-                if (isDarkMode) "夜间" else "日间",
-                Modifier.weight(1.7f),
-                active = isDarkMode,
-                verticalPadding = 8.dp,
-                horizontalPadding = 0.dp
-            ) { onToggleDarkMode() }
+            WearButton(
+                onClick = { onFontSizeChange(fontSize - 1) },
+                modifier = Modifier.weight(1f),
+                colors = WearButtonDefaults.buttonColors(
+                    containerColor = colors.surfaceContainerHigh,
+                    contentColor = colors.onSurface
+                ),
+                content = {
+                    WearText(text = "−", style = WearType.labelLarge)
+                }
+            )
+            WearButton(
+                onClick = { onFontSizeChange(fontSize + 1) },
+                modifier = Modifier.weight(1f),
+                colors = WearButtonDefaults.buttonColors(
+                    containerColor = colors.surfaceContainerHigh,
+                    contentColor = colors.onSurface
+                ),
+                content = {
+                    WearText(text = "+", style = WearType.labelLarge)
+                }
+            )
+            WearButton(
+                onClick = { onToggleDarkMode() },
+                modifier = Modifier.weight(1.7f),
+                colors = WearButtonDefaults.buttonColors(
+                    containerColor = if (isDarkMode) colors.primaryContainer else colors.surfaceContainerHigh,
+                    contentColor = if (isDarkMode) colors.onPrimaryContainer else colors.onSurface
+                ),
+                content = {
+                    WearText(
+                        text = if (isDarkMode) "夜间" else "日间",
+                        style = WearType.labelLarge
+                    )
+                }
+            )
         }
     }
 }
@@ -365,41 +421,42 @@ internal fun BookshelfAction(
 ) {
     val colors = MaterialTheme.colorScheme
     val tick = rememberTickHaptic()
-    Card(
+    WearCard(
         modifier = modifier,
         onClick = {
             tick()
             onClick()
         },
         shape = RoundedCornerShape(WatchShapes.Row),
-        colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerHigh),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 10.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(3.dp)
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = colors.primary,
-                modifier = Modifier.size(18.dp)
-            )
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.onSurface,
-                maxLines = 1
-            )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.secondary,
-                maxLines = 1
-            )
+        colors = WearCardDefaults.cardColors(
+            containerColor = colors.surfaceContainerHigh,
+            contentColor = colors.onSurface
+        ),
+        content = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                WearIcon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = colors.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+                WearText(
+                    text = title,
+                    style = WearType.labelMedium,
+                    color = colors.onSurface,
+                    maxLines = 1
+                )
+                WearText(
+                    text = value,
+                    style = WearType.labelSmall,
+                    color = colors.secondary,
+                    maxLines = 1
+                )
+            }
         }
-    }
+    )
 }

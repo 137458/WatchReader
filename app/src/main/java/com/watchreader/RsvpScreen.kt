@@ -6,9 +6,19 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -22,6 +32,10 @@ import kotlinx.coroutines.delay
  * 表冠统一走 Activity 顶层分派（MainActivity → CrownRouter 第 1 条策略 → ReaderViewModel.handleRotaryScroll），
  * 本页不再自带 onRotaryScrollEvent —— 该路径在路由消费事件后永远收不到输入，
  * 历史上属于与主管线调参互不相认的第二套死代码。
+ *
+ * 组件口径：页面外壳保持自建全屏 Box（RSVP 无滚动区与安全区留白需求，
+ * 中心词元需要按圆屏几何最大化）；中心呈现区改用 Wear M3 官方件
+ * （Text / LinearProgressIndicator），弧形标题、侧边状态条与底部操作条沿用既有实现。
  *
  * 词元结构（RsvpToken）、分词与 ORP、节拍/进度纯口径、中心呈现区段组件见 RsvpSections.kt。
  */
@@ -116,98 +130,100 @@ fun RsvpScreen(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            // 水平滑动手势：增加阻尼门限，避免轻触抖动时误跳词
-            .pointerInput(tokens) {
-                var dragAccumulator = 0f
-                detectHorizontalDragGestures(
-                    onDragEnd = { dragAccumulator = 0f },
-                    onDragCancel = { dragAccumulator = 0f },
-                    onHorizontalDrag = { _, dragAmount ->
-                        dragAccumulator += dragAmount
-                        val base = latestIndex.value
-                        if (dragAccumulator > RsvpPacing.DRAG_THRESHOLD_PX) {
-                            dragAccumulator = 0f
-                            if (tokens.isNotEmpty()) {
-                                val nextIdx = RsvpPacing.jumpTarget(base, RsvpPacing.DRAG_STEP_TOKENS, tokens.size)
-                                if (nextIdx != base) {
-                                    currentIndex = nextIdx
-                                    onCharOffsetChange(bodyToBookOffset(tokens[nextIdx].charOffset))
-                                    tick()
+    WatchReaderWearTheme {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                // 水平滑动手势：增加阻尼门限，避免轻触抖动时误跳词
+                .pointerInput(tokens) {
+                    var dragAccumulator = 0f
+                    detectHorizontalDragGestures(
+                        onDragEnd = { dragAccumulator = 0f },
+                        onDragCancel = { dragAccumulator = 0f },
+                        onHorizontalDrag = { _, dragAmount ->
+                            dragAccumulator += dragAmount
+                            val base = latestIndex.value
+                            if (dragAccumulator > RsvpPacing.DRAG_THRESHOLD_PX) {
+                                dragAccumulator = 0f
+                                if (tokens.isNotEmpty()) {
+                                    val nextIdx = RsvpPacing.jumpTarget(base, RsvpPacing.DRAG_STEP_TOKENS, tokens.size)
+                                    if (nextIdx != base) {
+                                        currentIndex = nextIdx
+                                        onCharOffsetChange(bodyToBookOffset(tokens[nextIdx].charOffset))
+                                        tick()
+                                    }
                                 }
-                            }
-                        } else if (dragAccumulator < -RsvpPacing.DRAG_THRESHOLD_PX) {
-                            dragAccumulator = 0f
-                            if (tokens.isNotEmpty()) {
-                                val prevIdx = RsvpPacing.jumpTarget(base, -RsvpPacing.DRAG_STEP_TOKENS, tokens.size)
-                                if (prevIdx != base) {
-                                    currentIndex = prevIdx
-                                    onCharOffsetChange(bodyToBookOffset(tokens[prevIdx].charOffset))
-                                    tick()
+                            } else if (dragAccumulator < -RsvpPacing.DRAG_THRESHOLD_PX) {
+                                dragAccumulator = 0f
+                                if (tokens.isNotEmpty()) {
+                                    val prevIdx = RsvpPacing.jumpTarget(base, -RsvpPacing.DRAG_STEP_TOKENS, tokens.size)
+                                    if (prevIdx != base) {
+                                        currentIndex = prevIdx
+                                        onCharOffsetChange(bodyToBookOffset(tokens[prevIdx].charOffset))
+                                        tick()
+                                    }
                                 }
                             }
                         }
-                    }
-                )
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        // 1. 顶部圆周弧形章节标题
-        CurvedChapterHeader(
-            title = chapterContent?.title ?: "闪读模式",
-            modifier = Modifier.align(Alignment.TopCenter)
-        )
+                    )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            // 1. 顶部圆周弧形章节标题
+            CurvedChapterHeader(
+                title = chapterContent?.title ?: "闪读模式",
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
 
-        // 2. 顶部透明点击感应区（点击顶部直接退出）
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .align(Alignment.TopCenter)
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onBack
-                )
-        )
+            // 2. 顶部透明点击感应区（点击顶部直接退出）
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .align(Alignment.TopCenter)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onBack
+                    )
+            )
 
-        // 3. 侧边弧形电量与时间
-        CurvedSideStatusBar(
-            modifier = Modifier.fillMaxSize(),
-            textColor = colorScheme.onSurfaceVariant
-        )
+            // 3. 侧边弧形电量与时间
+            CurvedSideStatusBar(
+                modifier = Modifier.fillMaxSize(),
+                textColor = colorScheme.onSurfaceVariant
+            )
 
-        // 4. 屏幕正中心 RSVP 闪读文字呈现区（轻触中央切换 暂停/继续，ORP 焦点高亮）
-        RsvpWordStage(
-            token = currentToken,
-            fullText = fullText,
-            currentIndex = currentIndex,
-            totalTokens = tokens.size,
-            onTogglePlay = {
-                isPlaying = !isPlaying
-                tick()
-            }
-        )
-
-        // 5. 底部弧形贴边操作条：扇带处处贴合圆屏下缘
-        EdgeActionBar(
-            // ‹ 退出
-            EdgeButtonSpec(
-                label = "‹ 退出",
-                onClick = onBack
-            ),
-
-            // 速度/播放状态扇带（点击可循环切换预设档位，旋转表冠可任意线性微调）
-            EdgeButtonSpec(
-                label = RsvpPacing.speedLabel(wordsPerMinute, isPlaying),
-                emphasis = PillEmphasis.Outline,
-                onClick = {
-                    // 点击循环档位：250 -> 350 -> 450 -> 600 -> 800 -> 250
-                    onSpeedChange(RsvpPacing.nextSpeedTier(wordsPerMinute))
+            // 4. 屏幕正中心 RSVP 闪读文字呈现区（轻触中央切换 暂停/继续，ORP 焦点高亮）
+            RsvpWordStage(
+                token = currentToken,
+                fullText = fullText,
+                currentIndex = currentIndex,
+                totalTokens = tokens.size,
+                onTogglePlay = {
+                    isPlaying = !isPlaying
+                    tick()
                 }
             )
-        )
+
+            // 5. 底部弧形贴边操作条：扇带处处贴合圆屏下缘
+            EdgeActionBar(
+                // ‹ 退出
+                EdgeButtonSpec(
+                    label = "‹ 退出",
+                    onClick = onBack
+                ),
+
+                // 速度/播放状态扇带（点击可循环切换预设档位，旋转表冠可任意线性微调）
+                EdgeButtonSpec(
+                    label = RsvpPacing.speedLabel(wordsPerMinute, isPlaying),
+                    emphasis = PillEmphasis.Outline,
+                    onClick = {
+                        // 点击循环档位：250 -> 350 -> 450 -> 600 -> 800 -> 250
+                        onSpeedChange(RsvpPacing.nextSpeedTier(wordsPerMinute))
+                    }
+                )
+            )
+        }
     }
 }

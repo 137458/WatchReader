@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -20,6 +19,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.LinearProgressIndicator as WearLinearProgressIndicator
+import androidx.wear.compose.material3.ProgressIndicatorDefaults as WearProgressIndicatorDefaults
+import androidx.wear.compose.material3.Text as WearText
 import java.time.LocalDate
 import kotlinx.coroutines.delay
 
@@ -30,6 +32,10 @@ import kotlinx.coroutines.delay
  * System.currentTimeMillis() 与 LocalDate.now() 直接取，因此周摘要与今日分钟
  * 无法在 JVM 测试里喂入固定日期。这里把取「现在」收成默认参数，
  * 行为不变而调用方可注入时点；页面仍然只调 [StatsSettingsBlock]。
+ *
+ * 组件口径（ADR-021）：文本与达成进度改走 Wear M3 官方组件（wear Text /
+ * LinearProgressIndicator），周条形柱是 wear 没有对应组件的自绘图形，
+ * 仅配色取自项目 MD3 令牌；分区骨架与循环行沿用项目既有组件。
  */
 internal object ReadingStatsWeek {
 
@@ -53,7 +59,10 @@ internal object ReadingStatsWeek {
 }
 
 /**
- * 周阅读条形图：周一至周日 7 根迷你柱，今日高亮，仅随 readDays 变化重算
+ * 周阅读条形图：周一至周日 7 根迷你柱，今日高亮，仅随 readDays 变化重算。
+ *
+ * wear M3 没有柱状图组件，这 7 根柱仍是自绘图形（与旧实现同构），
+ * 只有标签文字换成 wear Text，配色取自项目 MD3 令牌。
  */
 @Composable
 internal fun WeekBars(days: Map<String, Long>) {
@@ -93,9 +102,9 @@ internal fun WeekBars(days: Map<String, Long>) {
                         // 非今日柱用中性表面色，今日柱用强调色——零 alpha 的两档语义
                         .background(if (bar.isToday) colors.primary else colors.surfaceVariant)
                 )
-                Text(
+                WearText(
                     text = bar.label,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = WearType.labelSmall,
                     color = if (bar.isToday) colors.primary else colors.onSurfaceVariant
                 )
             }
@@ -112,34 +121,41 @@ internal fun StatsSettingsBlock(
     onReadGoalChange: (Int) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    SettingSection("统计", modifier = Modifier.staggeredEnter(7)) {
-        WeekBars(readDays)
-        AnimatedValue(ReadingStatsWeek.summaryLabel(readDays, finishedCount)) { summary ->
-            Text(
-                text = summary,
-                style = MaterialTheme.typography.labelSmall,
-                color = colors.onSurfaceVariant
-            )
-        }
-        HairlineDivider()
-        val goalLabel = if (readGoalMinutes <= 0) "关闭" else "$readGoalMinutes 分钟"
-        CycleLine("每日目标", goalLabel) {
-            val options = ReadingStats.GOAL_OPTIONS_MINUTES
-            val nextIdx = (options.indexOf(readGoalMinutes) + 1).mod(options.size)
-            onReadGoalChange(options[nextIdx])
-        }
-        if (readGoalMinutes > 0) {
-            val todayMinutes = ReadingStatsWeek.todayMinutes(readDays)
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                ProgressTrack(
-                    progress = (todayMinutes.toFloat() / readGoalMinutes).coerceIn(0f, 1f),
-                    height = 3.dp
-                )
-                Text(
-                    text = "今日 $todayMinutes / $readGoalMinutes 分钟",
-                    style = MaterialTheme.typography.labelSmall,
+    WearBookshelfTheme {
+        SettingSection("统计", modifier = Modifier.staggeredEnter(7)) {
+            WeekBars(readDays)
+            AnimatedValue(ReadingStatsWeek.summaryLabel(readDays, finishedCount)) { summary ->
+                WearText(
+                    text = summary,
+                    style = WearType.labelSmall,
                     color = colors.onSurfaceVariant
                 )
+            }
+            HairlineDivider()
+            val goalLabel = if (readGoalMinutes <= 0) "关闭" else "$readGoalMinutes 分钟"
+            CycleLine("每日目标", goalLabel) {
+                val options = ReadingStats.GOAL_OPTIONS_MINUTES
+                val nextIdx = (options.indexOf(readGoalMinutes) + 1).mod(options.size)
+                onReadGoalChange(options[nextIdx])
+            }
+            if (readGoalMinutes > 0) {
+                val todayMinutes = ReadingStatsWeek.todayMinutes(readDays)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    WearLinearProgressIndicator(
+                        progress = { (todayMinutes.toFloat() / readGoalMinutes).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = WearProgressIndicatorDefaults.colors(
+                            indicatorColor = colors.primary,
+                            trackColor = colors.outlineVariant
+                        ),
+                        strokeWidth = 8.dp
+                    )
+                    WearText(
+                        text = "今日 $todayMinutes / $readGoalMinutes 分钟",
+                        style = WearType.labelSmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
             }
         }
     }

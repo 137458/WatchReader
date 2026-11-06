@@ -7,10 +7,10 @@ package com.watchreader
  * 容器与装饰基元（卡片、浮层进出场、分区标签、发丝分隔、错峰入场、边缘羽化）在 WatchComponents.kt。
  */
 
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,10 +23,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -42,6 +39,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material3.ButtonDefaults as WearButtonDefaults
+import androidx.wear.compose.material3.CompactButton
+import androidx.wear.compose.material3.MaterialTheme as WearMaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
+import androidx.wear.compose.material3.CircularProgressIndicator as WearCircularProgressIndicator
+import androidx.wear.compose.material3.LinearProgressIndicator as WearLinearProgressIndicator
 
 /** 胶囊按钮三档强调级共用的容器 / 内容色契约 */
 @Composable
@@ -70,10 +73,9 @@ internal fun pillColors(
 /**
  * 胶囊按钮：primary（filled）/ tonal（surfaceContainerHigh）/ outline（描边）三种强调级。
  *
- * 不直接套 `Button` / 可点击 `Surface`：两者都会施加 Material 3 的最小交互尺寸
- * （Button 内容层 58dp、Surface 48dp），而圆屏最窄弦宽下四键并排的可用宽度只有约 185dp，
- * 必然溢出并被圆屏弧边裁切。本实现保留 M3 色彩角色、胶囊 shape、按压回弹与触觉反馈，
- * 最小触控高度 48dp（Google 无障碍基线），宽度完全服从父布局权重。
+ * 承载件为 Wear Compose Material 3 的 CompactButton（容器高 48dp，恰为腕上最小交互尺寸），
+ * 配色沿用 MD3 语义角色，形状为全圆角胶囊，按压回弹与齿轮触觉反馈保持不变。
+ * 宽度完全服从父布局权重，圆屏最窄弦宽下四键并排不会被弧边裁切。
  */
 @Composable
 fun PillButton(
@@ -87,62 +89,49 @@ fun PillButton(
     onClick: () -> Unit
 ) {
     val tick = rememberTickHaptic()
-    val interaction = remember { MutableInteractionSource() }
-    val colors = MaterialTheme.colorScheme
-    val (containerTarget, contentTarget) = pillColors(emphasis, active, enabled)
-    // 强调级 / 选中 / 禁用切换时容器与内容色按 swap 档时长平滑过渡，避免状态直切闪变
-    val containerColor by animateColorAsState(
-        targetValue = containerTarget,
-        animationSpec = tween(WatchMotion.DUR_SWAP_IN, easing = WatchMotion.EnterEasing),
-        label = "pillContainer"
-    )
-    val contentColor by animateColorAsState(
-        targetValue = contentTarget,
-        animationSpec = tween(WatchMotion.DUR_SWAP_IN, easing = WatchMotion.EnterEasing),
-        label = "pillContent"
-    )
-    Box(
-        modifier = modifier
-            .heightIn(min = 48.dp)
-            .pressScale(interaction)
-            .clip(WatchShapes.Pill)
-            .background(containerColor)
-            .then(
-                if (emphasis == PillEmphasis.Outline) {
-                    Modifier.border(
-                        1.dp,
-                        if (enabled) colors.outline else colors.outlineVariant,
-                        WatchShapes.Pill
-                    )
-                } else {
-                    Modifier
-                }
+    val scheme = MaterialTheme.colorScheme
+    val (containerColor, contentColor) = pillColors(emphasis, active, enabled)
+    CompactButton(
+        onClick = {
+            tick()
+            onClick()
+        },
+        modifier = modifier.heightIn(min = 48.dp),
+        enabled = enabled,
+        shape = WatchShapes.Pill,
+        colors = WearButtonDefaults.buttonColors(
+            containerColor = containerColor,
+            contentColor = contentColor,
+            secondaryContentColor = contentColor,
+            iconColor = contentColor,
+            disabledContainerColor = scheme.surfaceContainer,
+            disabledContentColor = scheme.onSurfaceVariant,
+            disabledSecondaryContentColor = scheme.onSurfaceVariant,
+            disabledIconColor = scheme.onSurfaceVariant
+        ),
+        border = if (emphasis == PillEmphasis.Outline) {
+            BorderStroke(1.dp, if (enabled) scheme.outline else scheme.outlineVariant)
+        } else {
+            null
+        },
+        contentPadding = PaddingValues(
+            horizontal = horizontalPadding,
+            vertical = verticalPadding
+        ),
+        label = {
+            Text(
+                text = label,
+                style = WearMaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                textAlign = TextAlign.Center
             )
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                enabled = enabled,
-                role = Role.Button
-            ) {
-                tick()
-                onClick()
-            }
-            .padding(PaddingValues(horizontal = horizontalPadding, vertical = verticalPadding)),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelLarge,
-            color = contentColor,
-            maxLines = 1,
-            textAlign = TextAlign.Center
-        )
-    }
+        }
+    )
 }
 
 /**
- * 细进度轨：MD3 LinearProgressIndicator（圆头轨、无轨道间隙）；
- * 动画值经 animateFloatAsState 一次性推进（开卷/进度刷新等一次性场景）
+ * 细进度轨：Wear Compose Material 3 LinearProgressIndicator（官方实现自带轨道与圆角端点）。
+ * 官方线性进度最小线宽 8dp，故此处取 8dp 作为腕上轨道厚度。
  */
 @Composable
 fun ProgressTrack(
@@ -150,25 +139,25 @@ fun ProgressTrack(
     modifier: Modifier = Modifier,
     trackColor: Color = MaterialTheme.colorScheme.surfaceVariant,
     fillColor: Color = MaterialTheme.colorScheme.primary,
-    height: Dp = 4.dp
+    height: Dp = 8.dp
 ) {
     val animated by animateFloatAsState(
         targetValue = progress.coerceIn(0f, 1f),
         animationSpec = tween(520, easing = WatchMotion.EnterEasing),
         label = "progress-track"
     )
-    LinearProgressIndicator(
+    WearLinearProgressIndicator(
         progress = { animated },
         modifier = modifier.fillMaxWidth().height(height),
-        color = fillColor,
-        trackColor = trackColor,
-        strokeCap = StrokeCap.Round,
-        gapSize = 0.dp,
-        drawStopIndicator = {}
+        strokeWidth = height.coerceAtLeast(8.dp),
+        colors = ProgressIndicatorDefaults.colors(
+            indicatorColor = fillColor,
+            trackColor = trackColor
+        )
     )
 }
 
-/** MD3 环形加载指示（indeterminate） */
+/** Wear Compose Material 3 环形加载指示（indeterminate） */
 @Composable
 fun LoadingIndicator(
     modifier: Modifier = Modifier,
@@ -177,19 +166,20 @@ fun LoadingIndicator(
     color: Color = MaterialTheme.colorScheme.primary,
     trackColor: Color = MaterialTheme.colorScheme.surfaceVariant
 ) {
-    CircularProgressIndicator(
+    WearCircularProgressIndicator(
         modifier = modifier.size(size),
-        color = color,
         strokeWidth = strokeWidth,
-        trackColor = trackColor,
-        strokeCap = StrokeCap.Round
+        colors = ProgressIndicatorDefaults.colors(
+            indicatorColor = color,
+            trackColor = trackColor
+        )
     )
 }
 
 /**
  * 格式角标（TXT / EPUB）：MD3 tonal badge（容器底 + 配对内容色，无描边）。
- * 填充走 MD3 容器角色（primaryContainer / secondaryContainer 对），
- * 替代旧版「同色 10% alpha 自底」——亮主题下自衬对不达标且产生影子令牌。
+ * Wear M3 无 Surface 组件，角标以背景色 + 文本自绘，填充走 MD3 容器角色
+ * （primaryContainer / secondaryContainer 对），替代旧版「同色 10% alpha 自底」。
  */
 @Composable
 fun TextBadge(
@@ -198,16 +188,16 @@ fun TextBadge(
     container: Color = MaterialTheme.colorScheme.primaryContainer,
     content: Color = MaterialTheme.colorScheme.onPrimaryContainer
 ) {
-    Surface(
-        modifier = modifier,
-        shape = WatchShapes.Badge,
-        color = container,
-        contentColor = content
+    Box(
+        modifier = modifier
+            .clip(WatchShapes.Badge)
+            .background(container),
+        contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.labelSmall,
+            style = WearMaterialTheme.typography.labelSmall,
             color = content,
             letterSpacing = 0.6.sp
         )

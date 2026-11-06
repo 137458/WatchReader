@@ -2,8 +2,10 @@ package com.watchreader
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -15,6 +17,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.ListHeader as WearListHeader
+import androidx.wear.compose.material3.Text as WearText
 
 /**
  * 阅读菜单 — 设计系统统一排版：分区卡片 + 发丝分隔 + 弹簧按压反馈
@@ -113,6 +117,18 @@ fun MenuScreen(
                 .padding(top = insets.top, bottom = insets.bottom),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            // ── 页面级列表头：Wear ListHeader ──
+            WearListHeader(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+                contentColor = androidx.compose.material3.MaterialTheme.colorScheme.primary
+            ) {
+                WearText(
+                    text = "阅读菜单",
+                    style = WearType.titleLarge,
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.primary
+                )
+            }
             ReadingControlBlock(
                 chapterTitle = chapterTitle,
                 readDurationSec = readDurationSec,

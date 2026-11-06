@@ -3,7 +3,6 @@ package com.watchreader
 import android.graphics.Typeface
 import android.text.TextUtils
 import android.util.TypedValue
-import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
@@ -12,16 +11,14 @@ import android.widget.ListView
 import android.widget.TextView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.ColorScheme
@@ -35,17 +32,26 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.wear.compose.material3.Button as WearButton
+import androidx.wear.compose.material3.CircularProgressIndicator as WearCircularProgressIndicator
+import androidx.wear.compose.material3.ListSubHeader as WearListSubHeader
+import androidx.wear.compose.material3.OutlinedButton as WearOutlinedButton
+import androidx.wear.compose.material3.Text as WearText
 
 /**
  * 书内全文搜索页 — 关键词逐章扫描全书，命中列表点击即精准跳转
  *
- * 结果列表复用原生 ListView + 表冠滚动管线（与目录/书签同架构）；
+ * 结果列表复用原生 ListView + 表冠滚动管线（与目录/书签同架构），不改为 Compose 列表；
  * 搜索进度由 ViewModel 增量上报，结果边扫边出。
+ *
+ * 组件口径：页面外壳沿用 WatchScreenScaffold 圆屏安全区；输入框保留 MD3 OutlinedTextField
+ * （Wear M3 未提供文本输入件）；操作键与结果计数改用 Wear M3 官方件
+ * （Button / OutlinedButton / ListSubHeader / CircularProgressIndicator / Text）。
  */
 @Composable
 fun SearchScreen(
@@ -72,112 +78,113 @@ fun SearchScreen(
     // 搜索词由 VM 持有（与结果同生命周期）：返回后再进本页仍可微调关键词重查
     var searched by remember { mutableStateOf(false) }
 
-    WatchScreenScaffold(
-        // 右滑退出搜索页（与返回键同一处理）
-        onDismiss = onBack,
-        fades = WatchScreenFades(top = 48.dp, bottom = 44.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 52.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+    WatchReaderWearTheme {
+        WatchScreenScaffold(
+            // 右滑退出搜索页（与返回键同一处理）
+            onDismiss = onBack,
+            fades = WatchScreenFades(top = 48.dp, bottom = 44.dp)
         ) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = {
-                    Text("搜索正文关键词", style = MaterialTheme.typography.bodyMedium)
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Default.Search,
-                        contentDescription = null,
-                        tint = colorScheme.onSurfaceVariant
-                    )
-                },
-                textStyle = MaterialTheme.typography.bodyMedium,
-                shape = MaterialTheme.shapes.large,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = {
-                    if (query.isNotBlank()) onSearch(query)
-                })
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PillButton(
-                    label = "搜索",
-                    modifier = Modifier.weight(1f),
-                    emphasis = PillEmphasis.Primary,
-                    enabled = query.isNotBlank() && !isSearching && chapters.isNotEmpty()
-                ) {
-                    searched = true
-                    onSearch(query)
-                }
-                PillButton(
-                    label = "‹ 返回",
-                    modifier = Modifier.weight(1f),
-                    onClick = onBack
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 24.dp, vertical = 52.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = {
+                        Text("搜索正文关键词", style = MaterialTheme.typography.bodyMedium)
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = colorScheme.onSurfaceVariant
+                        )
+                    },
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    shape = MaterialTheme.shapes.large,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = {
+                        if (query.isNotBlank()) onSearch(query)
+                    })
                 )
-            }
 
-            when {
-                // 有命中即出列表（边扫边出），扫描中附进度行
-                searchResults.isNotEmpty() -> {
-                    Text(
-                        text = buildString {
-                            append("找到 ${searchResults.size} 处")
-                            if (searchResults.size >= BookSearchEngine.MAX_RESULTS) append("（已达上限）")
-                            if (isSearching) append(" · 扫描 $scannedChapters/$totalChapters 章")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WearButton(
+                        onClick = {
+                            searched = true
+                            onSearch(query)
                         },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = colorScheme.onSurfaceVariant
+                        modifier = Modifier.weight(1f),
+                        enabled = query.isNotBlank() && !isSearching && chapters.isNotEmpty(),
+                        label = { WearText("搜索") }
                     )
-                    SearchHitListView(
-                        hits = searchResults,
-                        bgColor = bgColor,
-                        onHitClick = onHitClick,
-                        modifier = Modifier.weight(1f)
+                    WearOutlinedButton(
+                        onClick = onBack,
+                        modifier = Modifier.weight(1f),
+                        label = { WearText("‹ 返回") }
                     )
                 }
 
-                isSearching -> {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        LoadingIndicator(size = 26.dp, strokeWidth = 2.4.dp)
-                        Text(
-                            text = "正在扫描 $scannedChapters/$totalChapters 章…",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colorScheme.onSurfaceVariant
+                when {
+                    // 有命中即出列表（边扫边出），扫描中附进度行
+                    searchResults.isNotEmpty() -> {
+                        WearListSubHeader(
+                            label = {
+                                WearText(
+                                    text = buildString {
+                                        append("找到 ${searchResults.size} 处")
+                                        if (searchResults.size >= BookSearchEngine.MAX_RESULTS) append("（已达上限）")
+                                        if (isSearching) append(" · 扫描 $scannedChapters/$totalChapters 章")
+                                    },
+                                    color = colorScheme.onSurfaceVariant
+                                )
+                            }
+                        )
+                        SearchHitListView(
+                            hits = searchResults,
+                            bgColor = bgColor,
+                            onHitClick = onHitClick,
+                            modifier = Modifier.weight(1f)
                         )
                     }
-                }
 
-                searched -> {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = "未找到“${query.trim()}”",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = "换个关键词试试",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colorScheme.onSurfaceVariant
-                        )
+                    isSearching -> {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            WearCircularProgressIndicator(modifier = Modifier.size(26.dp))
+                            WearText(
+                                text = "正在扫描 $scannedChapters/$totalChapters 章…",
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    searched -> {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            WearText(
+                                text = "未找到“${query.trim()}”",
+                                color = colorScheme.onSurfaceVariant
+                            )
+                            WearText(
+                                text = "换个关键词试试",
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
         }
-
     }
 }
 
