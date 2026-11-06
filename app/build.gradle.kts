@@ -71,6 +71,8 @@ dependencies {
     // 提供 Card / Button / Stepper / Slider / ScrollIndicator / ScalingLazyColumn 等官方组件，
     // 用于替代手写件；配色与排版仍由本项目 MaterialTheme 令牌映射注入。
     implementation("androidx.wear.compose:compose-material3:1.7.1")
+    // 与 material3 同版本火车显式声明，避免传递依赖版本漂移
+    implementation("androidx.wear.compose:compose-foundation:1.7.1")
     // 基础图标集：仅使用 core 的少量字形，避免引入体积巨大的 extended
     implementation("androidx.compose.material:material-icons-core")
 

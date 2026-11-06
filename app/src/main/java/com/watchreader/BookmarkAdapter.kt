@@ -235,10 +235,11 @@ internal class BookmarkListAdapter(
             )
             gravity = Gravity.CENTER_VERTICAL
             minimumHeight = (BookmarkRowStyle.TOUCH_DP * density).toInt()
-            setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
+            setPadding((12 * density).toInt(), (10 * density).toInt(), (12 * density).toInt(), (10 * density).toInt())
         }
         val background = android.graphics.drawable.GradientDrawable().apply {
-            cornerRadius = 12 * density
+            // 与 Wear M3 Card 默认大圆角对齐，去掉 12dp 的手工小圆角
+            cornerRadius = 20 * density
         }
         container.background = background
 

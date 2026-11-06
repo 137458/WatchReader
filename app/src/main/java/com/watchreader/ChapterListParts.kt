@@ -4,29 +4,19 @@ import android.content.Context
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ListView
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.ButtonDefaults as WearButtonDefaults
+import androidx.wear.compose.material3.FilledTonalButton as WearFilledTonalButton
+import androidx.wear.compose.material3.MaterialTheme as WearMaterialTheme
+import androidx.wear.compose.material3.OutlinedButton as WearOutlinedButton
+import androidx.wear.compose.material3.Text as WearText
 
 /**
  * 章节目录页的原生列表装配 + Tab 胶囊。
@@ -137,48 +127,35 @@ internal fun createBookmarkListView(
 }
 
 /**
- * 顶部 Tab 胶囊：选中态填充与文字颜色双通道动画，填充绘制于 drawBehind（仅绘制层失效）
+ * 顶部页签：官方 Wear M3 按钮（选中 FilledTonalButton，未选中 OutlinedButton）
+ *
+ * 尺寸、圆角、按压与无障碍语义全部走组件默认值；外层不再拼胶囊底与描边。
  */
 @Composable
 internal fun ChapterTabCapsule(label: String, selected: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    val pillAlpha by animateFloatAsState(
-        targetValue = if (selected) 1f else 0f,
-        animationSpec = tween(WatchMotion.DUR_SWAP_IN),
-        label = "tab-pill"
-    )
-    val textColor by animateColorAsState(
-        targetValue = if (selected) colors.onPrimary else colors.onSurfaceVariant,
-        animationSpec = tween(WatchMotion.DUR_SWAP_IN),
-        label = "tab-text"
-    )
-    val interaction = remember { MutableInteractionSource() }
-    Box(
-        modifier = Modifier
-            .heightIn(min = 48.dp)
-            .pressScale(interaction, pressedScale = 0.97f)
-            .clip(WatchShapes.Pill)
-            .drawBehind {
-                if (pillAlpha > 0.01f) {
-                    drawRoundRect(
-                        color = colors.primary.copy(alpha = pillAlpha),
-                        cornerRadius = CornerRadius(size.height / 2f)
-                    )
-                }
-            }
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                role = Role.Tab,
-                onClick = onClick
-            )
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
+    val content: @Composable RowScope.() -> Unit = {
+        WearText(
             text = label,
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-            color = textColor
+            style = WearMaterialTheme.typography.labelLarge,
+            maxLines = 1
+        )
+    }
+    if (selected) {
+        WearFilledTonalButton(
+            onClick = onClick,
+            modifier = Modifier.heightIn(min = 48.dp),
+            colors = WearButtonDefaults.buttonColors(
+                containerColor = colors.primary,
+                contentColor = colors.onPrimary
+            ),
+            content = content
+        )
+    } else {
+        WearOutlinedButton(
+            onClick = onClick,
+            modifier = Modifier.heightIn(min = 48.dp),
+            content = content
         )
     }
 }

@@ -190,13 +190,13 @@ fun TextBadge(
 ) {
     Box(
         modifier = modifier
-            .clip(WatchShapes.Badge)
+            .clip(WatchShapes.Pill)
             .background(container),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             style = WearMaterialTheme.typography.labelSmall,
             color = content,
             letterSpacing = 0.6.sp

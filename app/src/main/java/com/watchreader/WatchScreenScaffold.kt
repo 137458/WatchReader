@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.wear.compose.material3.AppScaffold
 import kotlin.math.max
 
 /**
@@ -158,13 +159,16 @@ data class WatchScreenFades(
 }
 
 /**
- * 圆屏页面壳：右滑退出 + 上下羽化 + 底部操作条槽
+ * 圆屏页面壳：右滑退出 + 上下羽化 + 底部操作条槽 + 官方 TimeText
  *
  * 五个页面此前各自重复同一段「Box(fillMaxSize) + swipeDismissBack + 两个 EdgeFadeMask +
  * EdgeActionBar」装配（约 12~40 行/页），差异只有遮罩高度与操作条内容。壳把这些
  * 「屏幕级 chrome」收成一处，滚动容器与内边距仍留在各页内部 —— 壳不规定布局范式，
  * 只保证所有页面在圆屏上的边缘行为一致。删除它会退回五份平行实现，
  * 任何一次行为调整（例如遮罩挡不挡操作条）都要改五遍。
+ *
+ * 顶栏时钟由官方 [AppScaffold] 的 TimeText 槽位绘制：内边距、字体与圆屏弧口对齐
+ * 都交给 Wear M3 默认实现，页面只保留内容安全区（[WatchSafeArea]）。
  */
 @Composable
 fun WatchScreenScaffold(
@@ -177,30 +181,32 @@ fun WatchScreenScaffold(
     overlay: (@Composable BoxScope.() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .swipeDismissBack(enabled = swipeEnabled, onDismiss = onDismiss),
-        contentAlignment = contentAlignment
-    ) {
-        content()
-        // 遮罩压在内容之上、操作条之下：否则主卡文字会盖住渐隐，边缘出现硬切线
-        fades.top?.let {
-            EdgeFadeMask(
-                edge = Alignment.Top,
-                modifier = Modifier.align(Alignment.TopCenter),
-                height = it
-            )
+    AppScaffold(modifier = modifier.fillMaxSize()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .swipeDismissBack(enabled = swipeEnabled, onDismiss = onDismiss),
+            contentAlignment = contentAlignment
+        ) {
+            content()
+            // 遮罩压在内容之上、操作条之下：否则主卡文字会盖住渐隐，边缘出现硬切线
+            fades.top?.let {
+                EdgeFadeMask(
+                    edge = Alignment.Top,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                    height = it
+                )
+            }
+            fades.bottom?.let {
+                EdgeFadeMask(
+                    edge = Alignment.Bottom,
+                    modifier = Modifier.align(Alignment.BottomCenter),
+                    height = it
+                )
+            }
+            actionBar?.invoke(this)
+            // 全屏浮层必须是最后一层：否则会被遮罩与操作条压住，热区也抢不过操作条
+            overlay?.invoke(this)
         }
-        fades.bottom?.let {
-            EdgeFadeMask(
-                edge = Alignment.Bottom,
-                modifier = Modifier.align(Alignment.BottomCenter),
-                height = it
-            )
-        }
-        actionBar?.invoke(this)
-        // 全屏浮层必须是最后一层：否则会被遮罩与操作条压住，热区也抢不过操作条
-        overlay?.invoke(this)
     }
 }

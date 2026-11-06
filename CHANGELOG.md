@@ -3,7 +3,8 @@
 ## [未发布]
 
 ### 变更
-- 圆屏界面改用官方 Wear Compose Material 3 组件树：新增依赖 `androidx.wear.compose:compose-material3:1.7.1`，界面主题改为标准 Material 3 与 Wear Material 3 双层嵌套，共用同一套配色、字号与形状令牌；按钮、卡片、进度指示与列表骨架改由官方件承担，圆屏安全区壳、弧形扇带操作条、弧形章节头与弧形寻道仍自持。
+- 界面 chrome 统一到官方 Wear Material 3：页面壳接入 `AppScaffold` + `TimeText`；底部弧形扇带操作条改为官方 `Button` / `FilledTonalButton` / `OutlinedButton` 按钮行；目录页签改为官方 `FilledTonalButton` / `OutlinedButton`；目录与书签行统一 20dp 大圆角、52dp 行高与胶囊标签；删除手绘弧形几何（`ArcButtonGeometry`）及其单测。阅读页原生正文、弧形章节头与侧栏时钟保持不变。
+- 圆屏界面改用官方 Wear Compose Material 3 组件树：新增依赖 `androidx.wear.compose:compose-material3:1.7.1`，界面主题改为标准 Material 3 与 Wear Material 3 双层嵌套，共用同一套配色、字号与形状令牌；按钮、卡片、进度指示与列表骨架改由官方件承担，圆屏安全区壳、弧形扇带操作条、弧形章节头与弧形寻道仍自持。显式声明同版本 `androidx.wear.compose:compose-foundation:1.7.1`，避免传递依赖漂移。
 
 ### 修复
 - 修复阅读页横向滑动 / 斜向滚动被误判成右滑返回的问题：右滑识别先越过系统 touchSlop 且水平位移大于垂直位移 1.2 倍才开始消费事件，起手阶段滚动容器拿到完整事件流；阅读页横向交互区另加系统手势排除，滚动与翻页优先于系统边缘返回手势，两侧保留窄边给系统返回。

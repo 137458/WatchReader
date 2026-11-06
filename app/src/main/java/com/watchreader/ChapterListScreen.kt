@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Row
@@ -254,17 +255,13 @@ fun ChapterListScreen(
             }
         }
 
-        // 顶部 Tab 切换胶囊（滑动式指示：填充与文字颜色双通道动画，仅绘制层失效）。
-        // 顶部 44dp 起：18dp 处弦宽仅 ~124dp 装不下双胶囊，外端贴弧甚至点不到；
-        // 胶囊最小高度 48dp，列表顶部留白同步上移
+        // 顶部页签：官方 Wear M3 按钮并排，不再自拼胶囊底与描边。
+        // 顶部 44dp 起：18dp 处弦宽仅 ~124dp 装不下双按钮；按钮最小高度 48dp，列表顶部留白同步上移
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = safeInsets.top)
-                .clip(WatchShapes.Pill)
-                .background(colorScheme.surfaceContainerHigh)
-                .border(1.dp, colorScheme.outlineVariant, WatchShapes.Pill)
-                .padding(2.dp),
+                .padding(top = safeInsets.top),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             ChapterTabCapsule("目录 (${chapters.size})", selected = selectedTab == 0) { selectedTab = 0 }

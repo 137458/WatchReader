@@ -89,11 +89,11 @@ internal class ChapterListAdapter(
     private fun cachedDrawables(): Pair<android.graphics.drawable.GradientDrawable, android.graphics.drawable.GradientDrawable> {
         if (drawableCacheKey !== colorScheme || cachedNormalBg == null) {
             cachedNormalBg = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = 12 * density
+                cornerRadius = 20 * density
                 setColor(colorScheme.surfaceContainerHigh.toArgb())
             }
             cachedCurrentBg = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = 12 * density
+                cornerRadius = 20 * density
                 // 当前章走预混容器角色：primaryContainer 实底 + primary 强调描边（零 alpha 糊底）
                 setColor(colorScheme.primaryContainer.toArgb())
                 setStroke((1.5f * density).toInt(), colorScheme.primary.toArgb())
@@ -125,8 +125,8 @@ internal class ChapterListAdapter(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
-                minimumHeight = (48 * density).toInt()
-                setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
+                minimumHeight = (52 * density).toInt()
+                setPadding((12 * density).toInt(), (10 * density).toInt(), (12 * density).toInt(), (10 * density).toInt())
             }
 
             val textLayout = LinearLayout(context).apply {
@@ -159,7 +159,8 @@ internal class ChapterListAdapter(
                 background = android.graphics.drawable.GradientDrawable().apply {
                     // 标签实底 primary + 配对 onPrimary 文字（预混角色，替代 25% alpha 糊底）
                     setColor(colorScheme.primary.toArgb())
-                    cornerRadius = 6 * density
+                    // 胶囊标签：圆角取行内文字高度的半径，替代原 6dp 小圆角
+                    cornerRadius = 9 * density
                 }
             }
             textLayout.addView(tagTv)

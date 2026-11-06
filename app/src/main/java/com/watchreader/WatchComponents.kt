@@ -127,7 +127,7 @@ fun EmptyStateBlock(
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         SectionLabel(text = overline)
         Text(
