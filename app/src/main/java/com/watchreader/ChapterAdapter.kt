@@ -10,6 +10,7 @@ import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.TextView
 import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.toArgb
@@ -22,6 +23,12 @@ internal fun applyListViewBg(view: View, color: Int) {
     val current = (view.background as? android.graphics.drawable.ColorDrawable)?.color
     if (current != color) {
         view.setBackgroundColor(color)
+    }
+    // 行间距由「背景色 divider」绘制，主题切换不同步会露出旧主题色
+    val list = view as? ListView
+    val dividerColor = (list?.divider as? android.graphics.drawable.ColorDrawable)?.color
+    if (list != null && dividerColor != color) {
+        list.divider = android.graphics.drawable.ColorDrawable(color)
     }
 }
 
@@ -119,7 +126,7 @@ internal class ChapterListAdapter(
                     ViewGroup.LayoutParams.WRAP_CONTENT
                 )
                 minimumHeight = (48 * density).toInt()
-                setPadding((11 * density).toInt(), (8 * density).toInt(), (10 * density).toInt(), (8 * density).toInt())
+                setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
             }
 
             val textLayout = LinearLayout(context).apply {
@@ -131,14 +138,14 @@ internal class ChapterListAdapter(
             }
 
             val indicatorTv = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
                 typeface = Typeface.DEFAULT_BOLD
                 setPadding(0, 0, (5 * density).toInt(), 0)
             }
             textLayout.addView(indicatorTv)
 
             val titleTv = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
                 maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -146,7 +153,7 @@ internal class ChapterListAdapter(
             textLayout.addView(titleTv)
 
             val tagTv = TextView(context).apply {
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
                 typeface = Typeface.DEFAULT_BOLD
                 setPadding((6 * density).toInt(), (1.5f * density).toInt(), (6 * density).toInt(), (1.5f * density).toInt())
                 background = android.graphics.drawable.GradientDrawable().apply {

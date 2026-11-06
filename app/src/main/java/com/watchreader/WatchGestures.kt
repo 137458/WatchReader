@@ -18,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -68,13 +69,19 @@ fun rememberTickHaptic(): () -> Unit {
  * 表冠滚动目标注册：Activity 顶层管线直接寻址页面滚动（连续跟手 + 距离门限微振），
  * 替代依赖原生焦点存活的 1dp 隐形锚点——后者在焦点迁移后会使表冠事件丢失。
  * [key] 变化时重新注册（如滚动状态对象更换）；离开组合自动注销。
+ * [key] 为 null 表示本页暂不接管表冠（被覆盖页压顶时让出槽位），由覆盖页自己注册。
  */
 @Composable
 fun rememberCrownScrollTarget(key: Any?, onDelta: (Float) -> Boolean) {
+    val latestOnDelta = rememberUpdatedState(onDelta)
     DisposableEffect(key) {
-        val target = CrownScrollTarget(onDelta)
-        CrownScrollTargetRegistry.activate(target)
-        onDispose { CrownScrollTargetRegistry.deactivate(target) }
+        if (key == null) {
+            onDispose { }
+        } else {
+            val target = CrownScrollTarget { delta -> latestOnDelta.value(delta) }
+            CrownScrollTargetRegistry.activate(target)
+            onDispose { CrownScrollTargetRegistry.deactivate(target) }
+        }
     }
 }
 
@@ -109,6 +116,14 @@ class SwipeBackArbiter(private val thresholdPx: Float) {
 }
 
 /**
+ * 水平主导比例：右滑判定要求水平位移明显大于垂直位移
+ *
+ * 收口前只判「abs(dx) > abs(dy)」，45° 斜滑与滚动列表起手时的轻微横移都会被算作右滑；
+ * 1.2 倍留给手抖余量，同时保证纵向滚动一旦确立主导就不会被抢走。
+ */
+private const val HORIZONTAL_DOMINANCE = 1.2f
+
+/**
  * 右滑退出（Wear 运动口径的本应用自持实现）：Google 对 Wear 侧滑返回的定义是
  * 「内容跟手平移 + 未越门限松手弹回 + 越门限整屏滑出」，动画属于手势本身而非事后补帧。
  * ADR-001 不引 androidx.wear.compose，故在 WatchGestures 内自持复刻同一运动语义。
@@ -116,6 +131,9 @@ class SwipeBackArbiter(private val thresholdPx: Float) {
  * 逐帧只改 graphicsLayer（平移与 alpha），不触发重组；走 EventPass.Initial 在子节点之前
  * 取得位移，只认水平主导，竖向滚动与行内点按全程不受影响；[enabled] 为 false 时整条
  * 识别器停摆（浮层开启期由浮层自己接右滑，宿主页面让位，避免一次滑动同时关浮层又退页）。
+ *
+ * 起手必须先过系统 touchSlop 且形成水平主导才开始消费事件：收口前从第一个水平像素
+ * 就开始 consume，横向翻页 / 斜向滚动的微小横移会频繁误判成右滑返回。
  */
 @Composable
 fun Modifier.swipeDismissBack(
@@ -160,19 +178,30 @@ fun Modifier.swipeDismissBack(
         .pointerInput(enabled, thresholdPx) {
             if (!enabled) return@pointerInput
             val width = size.width.toFloat()
+            val slop = viewConfiguration.touchSlop
             awaitEachGesture {
                 awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                 val arbiter = SwipeBackArbiter(thresholdPx)
                 var dragged = false
                 var fired = false
+                var armed = false
+                var totalDx = 0f
+                var totalDy = 0f
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
                     val change = event.changes.firstOrNull() ?: continue
                     if (!change.pressed) break
-                    if (arbiter.onDrag(
-                            change.position.x - change.previousPosition.x,
-                            change.position.y - change.previousPosition.y
-                        )) {
+                    val dx = change.position.x - change.previousPosition.x
+                    val dy = change.position.y - change.previousPosition.y
+                    if (!armed) {
+                        totalDx += dx
+                        totalDy += dy
+                        // 门限前只观察不消费：滚动容器拿得到完整事件流
+                        if (abs(totalDx) <= slop) continue
+                        if (abs(totalDx) <= abs(totalDy) * HORIZONTAL_DOMINANCE) continue
+                        armed = true
+                    }
+                    if (arbiter.onDrag(dx, dy)) {
                         fired = true
                         change.consume()
                         break

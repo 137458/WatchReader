@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 
@@ -58,6 +56,8 @@ fun ChapterListScreen(
 
     val colorScheme = MaterialTheme.colorScheme
     val bgColor = colorScheme.background.toArgb()
+    // 页面安全区：顶部 Tab 与列表内边距共用同一份解析结果（系统 inset 与圆屏几何取大）
+    val safeInsets = rememberWatchSafeInsets()
 
     val noIndication = remember { MutableInteractionSource() }
     var currentListView by remember { mutableStateOf<ListView?>(null) }
@@ -184,26 +184,40 @@ fun ChapterListScreen(
     ) {
         if (selectedTab == 0) {
             // ── 目录模式：原生 ListView 核心 ──
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { context ->
-                    createChapterListView(
-                        context = context,
-                        chapters = chapters,
-                        currentChapterIndex = currentChapterIndex,
-                        colorScheme = colorScheme,
-                        onChapterClick = onChapterClick
-                    ).also { currentListView = it }
-                },
-                update = { listView ->
-                    currentListView = listView
-                    applyListViewBg(listView, bgColor)
-                    // 重绘判重收进适配器：章节表/当前章/配色都没变时不会整页 invalidate
-                    // （父级每次重组都会执行 update，如阅读时长 tick）
-                    (listView.adapter as? ChapterListAdapter)
-                        ?.setData(chapters, currentChapterIndex, colorScheme)
+            if (chapters.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    EmptyStateBlock(
+                        overline = "目录",
+                        title = "还没有章节",
+                        hint = "返回阅读页等目录加载完成"
+                    )
                 }
-            )
+            } else {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { context ->
+                        createChapterListView(
+                            context = context,
+                            insets = safeInsets,
+                            chapters = chapters,
+                            currentChapterIndex = currentChapterIndex,
+                            colorScheme = colorScheme,
+                            onChapterClick = onChapterClick
+                        ).also { currentListView = it }
+                    },
+                    update = { listView ->
+                        currentListView = listView
+                        applyListViewBg(listView, bgColor)
+                        // 重绘判重收进适配器：章节表/当前章/配色都没变时不会整页 invalidate
+                        // （父级每次重组都会执行 update，如阅读时长 tick）
+                        (listView.adapter as? ChapterListAdapter)
+                            ?.setData(chapters, currentChapterIndex, colorScheme)
+                    }
+                )
+            }
         } else {
             // ── 书签模式：原生卡片 ListView ──
             if (bookmarks.isEmpty()) {
@@ -211,11 +225,10 @@ fun ChapterListScreen(
                     modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "暂无书签\n点击下方“存为书签”保存当前位置",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
+                    EmptyStateBlock(
+                        overline = "书签",
+                        title = "还没有书签",
+                        hint = "阅读时点击下方“存为书签”保存当前位置"
                     )
                 }
             } else {
@@ -224,6 +237,7 @@ fun ChapterListScreen(
                     factory = { context ->
                         createBookmarkListView(
                             context = context,
+                            insets = safeInsets,
                             bookmarks = bookmarks,
                             colorScheme = colorScheme,
                             onBookmarkClick = onBookmarkClick,
@@ -246,7 +260,7 @@ fun ChapterListScreen(
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 44.dp)
+                .padding(top = safeInsets.top)
                 .clip(WatchShapes.Pill)
                 .background(colorScheme.surfaceContainerHigh)
                 .border(1.dp, colorScheme.outlineVariant, WatchShapes.Pill)

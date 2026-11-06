@@ -38,6 +38,10 @@ internal class ReaderViewHolder(
     var prevBackground: GradientDrawable? = null
     var nextBackground: GradientDrawable? = null
 
+    // 已应用安全区：系统 inset / 屏幕几何变化时才重设 ScrollView 内边距。
+    // 收口前上下左右留白写死为 24/52/56dp，系统状态栏或方屏 cutout 无法参与
+    var appliedInsets: WatchSafeInsets? = null
+
     // 已应用外观（唯一守卫状态）：chapters 为不稳定 List，阅读页无法跳过父级重组，update 每次都会执行；
     // TextView 的 setTextSize / setTextColor / typeface 各自都会经 checkForRelayout() 同步重建整章
     // StaticLayout，没有守卫会把"阅读时长 10s tick / 底部百分比整数跳变"这类低频重组转化为
@@ -96,9 +100,13 @@ internal class ReaderViewHolder(
  * 只做"一次性装配"：所有随状态变化的内容由 [bindChapterData] / [applyChapterStyles] 增量下发，
  * 因此这里不读也不写任何 Compose 状态。调用方负责把返回值挂到 [ScrollView.tag]，
  * 并把 [ReaderViewHolder.autoScrollEngine] 同步进自己的生命周期引用。
+ *
+ * @param insets 组合层解析好的安全区（圆屏几何 + 系统 inset 取大），
+ *   原生树不再自带裸 dp，避免两套留白口径打架
  */
 internal fun createReaderViewHolder(
     ctx: Context,
+    insets: WatchSafeInsets,
     backgroundArgb: Int,
     chromeArgb: Int,
     bodyColorArgb: Int,
@@ -110,9 +118,6 @@ internal fun createReaderViewHolder(
     onNextChapter: () -> Unit
 ): ReaderViewHolder {
     val density = ctx.resources.displayMetrics.density
-    val padH = (24 * density).toInt() // 466x466 圆屏安全区域边距
-    val padTop = (52 * density).toInt()
-    val padBottom = (56 * density).toInt()
 
     val scrollView = ScrollView(ctx).apply {
         layoutParams = ViewGroup.LayoutParams(
@@ -124,7 +129,6 @@ internal fun createReaderViewHolder(
         isVerticalScrollBarEnabled = false
         overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
         setBackgroundColor(backgroundArgb)
-        setPadding(padH, padTop, padH, padBottom)
         clipToPadding = false
     }
 
@@ -136,10 +140,10 @@ internal fun createReaderViewHolder(
         )
     }
 
-    // 1. 上一章按钮卡片
+    // 1. 上一章按钮卡片（与下一章卡片同字号 / 同内边距 / 同圆角，仅文字色区分主次）
     var prevBackgroundRef: GradientDrawable? = null
     val prevTv = TextView(ctx).apply {
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         setTextColor(metaColorArgb)
         typeface = Typeface.DEFAULT_BOLD
         gravity = Gravity.CENTER
@@ -151,7 +155,7 @@ internal fun createReaderViewHolder(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
-            setMargins(0, (4 * density).toInt(), 0, (14 * density).toInt())
+            setMargins(0, 0, 0, (12 * density).toInt())
         }
         minimumHeight = (48 * density).toInt()
         background = GradientDrawable().apply {
@@ -172,7 +176,7 @@ internal fun createReaderViewHolder(
         setTextSize(TypedValue.COMPLEX_UNIT_SP, (fontSizeSp + 2).toFloat())
         setTextColor(titleColorArgb)
         typeface = Typeface.DEFAULT_BOLD
-        setPadding(0, (10 * density).toInt(), 0, (10 * density).toInt())
+        setPadding(0, (10 * density).toInt(), 0, (12 * density).toInt())
     }
     container.addView(titleTv)
 
@@ -182,7 +186,7 @@ internal fun createReaderViewHolder(
         setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSizeSp.toFloat())
         setTextColor(bodyColorArgb)
         setLineSpacing(0f, LineSpacingMode.STANDARD.multiplier)
-        setPadding(0, 0, 0, (12 * density).toInt())
+        setPadding(0, 0, 0, (16 * density).toInt())
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             justificationMode = android.graphics.text.LineBreaker.JUSTIFICATION_MODE_INTER_WORD
         } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -207,7 +211,7 @@ internal fun createReaderViewHolder(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ).apply {
-            setMargins(0, (14 * density).toInt(), 0, (20 * density).toInt())
+            setMargins(0, 0, 0, (18 * density).toInt())
         }
         minimumHeight = (48 * density).toInt()
         background = GradientDrawable().apply {
@@ -222,14 +226,15 @@ internal fun createReaderViewHolder(
     container.addView(nextBtn)
     nextBackgroundRef = nextBtn.background as GradientDrawable
 
-    // 5. 全书完结指示
+    // 5. 全书完结指示（与正文末行同呼吸节奏：上 20 / 下 24，字距放大以免像半截正文）
     val endTv = TextView(ctx).apply {
         tag = "end"
         text = "— 全书完 —"
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
         setTextColor(metaColorArgb)
+        letterSpacing = 0.08f
         gravity = Gravity.CENTER
-        setPadding(0, (20 * density).toInt(), 0, (20 * density).toInt())
+        setPadding(0, (20 * density).toInt(), 0, (24 * density).toInt())
     }
     container.addView(endTv)
 
@@ -256,6 +261,7 @@ internal fun createReaderViewHolder(
     )
     holder.prevBackground = prevBackgroundRef
     holder.nextBackground = nextBackgroundRef
+    applyReaderPaneInsets(holder, insets)
     // 工厂已直接写到 View 上的初值：声明为"已应用"，首次绑定只补下发工厂未设置的项
     // （行距档位、字距与正文字面），避免无变化时仍然重建整章 StaticLayout
     val factoryAppearance = ReaderPaneAppearance(
@@ -270,6 +276,23 @@ internal fun createReaderViewHolder(
     holder.appliedAppearance = factoryAppearance
     scrollView.tag = holder
     return holder
+}
+
+/**
+ * 安全区落盘：只在解析结果真正变化时重设内边距
+ *
+ * 内边距变化会触发 ScrollView 重新 measure，按旧值重复写会在每次 update 都白跑一次布局。
+ */
+internal fun applyReaderPaneInsets(holder: ReaderViewHolder, insets: WatchSafeInsets) {
+    if (holder.appliedInsets == insets) return
+    holder.appliedInsets = insets
+    val density = holder.scrollView.resources.displayMetrics.density
+    holder.scrollView.setPadding(
+        (insets.horizontal.value * density).toInt(),
+        (insets.top.value * density).toInt(),
+        (insets.horizontal.value * density).toInt(),
+        (insets.bottom.value * density).toInt()
+    )
 }
 
 /**
@@ -300,7 +323,7 @@ internal fun bindChapterData(holder: ReaderViewHolder, content: ChapterContent?)
     // 1. 上一章
     if (content.hasPrevChapter) {
         holder.prevBtn.visibility = View.VISIBLE
-        holder.prevTv.text = "‹ 上一章: ${content.prevChapterTitle}"
+        holder.prevTv.text = "‹ 上一章 · ${content.prevChapterTitle}"
     } else {
         holder.prevBtn.visibility = View.GONE
     }
@@ -308,7 +331,7 @@ internal fun bindChapterData(holder: ReaderViewHolder, content: ChapterContent?)
     // 2. 章节标题（无上一章按钮时增加顶部安全避让间距）
     val density = holder.scrollView.context.resources.displayMetrics.density
     val topPad = (ReaderPaneLogic.chapterTitleTopPaddingDp(content.hasPrevChapter) * density).toInt()
-    holder.titleTv.setPadding(0, topPad, 0, (10 * density).toInt())
+    holder.titleTv.setPadding(0, topPad, 0, (12 * density).toInt())
     holder.titleTv.text = content.title
 
     // 3. 章节正文（单 TextLayout 一体排版；样式由 applyChapterStyles 差量下发）
@@ -317,7 +340,7 @@ internal fun bindChapterData(holder: ReaderViewHolder, content: ChapterContent?)
     // 4. 下一章 / 全书完
     if (content.hasNextChapter) {
         holder.nextBtn.visibility = View.VISIBLE
-        holder.nextTv.text = "下一章: ${content.nextChapterTitle} ›"
+        holder.nextTv.text = "下一章 · ${content.nextChapterTitle} ›"
         holder.endTv.visibility = View.GONE
     } else {
         holder.nextBtn.visibility = View.GONE
@@ -473,6 +496,7 @@ internal fun safeRestoreScrollPosition(
  */
 internal fun updateReaderPane(
     scrollView: ScrollView,
+    insets: WatchSafeInsets,
     covered: Boolean,
     isAutoScrolling: Boolean,
     autoScrollSpeed: Float,
@@ -482,6 +506,9 @@ internal fun updateReaderPane(
     readingPosition: ReadingPosition
 ) {
     val holder = scrollView.tag as? ReaderViewHolder ?: return
+
+    // 安全区先于内容下发：旋转屏 / 状态栏变化后，排版宽度要用新的内边距重新度量
+    applyReaderPaneInsets(holder, insets)
 
     // 被覆盖页压顶：原生视图转 INVISIBLE 退出绘制但保持挂载 ——
     // ViewGroup 跳过不可见子节点，隐藏期零绘制开销；返回阅读时零重建，

@@ -2,13 +2,17 @@ package com.watchreader
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.max
@@ -32,6 +36,12 @@ object WatchSafeArea {
     /** 页面左右约定留白 */
     const val HORIZONTAL_PADDING_DP = 24f
 
+    /** 阅读页顶部约定留白：比页面级 44dp 多让 8dp，给弧形章节名留出气口 */
+    const val READER_TOP_INSET_DP = 52f
+
+    /** 阅读页底部约定留白：正文末行不贴弧形进度字，也不需要避让操作条 */
+    const val READER_BOTTOM_INSET_DP = 56f
+
     private const val SQRT2 = 1.4142135f
 
     /** 正方形屏幕的内接正方形边长（与入参同单位） */
@@ -44,19 +54,36 @@ object WatchSafeArea {
     fun minInsetDp(screenPx: Float, density: Float): Float =
         if (density <= 0f) 0f else arcMargin(screenPx) / density
 
-    /** 顶部留白：约定值与几何下限取大 */
+    /** 顶部留白：约定值、几何下限与系统安全区三者取大 */
     fun topInsetDp(
         screenPx: Float,
         density: Float,
-        preferredDp: Float = DEFAULT_TOP_INSET_DP
-    ): Float = max(preferredDp, minInsetDp(screenPx, density))
+        preferredDp: Float = DEFAULT_TOP_INSET_DP,
+        systemInsetDp: Float = 0f
+    ): Float = contentInsetDp(preferredDp, minInsetDp(screenPx, density), systemInsetDp)
 
-    /** 底部留白：约定值与几何下限取大 */
+    /** 底部留白：约定值、几何下限与系统安全区三者取大 */
     fun bottomInsetDp(
         screenPx: Float,
         density: Float,
-        preferredDp: Float = DEFAULT_BOTTOM_INSET_DP
-    ): Float = max(preferredDp, minInsetDp(screenPx, density))
+        preferredDp: Float = DEFAULT_BOTTOM_INSET_DP,
+        systemInsetDp: Float = 0f
+    ): Float = contentInsetDp(preferredDp, minInsetDp(screenPx, density), systemInsetDp)
+
+    /** 左右留白：固定约定值与系统安全区取大 */
+    fun horizontalInsetDp(systemInsetsDp: Float): Float =
+        max(HORIZONTAL_PADDING_DP, systemInsetsDp)
+
+    /**
+     * 单个方向的内容留白
+     *
+     * 三等项取大：项目约定值（圆屏实测留白）、几何下限（任意圆屏尺寸兜底）、
+     * 系统安全区（刘海 / 状态栏 / 导航条）。为什么不是直接 `windowInsetsPadding`：
+     * 圆屏的弧顶留白是「视觉几何」而不是系统 inset，两者必须同时满足，
+     * 只用系统值会让 466px 圆屏内容侵入弧角，只用约定值会在方屏手机上压到状态栏。
+     */
+    fun contentInsetDp(preferredDp: Float, geometricMinDp: Float, systemInsetDp: Float): Float =
+        max(max(preferredDp, geometricMinDp), systemInsetDp)
 }
 
 /** 解析后的安全区（dp）；屏幕直接消费它，不再各自写裸 dp */
@@ -68,21 +95,44 @@ data class WatchSafeInsets(
 )
 
 /**
- * 读取当前屏幕的物理尺寸与 density 并解析安全区
+ * 读取当前屏幕的物理尺寸、density 与系统安全区并解析内容留白
  *
- * 用 resources.displayMetrics 而不是 Compose 的窗口宽度：安全区是屏幕硬件属性，
- * 不该随窗口内边距或分屏变化。
+ * 圆屏几何（弧顶攻击区）与系统安全区（刘海 / 状态栏 / 导航条）是两件独立的事：
+ * 前者由屏幕物理尺寸决定，后者由系统窗口 inset 决定。这里两者取大，
+ * 方形手机上不会被状态栏压住，圆屏手表上也不会因为系统 inset 为 0 就丢掉弧顶留白。
+ * 屏幕尺寸仍取 resources.displayMetrics（硬件属性，不随窗口内边距变化）。
  */
 @Composable
-fun rememberWatchSafeInsets(): WatchSafeInsets {
+fun rememberWatchSafeInsets(
+    preferredTopDp: Float = WatchSafeArea.DEFAULT_TOP_INSET_DP,
+    preferredBottomDp: Float = WatchSafeArea.DEFAULT_BOTTOM_INSET_DP
+): WatchSafeInsets {
     val metrics = LocalContext.current.resources.displayMetrics
     val screenPx = metrics.widthPixels.toFloat()
     val density = metrics.density
-    return remember(screenPx, density) {
+    val composeDensity = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+    val safeDrawing = WindowInsets.safeDrawing
+    val systemTopPx = safeDrawing.getTop(composeDensity)
+    val systemBottomPx = safeDrawing.getBottom(composeDensity)
+    val systemLeftPx = safeDrawing.getLeft(composeDensity, layoutDirection)
+    val systemRightPx = safeDrawing.getRight(composeDensity, layoutDirection)
+    return remember(
+        screenPx, density,
+        systemTopPx, systemBottomPx, systemLeftPx, systemRightPx,
+        preferredTopDp, preferredBottomDp
+    ) {
+        val systemDensity = if (composeDensity.density <= 0f) 1f else composeDensity.density
         WatchSafeInsets(
-            top = WatchSafeArea.topInsetDp(screenPx, density).dp,
-            bottom = WatchSafeArea.bottomInsetDp(screenPx, density).dp,
-            horizontal = WatchSafeArea.HORIZONTAL_PADDING_DP.dp
+            top = WatchSafeArea.topInsetDp(
+                screenPx, density, preferredTopDp, systemTopPx / systemDensity
+            ).dp,
+            bottom = WatchSafeArea.bottomInsetDp(
+                screenPx, density, preferredBottomDp, systemBottomPx / systemDensity
+            ).dp,
+            horizontal = WatchSafeArea.horizontalInsetDp(
+                max(systemLeftPx, systemRightPx) / systemDensity
+            ).dp
         )
     }
 }

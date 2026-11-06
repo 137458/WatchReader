@@ -70,4 +70,31 @@ class WatchSafeAreaTest {
     fun testHorizontalPaddingIsSingleToken() {
         assertEquals(24f, WatchSafeArea.HORIZONTAL_PADDING_DP, DELTA)
     }
+
+    // ── 系统 inset 参与取大：方屏手机 / 刘海屏不被状态栏与导航条压住 ──
+    // 圆屏手表上 safeDrawing 通常为 0，解析结果必须与收口前完全一致（不改变既有视觉）
+
+    @Test
+    fun testSystemInsetTakesOverWhenLarger() {
+        // 44dp 约定值 < 系统状态栏 52dp → 采用系统值
+        assertEquals(52f, WatchSafeArea.topInsetDp(WATCH_PX, WATCH_DENSITY, systemInsetDp = 52f), DELTA)
+        // 84dp 约定值 > 系统导航条 48dp → 仍采用约定值，圆屏底部操作条hot zone不被压缩
+        assertEquals(84f, WatchSafeArea.bottomInsetDp(WATCH_PX, WATCH_DENSITY, systemInsetDp = 48f), DELTA)
+        // 横向：24dp 约定值与系统值取大
+        assertEquals(38f, WatchSafeArea.horizontalInsetDp(38f), DELTA)
+        assertEquals(24f, WatchSafeArea.horizontalInsetDp(0f), DELTA)
+    }
+
+    @Test
+    fun testReaderUsesLowerPreferredInsetsThanPages() {
+        // 阅读页顶部 52dp / 底部 56dp：顶部比页面级多 8dp 给弧形章节名，底部不避让操作条
+        assertEquals(52f, WatchSafeArea.topInsetDp(WATCH_PX, WATCH_DENSITY, WatchSafeArea.READER_TOP_INSET_DP), DELTA)
+        assertEquals(56f, WatchSafeArea.bottomInsetDp(WATCH_PX, WATCH_DENSITY, WatchSafeArea.READER_BOTTOM_INSET_DP), DELTA)
+    }
+
+    @Test
+    fun testContentInsetUsesMaxOfAllThree() {
+        assertEquals(52f, WatchSafeArea.contentInsetDp(44f, 34.1221f, 52f), DELTA)
+        assertEquals(90.9921f, WatchSafeArea.contentInsetDp(44f, 90.9921f, 0f), DELTA)
+    }
 }

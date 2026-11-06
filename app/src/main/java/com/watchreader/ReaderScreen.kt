@@ -7,7 +7,10 @@ import android.view.Window
 import android.view.WindowManager
 import android.widget.ScrollView
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -139,6 +142,19 @@ private fun ReaderPane(
 
     var activeAutoEngine by remember { mutableStateOf<AutoScrollEngine?>(null) }
     var activeScrollView by remember { mutableStateOf<ScrollView?>(null) }
+    var activeInputBinding by remember { mutableStateOf<ReaderPaneInputBinding?>(null) }
+
+    // 阅读页安全区：圆屏弧顶留白与系统 inset 取大（阅读页自己的上下约定值为 52/56dp）
+    val safeInsets = rememberWatchSafeInsets(
+        preferredTopDp = WatchSafeArea.READER_TOP_INSET_DP,
+        preferredBottomDp = WatchSafeArea.READER_BOTTOM_INSET_DP
+    )
+
+    // 表冠目标：组合期登记，绕开原生焦点。阅读页被覆盖时让出注册位（目录/菜单自己接管）
+    rememberCrownScrollTarget(if (covered) null else activeScrollView) { delta ->
+        val view = activeScrollView ?: return@rememberCrownScrollTarget false
+        activeInputBinding?.onCrownDelta(delta, view) ?: false
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -189,6 +205,7 @@ private fun ReaderPane(
             factory = { ctx ->
                 val holder = createReaderViewHolder(
                     ctx = ctx,
+                    insets = safeInsets,
                     backgroundArgb = bgColor,
                     chromeArgb = surfaceVariantColor,
                     bodyColorArgb = textColor,
@@ -204,7 +221,7 @@ private fun ReaderPane(
                 activeScrollView = scrollView
 
                 // 触摸 / 寻道 / 表冠：装配一次、事件期读最新值（见 ReaderPaneInputBinding）
-                ReaderPaneInputBinding(
+                val inputBinding = ReaderPaneInputBinding(
                     context = ctx,
                     scrollView = scrollView,
                     autoEngine = holder.autoScrollEngine,
@@ -220,7 +237,9 @@ private fun ReaderPane(
                     onAutoScrollSpeedChange = onAutoScrollSpeedChange,
                     onLongPress = onLongPress,
                     onSeekChapter = onSeekChapter
-                ).install()
+                )
+                inputBinding.install()
+                activeInputBinding = inputBinding
 
                 // 首次绑定数据：先落文本再下发外观，与收口前的排版顺序一致（文本一次排版 + 外观差异一次）
                 bindChapterData(holder, chapterContent)
@@ -249,6 +268,7 @@ private fun ReaderPane(
             update = { scrollView ->
                 updateReaderPane(
                     scrollView = scrollView,
+                    insets = safeInsets,
                     covered = covered,
                     isAutoScrolling = isAutoScrolling,
                     autoScrollSpeed = autoScrollSpeed,
@@ -263,6 +283,16 @@ private fun ReaderPane(
         // 被覆盖页压顶时整组叠加层退出组合：底层阅读页已转为不可见，
         // 这些叠加层若不退出会透过覆盖页的透明底直接穿帮（侧边时间 / 羽化渐变 / 进度指示）
         if (!covered) {
+            // 系统手势排除层：把正文横向交互区（弧滑寻道 / 点按翻页）从系统边缘返回手势里摘出来，
+            // 滚动与翻页优先。左右各留 safeInsets.horizontal 的窄带，系统返回手势仍保留可用边缘；
+            // 本层无 pointerInput，不参与命中测试，也不拦截任何触摸
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = safeInsets.horizontal)
+                    .systemGestureExclusion()
+            )
+
             // 顶部/底部平滑渐变羽化遮罩（统一 EdgeFadeMask 基元 + 全应用统一 48/44dp 高度）
             EdgeFadeMask(
                 edge = Alignment.Top,
@@ -315,8 +345,14 @@ private fun ReaderPane(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         // 自动滚屏胶囊贴住下缘时，进度字上移让位，避免两层文字叠在一起
-                        .padding(bottom = if (isAutoScrolling) 58.dp else 10.dp)
+                        .padding(bottom = if (isAutoScrolling) 58.dp else 8.dp)
                         .graphicsLayer { alpha = bottomProgressAlpha }
+                        // 页脚统一形态：与章节卡片同一套"小胶囊"语言，不再是一行裸文字
+                        .background(
+                            color = colorScheme.surfaceContainerHigh.copy(alpha = 0.92f),
+                            shape = RoundedCornerShape(percent = 50)
+                        )
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
                 )
             }
 

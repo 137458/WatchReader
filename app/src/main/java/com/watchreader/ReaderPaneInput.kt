@@ -33,6 +33,44 @@ internal class ReaderPaneInputBinding(
 
     private val density = context.resources.displayMetrics.density
 
+    // 手指是否在屏：表冠与手指同时改 scrollY 会互相抢滚动量（表现为转动时跳动），
+    // 手指按住期间表冠事件直接让位，抬起后立即恢复
+    private var pointerDown = false
+
+    /**
+     * 一次表冠旋转增量（极性已在 [CrownScrollHelper.extractCrownDelta] 归一化）。
+     *
+     * 两条入口共用本方法：原生 ScrollView 的 OnGenericMotionListener（依赖原生焦点）、
+     * 以及组合期登记的 [CrownScrollTarget]（绕开焦点，见 [rememberCrownScrollTarget]）。
+     * 收口前只有前者，Compose 组件拿走焦点后表冠事件就落到空处——阅读页"转表冠不滚"的根因。
+     *
+     * @return true 表示本次增量已被消费
+     */
+    fun onCrownDelta(delta: Float, source: android.view.View): Boolean {
+        if (delta == 0f) return false
+        // 手指交互期间让位：不做任何滚动，也不触发振感
+        if (pointerDown) return true
+
+        keepScreenOnTrigger()
+        onScrollActivity()
+
+        if (autoEngine.isRunning) {
+            if (ReaderPaneLogic.isCrownAdjustDelta(delta)) {
+                autoEngine.adjustSpeed(ReaderPaneLogic.autoScrollSpeedDelta(delta))
+                onAutoScrollSpeedChange(autoEngine.speedPxPerSec)
+                // 调速档位微振：每物理档位（12 单位）一振，与全应用表冠振感节奏统一
+                CrownScrollHelper.dispatchAdjustTick(delta, context, source)
+            }
+            return true
+        }
+        // 常规阅读：统一走表冠管线（系统滚动系数 × 0.5 连续下发 + 距离门限齿轮微振），
+        // 替代原先落给原生 ScrollView 的裸滚动（无振感且步进随系统滚动系数漂移）
+        if (ReaderPaneLogic.isCrownScrollDelta(delta)) {
+            CrownScrollHelper.dispatchScroll(delta, scrollView, context, source)
+        }
+        return true
+    }
+
     fun install() {
         // 手势交互：支持上下/左右点按翻页、长按呼出菜单、自动滚屏时单击暂停。
         // 点按走 onSingleTapUp 即触即判：本应用没有双击行为，onSingleTapConfirmed 会让
@@ -81,6 +119,9 @@ internal class ReaderPaneInputBinding(
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    pointerDown = true
+                    // 手指接管前先停掉表冠惯性，否则转动余速会把手指刚定位的位置再推开
+                    CrownScrollHelper.abortFling(scrollView)
                     val tracking = seekRecognizer.onDown(
                         event.x,
                         event.y,
@@ -118,6 +159,7 @@ internal class ReaderPaneInputBinding(
                     autoEngine.pauseTemporarily(1800L)
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    pointerDown = false
                     if (seekRecognizer.isTracking) {
                         // 未越过拖动门限的寻道带点按回落为翻页点按：
                         // 右缘寻道带与翻页热区存在重叠，纯吞掉会形成"点了没反应"死点
@@ -148,29 +190,15 @@ internal class ReaderPaneInputBinding(
             tapSuppressed
         }
 
-        // 表冠物理旋转监听：自动滚屏中可动态调速，未开启时按系统列表口径连续滚动并触发齿轮微振
+        // 表冠物理旋转监听（原生路径兜底）：正常由组合期登记的 CrownScrollTarget 先消费；
+        // 该路径只在原生 ScrollView 仍持有焦点时生效，作为焦点迁移后的最后一道保险
         scrollView.setOnGenericMotionListener { v, event ->
             if (CrownScrollHelper.isCrownScrollEvent(event)) {
-                keepScreenOnTrigger()
-                onScrollActivity()
-                val delta = CrownScrollHelper.extractCrownDelta(event)
-                if (autoEngine.isRunning) {
-                    if (ReaderPaneLogic.isCrownAdjustDelta(delta)) {
-                        autoEngine.adjustSpeed(ReaderPaneLogic.autoScrollSpeedDelta(delta))
-                        onAutoScrollSpeedChange(autoEngine.speedPxPerSec)
-                        // 调速档位微振：每物理档位（12 单位）一振，与全应用表冠振感节奏统一
-                        CrownScrollHelper.dispatchAdjustTick(delta, context, v)
-                    }
-                    return@setOnGenericMotionListener true
-                }
-                // 常规阅读：统一走表冠管线（系统滚动系数 × 0.5 连续下发 + 距离门限齿轮微振），
-                // 替代原先落给原生 ScrollView 的裸滚动（无振感且步进随系统滚动系数漂移）
-                if (ReaderPaneLogic.isCrownScrollDelta(delta)) {
-                    CrownScrollHelper.dispatchScroll(delta, scrollView, context, v)
-                }
-                return@setOnGenericMotionListener true
+                onCrownDelta(CrownScrollHelper.extractCrownDelta(event), v)
+                true
+            } else {
+                false
             }
-            false
         }
     }
 }

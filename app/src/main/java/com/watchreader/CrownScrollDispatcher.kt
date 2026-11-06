@@ -116,6 +116,9 @@ internal object CrownScrollDispatcher {
         val scrollPixels = CrownScrollHelper.scrollPixelsFor(rawOrPixelDelta)
         if (scrollPixels == 0) return
         abortFling(scrollView)
+        // 手指甩动的惯性在 ScrollView 自己的 OverScroller 里，与本模块的惯性是两套引擎。
+        // 表冠事件到来时先停掉原生甩动，否则两条 scrollBy 每帧抢同一份 scrollY，表现就是转动时跳动
+        stopTouchFling(scrollView)
 
         val maxScroll = ScrollMetrics.maxScrollY(scrollView)
         val atBoundary = CrownScrollArithmetic.atScrollViewBoundary(scrollPixels, scrollView.scrollY, maxScroll)
@@ -126,6 +129,17 @@ internal object CrownScrollDispatcher {
             }
             trackGestureMotion(scrollPixels.toFloat(), scrollView, context)
         }
+    }
+
+    /**
+     * 终止 ScrollView 内部的手指甩动惯性（0 速度 fling 会接管并立即结束当前动画）
+     *
+     * `fling(0)` 是本机 ScrollView 唯一公开的"取消当前甩动"入口：它重置内部 OverScroller，
+     * 后续 computeScroll 拿到 finished 即停止，不会产生额外位移。
+     */
+    private fun stopTouchFling(scrollView: ScrollView) {
+        if (ScrollMetrics.maxScrollY(scrollView) <= 0) return
+        scrollView.fling(0)
     }
 
     /**

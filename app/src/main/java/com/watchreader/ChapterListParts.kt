@@ -43,16 +43,17 @@ import androidx.compose.ui.unit.dp
  */
 internal fun createChapterListView(
     context: Context,
+    insets: WatchSafeInsets,
     chapters: List<Chapter>,
     currentChapterIndex: Int,
     colorScheme: ColorScheme,
     onChapterClick: (Int) -> Unit
 ): ListView {
     val density = context.resources.displayMetrics.density
-    val padH = (20 * density).toInt()
-    // padTop 与顶部 Tab 胶囊（44dp 起 + 48dp 高 + 内边距）对齐，列表内容不被 Tab 压住
+    // padTop 与顶部 Tab 胶囊（safeInsets.top 起 + 48dp 高 + 内边距）对齐，列表内容不被 Tab 压住
     // padBottom 避让底部弧形操作条热区（径向深入屏缘 48dp + 悬离 6dp = 54dp），留 72dp 冗余
-    val padTop = (100 * density).toInt()
+    val padH = (insets.horizontal.value * density).toInt()
+    val padTop = ((insets.top + 56.dp).value * density).toInt()
     val padBottom = (72 * density).toInt()
 
     val listView = ListView(context).apply {
@@ -63,8 +64,9 @@ internal fun createChapterListView(
         isFocusable = true
         isFocusableInTouchMode = true
         isVerticalScrollBarEnabled = false
-        divider = null
-        dividerHeight = (5 * density).toInt()
+        // 卡片行之间留 6dp：divider = null 时 ListView 不绘制间隙，卡片会上下粘成一片
+        divider = android.graphics.drawable.ColorDrawable(colorScheme.background.toArgb())
+        dividerHeight = (6 * density).toInt()
         setBackgroundColor(colorScheme.background.toArgb())
         setPadding(padH, padTop, padH, padBottom)
         clipToPadding = false
@@ -97,16 +99,17 @@ internal fun createChapterListView(
  */
 internal fun createBookmarkListView(
     context: Context,
+    insets: WatchSafeInsets,
     bookmarks: List<Bookmark>,
     colorScheme: ColorScheme,
     onBookmarkClick: (Bookmark) -> Unit,
     onDeleteBookmark: (Bookmark) -> Unit
 ): ListView {
     val density = context.resources.displayMetrics.density
-    val padH = (18 * density).toInt()
-    // 与目录模式一致：避让顶部 Tab 胶囊（44dp 起 + 48dp 高 + 内边距）
+    // 与目录模式共用同一套内边距口径：横向上留白 24dp、顶部 Tab 下方 56dp
     // padBottom 避让底部弧形操作条热区（深入 54dp），留 72dp 冗余
-    val padTop = (100 * density).toInt()
+    val padH = (insets.horizontal.value * density).toInt()
+    val padTop = ((insets.top + 56.dp).value * density).toInt()
     val padBottom = (72 * density).toInt()
 
     val listView = ListView(context).apply {
@@ -117,7 +120,8 @@ internal fun createBookmarkListView(
         isFocusable = true
         isFocusableInTouchMode = true
         isVerticalScrollBarEnabled = false
-        divider = null
+        // 与目录行同一套 6dp 行间距（divider 用背景色，视觉上是留白而不是分隔线）
+        divider = android.graphics.drawable.ColorDrawable(colorScheme.background.toArgb())
         dividerHeight = (6 * density).toInt()
         setBackgroundColor(colorScheme.background.toArgb())
         setPadding(padH, padTop, padH, padBottom)
