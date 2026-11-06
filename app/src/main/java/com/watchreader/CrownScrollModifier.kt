@@ -187,25 +187,57 @@ fun interface CrownScrollTarget {
 }
 
 /**
- * 表冠滚动目标注册表（当前前台页面唯一持有者）
+ * 表冠滚动目标注册表（前台页面持有者栈）
  *
  * 这是一个显式的注册接缝而不是分派器：Compose 页面在组合期登记、离开时注销，
  * 何时消费以及消费失败后继续下沉到哪条策略，全部由 CrownRouter 的声明顺序决定。
+ *
+ * 持有关系用 [CrownTargetStack] 的 LIFO 语义表达：浮层注册后压过宿主页面，
+ * 浮层注销后宿主自动恢复，而不是靠每个页面各自在 if 里清空/重设。
+ *
+ * [suspendInput] 供全屏阻塞浮层（备份恢复确认等）使用：挂起期顶层仍是"吞掉事件"的
+ * 目标，既不让底层页面滚动，也不把事件漏给原生 View 树。
  */
 object CrownScrollTargetRegistry {
+
+    private val stack = CrownTargetStack<CrownScrollTarget>()
+    private var suspendCount = 0
+
+    private val swallowAll = CrownScrollTarget { true }
 
     @Volatile
     var active: CrownScrollTarget? = null
         private set
 
     fun activate(target: CrownScrollTarget) {
-        active = target
+        stack.push(target)
+        publish()
     }
 
-    /** 惰性注销：仅当仍是自己时清除，避免页面切换过渡期误清后到目标 */
     fun deactivate(target: CrownScrollTarget) {
-        if (active === target) {
-            active = null
-        }
+        if (stack.remove(target)) publish()
+    }
+
+    /** 挂起表冠输入（可嵌套）：激活的顶层目标替换为吞掉事件的空实现 */
+    fun suspendInput() {
+        suspendCount++
+        publish()
+    }
+
+    /** 恢复表冠输入：计数归零后回到栈顶页面目标 */
+    fun resumeInput() {
+        if (suspendCount > 0) suspendCount--
+        publish()
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun resetForTest() {
+        stack.clear()
+        suspendCount = 0
+        active = null
+    }
+
+    private fun publish() {
+        active = if (suspendCount > 0) swallowAll else stack.active
     }
 }

@@ -91,6 +91,9 @@ internal class ChapterNavigator(
     private var loadJob: Job? = null
     private var savePositionJob: Job? = null
 
+    /** 章节跳转代际：旧协程返回后不得覆盖新章节 */
+    private val chapterNavigationGuard = NavigationGuard()
+
     /** 当前阅读位置（原书字符偏移域） */
     fun currentReadingOffset(): Int = session.currentOffset
 
@@ -191,12 +194,19 @@ internal class ChapterNavigator(
         val uri = state.currentUri ?: return
         if (chapterIndex !in state.chapters.indices) return
 
+        // 连续跳章时旧协程可能后返回：只允许最后一代写屏
+        val navigationToken = chapterNavigationGuard.begin()
         scope.launch {
             if (!session.goToChapter(chapterIndex, targetCharOffset)) {
-                // 正文读取失败不跳章：留在当前页，把原因透出给 UI
-                uiState.update { it.copy(errorMessage = "读取章节正文失败") }
+                if (chapterNavigationGuard.isCurrent(navigationToken)) {
+                    // 正文读取失败不跳章：留在当前页，把原因透出给 UI
+                    uiState.update { it.copy(errorMessage = "读取章节正文失败") }
+                }
                 return@launch
             }
+            // 装载期间又发起了新跳转：旧结果整体丢弃，不写屏幕也不存位置
+            if (!chapterNavigationGuard.isCurrent(navigationToken)) return@launch
+
             syncReadingState()
             val offset = session.currentOffset
             uiState.update { it.copy(screen = Screen.Reader(offset, chapterIndex)) }

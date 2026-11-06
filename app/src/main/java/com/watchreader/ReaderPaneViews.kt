@@ -5,6 +5,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -13,6 +14,41 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+
+/**
+ * 点按翻页动画窗口。
+ *
+ * smoothScrollBy 与手指甩动共用 ScrollView 内部同一个 OverScroller，
+ * 表冠要停"手指惯性"时会顺手把翻页动画一起掐断。这里记录翻页动画的存续期：
+ * 窗口内表冠不调用 fling(0)，翻页照常走完；窗口外仍按原逻辑停止手指惯性。
+ */
+internal object ReaderPageTurnGate {
+
+    private const val DEFAULT_WINDOW_MS = 360L
+
+    private var activeOwner: Any? = null
+    private var activeUntilUptime = 0L
+
+    /** [now] 仅测试注入时间源；生产路径使用 [SystemClock.uptimeMillis] */
+    fun begin(
+        owner: Any,
+        durationMs: Long = DEFAULT_WINDOW_MS,
+        now: () -> Long = SystemClock::uptimeMillis
+    ) {
+        activeOwner = owner
+        activeUntilUptime = now() + durationMs
+    }
+
+    fun isActive(
+        owner: Any,
+        now: () -> Long = SystemClock::uptimeMillis
+    ): Boolean = activeOwner === owner && now() < activeUntilUptime
+
+    fun clear() {
+        activeOwner = null
+        activeUntilUptime = 0L
+    }
+}
 
 /**
  * 固定 5 节点 View 持有器 + 自动滚屏引擎（永久复用，零 View 分配与销毁）
@@ -357,7 +393,7 @@ internal fun installReaderPaneScrollPersistence(
     readingPosition: ReadingPosition,
     onCharOffsetChange: (Int) -> Unit,
     onScrollActivity: () -> Unit
-) {
+): () -> Unit {
     val handler = Handler(Looper.getMainLooper())
     var saveRunnable: Runnable? = null
     var lastReportedOffset = -1
@@ -402,6 +438,15 @@ internal fun installReaderPaneScrollPersistence(
                 handler.postDelayed(saveRunnable!!, 300L)
             }
         }
+    }
+
+    // teardown：页面销毁后延迟保存仍可能打在已离开的界面（触发一次多余的状态写入，
+    // 甚至在 Activity 销毁后触碰 ViewModel）。显式撤销回调并解绑监听。
+    return {
+        saveRunnable?.let(handler::removeCallbacks)
+        saveRunnable = null
+        scrollView.setOnScrollChangeListener(null)
+        ReaderPageTurnGate.clear()
     }
 }
 

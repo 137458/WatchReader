@@ -216,4 +216,19 @@ class CrownScrollArithmeticTest {
         val gate = CrownTickGate(thresholdPx)
         assertFalse(gate.onScroll(0f))
     }
+
+    // ── P2-1：原生容器按真实消费量入账（ADR-019 决策 3）─────────────
+    // 贴边时 scrollBy 会把请求量钳掉一部分，记账只认位移前后差值
+
+    @Test
+    fun consumedDeltaIsActualDisplacement() {
+        // 完整消费：请求 79px，位移 79px
+        assertEquals(79, CrownScrollArithmetic.consumedDelta(before = 1200, after = 1279))
+        // 触底钳制：距底 5px 请求 79px，只认 5px，多记的距离不能推进振感与惯性
+        assertEquals(5, CrownScrollArithmetic.consumedDelta(before = 2795, after = 2800))
+        // 反向贴顶同理，符号随实际位移
+        assertEquals(-3, CrownScrollArithmetic.consumedDelta(before = 3, after = 0))
+        // 完全无余量：真实消费为 0，本事件不参与振感与惯性
+        assertEquals(0, CrownScrollArithmetic.consumedDelta(before = 2800, after = 2800))
+    }
 }

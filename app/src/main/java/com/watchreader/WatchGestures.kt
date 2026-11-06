@@ -1,8 +1,8 @@
 package com.watchreader
 
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -16,8 +16,8 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -26,6 +26,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 
 /**
@@ -141,45 +143,35 @@ fun Modifier.swipeDismissBack(
     thresholdPx: Float = 60f,
     onDismiss: () -> Unit
 ): Modifier {
-    // 视觉位移只有一个来源：拖拽期 spec 为 snap 逐帧跟手，松手后切 spring（弹回）
-    // 或 tween（滑出），滑出结束由 finishedListener 回调 onDismiss。
-    var dragging by remember { mutableStateOf(false) }
-    var dismissing by remember { mutableStateOf(false) }
-    var targetPx by remember { mutableFloatStateOf(0f) }
-    val offset by animateFloatAsState(
-        targetValue = targetPx,
-        animationSpec = when {
-            dragging -> snap()
-            dismissing -> tween(WatchMotion.DUR_FADE_OUT, easing = WatchMotion.ExitEasing)
-            else -> spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow)
-        },
-        label = "swipe-dismiss",
-        finishedListener = {
-            if (dismissing) {
-                dismissing = false
-                targetPx = 0f
-                onDismiss()
-            }
-        }
-    )
+    // 位移只有一个来源：普通 Float 状态 + `animate()` 逐帧写回。
+    // 读取只发生在 graphicsLayer 的绘制阶段（快照读取只让图层失效，不触发重组）；
+    // 拖拽期直接赋值，不产生组合写；松手动画由单个 Job 串行化，新手势可打断旧动画。
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val scope = rememberCoroutineScope()
+    val animationJob = remember { arrayOfNulls<Job>(1) }
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
+
     LaunchedEffect(enabled) {
         if (!enabled) {
-            dragging = false
-            dismissing = false
-            targetPx = 0f
+            animationJob[0]?.cancel()
+            animationJob[0] = null
+            dragOffset = 0f
         }
     }
+
     return this
         .graphicsLayer {
             val layerWidth = size.width
-            translationX = offset
-            alpha = if (layerWidth <= 0f) 1f else 1f - 0.28f * (offset / layerWidth)
+            translationX = dragOffset
+            alpha = if (layerWidth <= 0f) 1f else 1f - 0.28f * (dragOffset / layerWidth)
         }
         .pointerInput(enabled, thresholdPx) {
             if (!enabled) return@pointerInput
-            val width = size.width.toFloat()
             val slop = viewConfiguration.touchSlop
             awaitEachGesture {
+                // 宽度在每轮手势起点重取：旋转、分屏或安全区变化后不再沿用旧宽度
+                val width = size.width.toFloat()
+                if (width <= 0f) return@awaitEachGesture
                 awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
                 val arbiter = SwipeBackArbiter(thresholdPx)
                 var dragged = false
@@ -206,20 +198,42 @@ fun Modifier.swipeDismissBack(
                         change.consume()
                         break
                     }
-                    if (arbiter.progress > 0f) {
+                    val progress = arbiter.progress
+                    if (progress > 0f) {
                         dragged = true
                         change.consume()
-                        dragging = true
-                        targetPx = arbiter.progress * width
+                        dragOffset = progress * width
                     }
                 }
-                if (dragged || fired) {
-                    dragging = false
-                    if (fired) {
-                        dismissing = true
-                        targetPx = width
-                    } else {
-                        targetPx = 0f
+                when {
+                    // 越限后先整屏滑出，再回调退出；随后复位给下一次进入
+                    fired -> {
+                        animationJob[0]?.cancel()
+                        animationJob[0] = scope.launch {
+                            animate(
+                                dragOffset,
+                                width,
+                                animationSpec = tween(
+                                    WatchMotion.DUR_FADE_OUT,
+                                    easing = WatchMotion.ExitEasing
+                                )
+                            ) { value, _ -> dragOffset = value }
+                            currentOnDismiss()
+                            dragOffset = 0f
+                        }
+                    }
+                    dragged -> {
+                        animationJob[0]?.cancel()
+                        animationJob[0] = scope.launch {
+                            animate(
+                                dragOffset,
+                                0f,
+                                animationSpec = spring(
+                                    dampingRatio = 0.8f,
+                                    stiffness = Spring.StiffnessMediumLow
+                                )
+                            ) { value, _ -> dragOffset = value }
+                        }
                     }
                 }
             }

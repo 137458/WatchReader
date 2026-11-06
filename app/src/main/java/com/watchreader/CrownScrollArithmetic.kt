@@ -61,6 +61,14 @@ internal object CrownScrollArithmetic {
     /** 惯性步进方向的贴边判定：该方向已无余量则终止惯性 */
     fun reachedEdge(delta: Float, canScrollForward: Boolean, canScrollBackward: Boolean): Boolean =
         (delta > 0f && !canScrollForward) || (delta < 0f && !canScrollBackward)
+
+    /**
+     * 真实消费量 = 位移前后差值。
+     *
+     * 原生 View 的 scrollBy/scrollListBy 会在边界静默截断，用请求像素记账会让
+     * 振感距离与惯性速度在边缘继续累积；统一按此差值入账（ADR-019 决策 3）。
+     */
+    fun consumedDelta(before: Int, after: Int): Int = after - before
 }
 
 /**

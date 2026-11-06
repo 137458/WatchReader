@@ -108,8 +108,13 @@ private fun ReaderPane(
 
     var isScrolling by remember { mutableStateOf(false) }
     // 阅读位置唯一所有者：事件路径写入、组合读进度、update 阶段读 latestValue。
-    // 此前是"Compose 状态 + volatile 数组"两个字段各自被写一次，漏写一处即错位
-    val readingPosition = remember(initialCharOffset) { ReadingPosition(initialCharOffset) }
+    // 实例必须跨章节导航稳定：工厂回调与滚动持久化在首次组合时装进的是这个实例，
+    // 若用 remember(initialCharOffset) 重建实例，工厂仍绑旧实例，进度会冻结。
+    // 跳转后的初始偏移通过 LaunchedEffect 显式写回同一实例。
+    val readingPosition = remember { ReadingPosition(initialCharOffset) }
+    LaunchedEffect(initialCharOffset) {
+        readingPosition.update(initialCharOffset)
+    }
 
     // 弧形寻道：识别下沉至原生触摸管线，叠加层仅负责绘制（其全屏 pointerInput 曾吞掉正文全部触摸流）。
     // 三项渲染状态聚合于单个状态容器：高频 MOVE 写入经叠加层绘制阶段延迟读取，寻道全程零重组
@@ -143,6 +148,8 @@ private fun ReaderPane(
     var activeAutoEngine by remember { mutableStateOf<AutoScrollEngine?>(null) }
     var activeScrollView by remember { mutableStateOf<ScrollView?>(null) }
     var activeInputBinding by remember { mutableStateOf<ReaderPaneInputBinding?>(null) }
+    // 滚动持久化的 teardown：撤销延迟保存回调并解绑监听，避免页面销毁后仍写状态
+    var persistenceDispose by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     // 阅读页安全区：圆屏弧顶留白与系统 inset 取大（阅读页自己的上下约定值为 52/56dp）
     val safeInsets = rememberWatchSafeInsets(
@@ -159,6 +166,8 @@ private fun ReaderPane(
     DisposableEffect(Unit) {
         onDispose {
             scrollDebounceHandler.removeCallbacksAndMessages(null)
+            persistenceDispose?.invoke()
+            persistenceDispose = null
             onCharOffsetChange(readingPosition.latestValue)
             onFlushReadingPosition()
             // 组合销毁必须停掉 Choreographer 帧循环与表冠惯性：引擎 doFrame 自续
@@ -255,7 +264,7 @@ private fun ReaderPane(
                 }
 
                 // 滚动监听：基于 bodyTv 真实行定位进行精准防抖持久化
-                installReaderPaneScrollPersistence(
+                persistenceDispose = installReaderPaneScrollPersistence(
                     scrollView = scrollView,
                     holder = holder,
                     readingPosition = readingPosition,
@@ -277,6 +286,11 @@ private fun ReaderPane(
                     targetAppearance = targetAppearance,
                     readingPosition = readingPosition
                 )
+            },
+            onRelease = {
+                // View 释放先于组合销毁路径：两条路径都做幂等 teardown
+                persistenceDispose?.invoke()
+                persistenceDispose = null
             }
         )
 

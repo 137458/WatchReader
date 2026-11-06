@@ -96,11 +96,15 @@ internal object CrownScrollDispatcher {
         abortFling(listView)
 
         if (listView.canScrollList(if (scrollPixels > 0) 1 else -1)) {
-            listView.scrollListBy(scrollPixels)
-            if (gearTickGate.onScroll(scrollPixels.toFloat())) {
-                emitNotchHaptic(context, view)
+            // 入账用真实位移：滚动到边缘时 scrollListBy 会静默截断，
+            // 用请求像素记账会让齿轮微振与惯性在边界处继续累积（ADR-019 决策 3）
+            val consumed = listView.scrollListByClamped(scrollPixels)
+            if (consumed != 0) {
+                if (gearTickGate.onScroll(consumed.toFloat())) {
+                    emitNotchHaptic(context, view)
+                }
+                trackGestureMotion(consumed.toFloat(), listView, context)
             }
-            trackGestureMotion(scrollPixels.toFloat(), listView, context)
         }
     }
 
@@ -123,11 +127,15 @@ internal object CrownScrollDispatcher {
         val maxScroll = ScrollMetrics.maxScrollY(scrollView)
         val atBoundary = CrownScrollArithmetic.atScrollViewBoundary(scrollPixels, scrollView.scrollY, maxScroll)
         if (!atBoundary) {
+            val before = scrollView.scrollY
             scrollView.scrollBy(0, scrollPixels)
-            if (gearTickGate.onScroll(scrollPixels.toFloat())) {
-                emitNotchHaptic(context, view)
+            val consumed = CrownScrollArithmetic.consumedDelta(before, scrollView.scrollY)
+            if (consumed != 0) {
+                if (gearTickGate.onScroll(consumed.toFloat())) {
+                    emitNotchHaptic(context, view)
+                }
+                trackGestureMotion(consumed.toFloat(), scrollView, context)
             }
-            trackGestureMotion(scrollPixels.toFloat(), scrollView, context)
         }
     }
 
@@ -139,7 +147,51 @@ internal object CrownScrollDispatcher {
      */
     private fun stopTouchFling(scrollView: ScrollView) {
         if (ScrollMetrics.maxScrollY(scrollView) <= 0) return
+        // 点按翻页用到同一个 OverScroller；fling(0) 会把它一起掐断，
+        // 翻页动画存续期内不抢引擎，翻页结束后由下一帧表冠事件正常接管
+        if (ReaderPageTurnGate.isActive(scrollView)) return
         scrollView.fling(0)
+    }
+
+    /**
+     * ListView 真实可滚动余量（像素），仅在贴住数据首/尾时才需要钳制
+     *
+     * `AbsListView.computeVerticalScrollOffset()` 是 protected，读不到"位移前后差值"；
+     * 改用首/末可见子视图的实际几何求余量：未贴数据端时余量不受限（返回 null），
+     * 贴端时请求量按剩余像素钳制，记账只认实际位移（ADR-019 决策 3）。
+     */
+    private fun ListView.remainingScrollPixels(directionDown: Boolean): Int? {
+        val adapter = adapter ?: return 0
+        if (adapter.count == 0 || childCount == 0) return 0
+        val first = getChildAt(0) ?: return 0
+        val last = getChildAt(childCount - 1) ?: return 0
+        return if (directionDown) {
+            if (lastVisiblePosition < adapter.count - 1) {
+                null
+            } else {
+                (last.bottom - (height - paddingBottom)).coerceAtLeast(0)
+            }
+        } else {
+            if (firstVisiblePosition > 0) {
+                null
+            } else {
+                (first.top - paddingTop).coerceAtLeast(0)
+            }
+        }
+    }
+
+    /** 下发一次表冠位移并返回真实消费像素（贴数据端时为钳制后的值，0 表示没有余量） */
+    private fun ListView.scrollListByClamped(scrollPixels: Int): Int {
+        if (scrollPixels == 0) return 0
+        val limit = remainingScrollPixels(scrollPixels > 0) ?: Int.MAX_VALUE
+        val actual = if (scrollPixels > 0) {
+            minOf(scrollPixels, limit)
+        } else {
+            -minOf(-scrollPixels, limit)
+        }
+        if (actual == 0) return 0
+        scrollListBy(actual)
+        return actual
     }
 
     /**
@@ -231,8 +283,11 @@ internal object CrownScrollDispatcher {
                 flingLastPos = scroller.currY.toFloat()
                 when (surface) {
                     is ScrollView -> {
+                        val before = surface.scrollY
                         surface.scrollTo(0, scroller.currY)
-                        if (surface.scrollY <= 0 || surface.scrollY >= ScrollMetrics.maxScrollY(surface)) {
+                        // 惯性入账同样只看真实位移：滚到边缘后 currY 继续推进但 scrollY 不变，
+                        // 此时应立即结束惯性，而不是等下一帧再次越界
+                        if (CrownScrollArithmetic.consumedDelta(before, surface.scrollY) == 0) {
                             stopFlingInternal()
                             return
                         }
@@ -247,7 +302,11 @@ internal object CrownScrollDispatcher {
                             stopFlingInternal()
                             return
                         }
-                        surface.scrollListBy(delta.toInt())
+                        // 消费量取钳制后的实际位移；为 0 说明已到数据端，立即结束惯性
+                        if (surface.scrollListByClamped(delta.toInt()) == 0) {
+                            stopFlingInternal()
+                            return
+                        }
                     }
                     is ScrollableState -> {
                         if (CrownScrollArithmetic.reachedEdge(
@@ -259,7 +318,11 @@ internal object CrownScrollDispatcher {
                             stopFlingInternal()
                             return
                         }
-                        surface.dispatchRawDelta(delta)
+                        // dispatchRawDelta 返回真实消费量（会被末端 clamp），为 0 即到边界
+                        if (surface.dispatchRawDelta(delta) == 0f) {
+                            stopFlingInternal()
+                            return
+                        }
                     }
                 }
                 postFlingFrame(surface, this)

@@ -33,6 +33,18 @@ internal class ReaderPaneInputBinding(
 
     private val density = context.resources.displayMetrics.density
 
+    /**
+     * 点按翻页：先停表冠惯性，再登记翻页动画窗口。
+     *
+     * 两个动画引擎（CrownOverScroller 与 ScrollView 内置 OverScroller）不能同时改 scrollY；
+     * 登记窗口只用于告诉表冠"这段时间别用 fling(0) 掐断翻页"，不限制翻页本身的时长。
+     */
+    private fun pageScroll(view: ScrollView, dy: Int) {
+        CrownScrollDispatcher.abortFling(view)
+        ReaderPageTurnGate.begin(view)
+        view.smoothScrollBy(0, dy)
+    }
+
     // 手指是否在屏：表冠与手指同时改 scrollY 会互相抢滚动量（表现为转动时跳动），
     // 手指按住期间表冠事件直接让位，抬起后立即恢复
     private var pointerDown = false
@@ -85,11 +97,11 @@ internal class ReaderPaneInputBinding(
             } else {
                 when (TapPageHelper.resolveTapAction(tapX, tapY, w, h, tapPageArea())) {
                     TapAction.PAGE_UP -> {
-                        scrollView.smoothScrollBy(0, -TapPageHelper.calculateScrollDistance(h, density))
+                        pageScroll(scrollView, -TapPageHelper.calculateScrollDistance(h, density))
                         RotaryHapticManager.performScrollTick(context, scrollView)
                     }
                     TapAction.PAGE_DOWN -> {
-                        scrollView.smoothScrollBy(0, TapPageHelper.calculateScrollDistance(h, density))
+                        pageScroll(scrollView, TapPageHelper.calculateScrollDistance(h, density))
                         RotaryHapticManager.performScrollTick(context, scrollView)
                     }
                     TapAction.SHOW_MENU -> {

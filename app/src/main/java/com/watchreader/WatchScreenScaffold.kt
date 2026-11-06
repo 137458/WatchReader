@@ -1,20 +1,25 @@
 package com.watchreader
 
+import android.view.View
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowInsetsCompat
 import androidx.wear.compose.material3.AppScaffold
 import kotlin.math.max
 
@@ -95,6 +100,14 @@ data class WatchSafeInsets(
     val horizontal: Dp
 )
 
+/** 系统安全区像素快照；作为 remember 键值参与相等比较 */
+@Immutable
+data class SystemInsetsPx(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+    companion object {
+        val Zero = SystemInsetsPx(0, 0, 0, 0)
+    }
+}
+
 /**
  * 读取当前屏幕的物理尺寸、density 与系统安全区并解析内容留白
  *
@@ -102,6 +115,11 @@ data class WatchSafeInsets(
  * 前者由屏幕物理尺寸决定，后者由系统窗口 inset 决定。这里两者取大，
  * 方形手机上不会被状态栏压住，圆屏手表上也不会因为系统 inset 为 0 就丢掉弧顶留白。
  * 屏幕尺寸仍取 resources.displayMetrics（硬件属性，不随窗口内边距变化）。
+ *
+ * 系统 inset 必须经窗口回调写入状态：组合期直接读一次 `rootWindowInsets`/`safeDrawing`
+ * 只在首次组合时成立，之后导航条出现或刘海变化不会触发重组，值要等下一次无关重组才更新。
+ * 监听器挂在窗口根视图上（不是 Compose 自己的 AndroidComposeView）并把 inset 原样交还，
+ * ViewGroup 的派发链继续下发到子视图，Compose 自身的 WindowInsets 读取不受影响。
  */
 @Composable
 fun rememberWatchSafeInsets(
@@ -112,27 +130,49 @@ fun rememberWatchSafeInsets(
     val screenPx = metrics.widthPixels.toFloat()
     val density = metrics.density
     val composeDensity = LocalDensity.current
-    val layoutDirection = LocalLayoutDirection.current
-    val safeDrawing = WindowInsets.safeDrawing
-    val systemTopPx = safeDrawing.getTop(composeDensity)
-    val systemBottomPx = safeDrawing.getBottom(composeDensity)
-    val systemLeftPx = safeDrawing.getLeft(composeDensity, layoutDirection)
-    val systemRightPx = safeDrawing.getRight(composeDensity, layoutDirection)
+    val view = LocalView.current
+    var systemInsets by remember { mutableStateOf(SystemInsetsPx.Zero) }
+
+    DisposableEffect(view) {
+        val host = view.rootView
+        // 未挂载时 rootView 就是自身：不接管它的 inset 派发，退化为首帧零值由几何下限兜底
+        if (host === view) return@DisposableEffect onDispose { }
+
+        fun readInsets(insets: android.view.WindowInsets): SystemInsetsPx {
+            // 与 Compose `WindowInsets.safeDrawing` 同口径：系统栏 + 刘海/挖孔
+            val types = WindowInsetsCompat.Type.systemBars() or
+                WindowInsetsCompat.Type.displayCutout()
+            val safe = WindowInsetsCompat.toWindowInsetsCompat(insets, view).getInsets(types)
+            return SystemInsetsPx(safe.left, safe.top, safe.right, safe.bottom)
+        }
+
+        view.rootWindowInsets?.let { systemInsets = readInsets(it) }
+        val listener = View.OnApplyWindowInsetsListener { v, insets ->
+            systemInsets = readInsets(insets)
+            // 原样交还：不消费 inset，根 ViewGroup 会继续把同一次派发下发给子视图
+            v.onApplyWindowInsets(insets)
+        }
+        host.setOnApplyWindowInsetsListener(listener)
+        host.requestApplyInsets()
+        onDispose {
+            host.setOnApplyWindowInsetsListener(null)
+            host.requestApplyInsets()
+        }
+    }
+
+    val systemDensity = if (composeDensity.density <= 0f) 1f else composeDensity.density
     return remember(
-        screenPx, density,
-        systemTopPx, systemBottomPx, systemLeftPx, systemRightPx,
-        preferredTopDp, preferredBottomDp
+        screenPx, density, systemInsets, systemDensity, preferredTopDp, preferredBottomDp
     ) {
-        val systemDensity = if (composeDensity.density <= 0f) 1f else composeDensity.density
         WatchSafeInsets(
             top = WatchSafeArea.topInsetDp(
-                screenPx, density, preferredTopDp, systemTopPx / systemDensity
+                screenPx, density, preferredTopDp, systemInsets.top / systemDensity
             ).dp,
             bottom = WatchSafeArea.bottomInsetDp(
-                screenPx, density, preferredBottomDp, systemBottomPx / systemDensity
+                screenPx, density, preferredBottomDp, systemInsets.bottom / systemDensity
             ).dp,
             horizontal = WatchSafeArea.horizontalInsetDp(
-                max(systemLeftPx, systemRightPx) / systemDensity
+                max(systemInsets.left, systemInsets.right) / systemDensity
             ).dp
         )
     }
@@ -159,6 +199,12 @@ data class WatchScreenFades(
 }
 
 /**
+ * 全屏阻塞浮层是否在显示。页面壳据此禁用右滑返回；浮层自身不在 provide 范围内，
+ * 因此它的右滑仍按"取消浮层"语义工作。
+ */
+val LocalBlockingOverlay = staticCompositionLocalOf { false }
+
+/**
  * 圆屏页面壳：右滑退出 + 上下羽化 + 底部操作条槽 + 官方 TimeText
  *
  * 五个页面此前各自重复同一段「Box(fillMaxSize) + swipeDismissBack + 两个 EdgeFadeMask +
@@ -181,11 +227,15 @@ fun WatchScreenScaffold(
     overlay: (@Composable BoxScope.() -> Unit)? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
+    val blockedByOverlay = LocalBlockingOverlay.current
     AppScaffold(modifier = modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .swipeDismissBack(enabled = swipeEnabled, onDismiss = onDismiss),
+                .swipeDismissBack(
+                    enabled = swipeEnabled && !blockedByOverlay,
+                    onDismiss = onDismiss
+                ),
             contentAlignment = contentAlignment
         ) {
             content()

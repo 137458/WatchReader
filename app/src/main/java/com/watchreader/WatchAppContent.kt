@@ -9,7 +9,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -88,20 +90,33 @@ internal fun WatchAppContent(
         covered = screen !is Screen.Reader
     )
 
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (readerAlive) {
-            ReaderScreen(state = readerState, actions = readerActions)
+    // 全屏阻塞浮层（当前为备份恢复确认）在状态层是唯一事实来源：
+    // 页面壳据此关闭右滑返回，表冠据此挂起输入。放在页面外层统一provide，
+    // 避免书架/菜单/目录各自判断"我现在被遮住了吗"。
+    val blockingOverlay = uiState.pendingRestoreCount != null
+    DisposableEffect(blockingOverlay) {
+        if (blockingOverlay) CrownScrollTargetRegistry.suspendInput()
+        onDispose {
+            if (blockingOverlay) CrownScrollTargetRegistry.resumeInput()
         }
+    }
 
-        ScreenSlot(
-            uiState = uiState,
-            screen = screen,
-            transferState = transferState,
-            searchState = searchState,
-            viewModel = viewModel,
-            requests = requests,
-            onExitApp = onExitApp
-        )
+    CompositionLocalProvider(LocalBlockingOverlay provides blockingOverlay) {
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (readerAlive) {
+                ReaderScreen(state = readerState, actions = readerActions)
+            }
+
+            ScreenSlot(
+                uiState = uiState,
+                screen = screen,
+                transferState = transferState,
+                searchState = searchState,
+                viewModel = viewModel,
+                requests = requests,
+                onExitApp = onExitApp
+            )
+        }
     }
 }
 

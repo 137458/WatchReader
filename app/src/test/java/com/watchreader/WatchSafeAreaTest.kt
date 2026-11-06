@@ -97,4 +97,22 @@ class WatchSafeAreaTest {
         assertEquals(52f, WatchSafeArea.contentInsetDp(44f, 34.1221f, 52f), DELTA)
         assertEquals(90.9921f, WatchSafeArea.contentInsetDp(44f, 90.9921f, 0f), DELTA)
     }
+
+    // ── 系统 inset 从 0 变为非 0：解析结果必须随 inset 变化 ────────
+    // P3-2 的验收口径：inset 迟到（首帧 rootWindowInsets 未就绪）由几何下限兜底，
+    // 晚到的 inset 一旦大于约定值就必须立即接管，而不是等下一次无关重组
+
+    @Test
+    fun testSystemInsetTakesOverAfterArrivingLate() {
+        // 首帧：inset 尚未就绪 → 约定值兜底
+        assertEquals(44f, WatchSafeArea.topInsetDp(WATCH_PX, WATCH_DENSITY, systemInsetDp = 0f), DELTA)
+        // 迟到但更小：仍用约定值，视觉不因 inset 迟到而缩水
+        assertEquals(44f, WatchSafeArea.topInsetDp(WATCH_PX, WATCH_DENSITY, systemInsetDp = 30f), DELTA)
+        // 迟到且更大：立即接管
+        assertEquals(52f, WatchSafeArea.topInsetDp(WATCH_PX, WATCH_DENSITY, systemInsetDp = 52f), DELTA)
+        // 阅读页底部约定值 56dp 大于系统的 52dp，迟到 inset 不得压缩既有留白
+        assertEquals(56f, WatchSafeArea.bottomInsetDp(
+            WATCH_PX, WATCH_DENSITY, WatchSafeArea.READER_BOTTOM_INSET_DP, systemInsetDp = 52f
+        ), DELTA)
+    }
 }
