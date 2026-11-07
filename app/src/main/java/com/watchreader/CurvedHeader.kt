@@ -29,9 +29,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * 沿 466x466 纯圆屏 12 点钟正上方对称绘制弧形章节名
@@ -134,7 +131,7 @@ fun CurvedSideStatusBar(
 ) {
     val context = LocalContext.current
     var currentTime by remember {
-        mutableStateOf(SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()))
+        mutableStateOf(LocaleFormats.clockTickLabel(System.currentTimeMillis()))
     }
     var batteryLevel by remember {
         mutableIntStateOf(getBatteryCapacity(context))
@@ -142,15 +139,15 @@ fun CurvedSideStatusBar(
     var isCharging by remember {
         mutableStateOf(false)
     }
-    // 广播每分钟触发一次：格式化器缓存复用，避免每次新建
-    val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
     DisposableEffect(context) {
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    Intent.ACTION_TIME_TICK, Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> {
-                        currentTime = timeFormatter.format(Date())
+                    // 每次广播都按当前 Locale 重格式化：切换系统语言后时间数字系统立即跟随
+                    Intent.ACTION_TIME_TICK, Intent.ACTION_TIME_CHANGED,
+                    Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_LOCALE_CHANGED -> {
+                        currentTime = LocaleFormats.clockTickLabel(System.currentTimeMillis())
                     }
                     Intent.ACTION_BATTERY_CHANGED -> {
                         val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
@@ -170,6 +167,7 @@ fun CurvedSideStatusBar(
             addAction(Intent.ACTION_TIME_TICK)
             addAction(Intent.ACTION_TIME_CHANGED)
             addAction(Intent.ACTION_TIMEZONE_CHANGED)
+            addAction(Intent.ACTION_LOCALE_CHANGED)
             addAction(Intent.ACTION_BATTERY_CHANGED)
         }
         val sticky = context.registerReceiver(receiver, filter)

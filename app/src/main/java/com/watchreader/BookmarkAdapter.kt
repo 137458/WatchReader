@@ -12,9 +12,6 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.toArgb
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * 两段式删除的待确认状态：从适配器里剥出来的唯一有状态单元。
@@ -131,8 +128,6 @@ internal class BookmarkListAdapter(
     val onDeleteBookmark: (Bookmark) -> Unit
 ) : BaseAdapter() {
 
-    private val timeFormat = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-
     private val gate = BookmarkDeleteGate()
     private val revertHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val revertRunnable = Runnable {
@@ -184,7 +179,7 @@ internal class BookmarkListAdapter(
             holder.snippetTv.setTextColorIfChanged(colorScheme.onSurface.toArgb())
         }
 
-        holder.dateTv.text = timeFormat.format(Date(bm.time))
+        holder.dateTv.text = LocaleFormats.bookmarkDateLabel(bm.time)
         holder.dateTv.setTextColorIfChanged(colorScheme.onSurfaceVariant.toArgb())
 
         val visual = BookmarkRowStyle.deleteVisual(isPending)
