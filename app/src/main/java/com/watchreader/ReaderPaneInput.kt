@@ -84,7 +84,8 @@ internal class ReaderPaneInputBinding(
     }
 
     // 自绘阅读面板的触摸处理是点按翻页 / 长按菜单 / 跟手选段，不是可聚焦控件；
-    // 无障碍激活走 Compose 侧的语义节点，这里补 performClick 只会重复触发翻页
+    // 补 performClick 会与 onSingleTapUp 的翻页判定重复触发。TalkBack 的翻页入口需另行
+    // 经 addAccessibilityAction 提供，当前不在此监听器内补齐
     @Suppress("ClickableViewAccessibility")
     fun install() {
         // 手势交互：支持上下/左右点按翻页、长按呼出菜单、自动滚屏时单击暂停。

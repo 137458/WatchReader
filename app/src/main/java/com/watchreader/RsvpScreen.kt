@@ -55,7 +55,7 @@ fun RsvpScreen(
     val window = LocalActivity.current?.window
 
     // 闪读模式屏幕常亮
-    DisposableEffect(Unit) {
+    DisposableEffect(window) {
         window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

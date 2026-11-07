@@ -8,7 +8,7 @@
 - 圆屏界面改用官方 Wear Compose Material 3 组件树：新增依赖 `androidx.wear.compose:compose-material3:1.7.1`，界面主题改为标准 Material 3 与 Wear Material 3 双层嵌套，共用同一套配色、字号与形状令牌；按钮、卡片、进度指示与列表骨架改由官方件承担，圆屏安全区壳、弧形扇带操作条、弧形章节头与弧形寻道仍自持。显式声明同版本 `androidx.wear.compose:compose-foundation:1.7.1`，避免传递依赖漂移。
 
 ### 修复
-- 修复阅读页与闪读页屏幕常亮可能失效的问题：窗口获取从 `LocalContext.current as? Activity` 改为 `LocalActivity.current`，在被 `ContextWrapper`（主题包装、弹窗宿主等）包裹的场景下也能拿到真实 Activity 的 `window`，不再静默丢掉 `FLAG_KEEP_SCREEN_ON`。
+- 屏幕常亮改用官方 API 加固：阅读页与闪读页的窗口获取从 `LocalContext.current as? Activity` 改为 `LocalActivity.current`，沿 `ContextWrapper` 链找到真实 Activity 的 `window`（当前直接 `setContent` 的宿主下两者等价，主题包装 / 浮层宿主下旧写法会静默丢掉 `FLAG_KEEP_SCREEN_ON`）。
 - 清理两处无障碍误报：行按压反馈与自绘阅读面板的 `setOnTouchListener` 只做视觉/手势、不消费点击，补 `performClick` 会重复触发翻页与行点击，改为显式标注 `@Suppress("ClickableViewAccessibility")` 并注明原因。
 - 修复跳章或从菜单返回后阅读进度冻结的问题：`ReadingPosition` 改为与阅读页同生命周期（不再按初始偏移重建实例），跳转时经 `LaunchedEffect` 显式写回同一实例，滚动监听、进度指示与换排版定位重新共用同一个所有者。
 - 修复浮层关闭后表冠失效的问题：表冠目标注册从单槽覆盖改为 LIFO 持有栈，浮层注销后自动恢复宿主页面目标，不再依赖各页面自己判断并重置。
