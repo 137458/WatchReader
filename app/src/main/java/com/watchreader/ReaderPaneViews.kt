@@ -226,7 +226,8 @@ internal fun createReaderViewHolder(
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             justificationMode = android.graphics.text.LineBreaker.JUSTIFICATION_MODE_INTER_WORD
         } else {
-            @Suppress("DEPRECATION")
+            // API 27/28 没有 LineBreaker 类，只能使用同数值的旧常量；lint 误判为 WrongConstant
+            @Suppress("DEPRECATION", "WrongConstant")
             justificationMode = android.text.Layout.JUSTIFICATION_MODE_INTER_WORD
         }
     }
