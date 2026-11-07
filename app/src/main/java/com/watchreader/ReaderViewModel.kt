@@ -337,15 +337,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch(Dispatchers.IO) {
             DataStoreManager.removeBookFromShelf(appCtx, book.uriString)
             val shelf = DataStoreManager.loadBookShelf(appCtx)
-            _uiState.update {
-                val isCurrent = it.currentUri?.toString() == book.uriString
-                it.copy(
-                    bookshelf = shelf,
-                    currentUri = if (isCurrent) null else it.currentUri,
-                    currentChapterContent = if (isCurrent) null else it.currentChapterContent,
-                    chapters = if (isCurrent) emptyList() else it.chapters
+            applyShelfRemoval(
+                shelf = shelf,
+                target = ShelfRemoval.RemovalTarget(
+                    uriString = book.uriString,
+                    fileName = book.title,
+                    // 书架页拿得到精确 uri：同书名的另一份文档不能被一起关掉
+                    compareFileName = false
                 )
-            }
+            )
         }
     }
 
@@ -666,17 +666,46 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 DataStoreManager.removeBookFromShelf(appCtx, matchedBook.uriString)
             }
             val updatedShelf = DataStoreManager.loadBookShelf(appCtx)
-            _uiState.update { state ->
-                val isCurrent = state.fileName.equals(fileName, ignoreCase = true) ||
-                    (matchedBook != null && state.currentUri?.toString() == matchedBook.uriString)
-                state.copy(
-                    bookshelf = updatedShelf,
-                    currentUri = if (isCurrent) null else state.currentUri,
-                    currentChapterContent = if (isCurrent) null else state.currentChapterContent,
-                    chapters = if (isCurrent) emptyList() else state.chapters,
-                    screen = if (isCurrent) Screen.Home else state.screen
+            applyShelfRemoval(
+                shelf = updatedShelf,
+                target = ShelfRemoval.RemovalTarget(
+                    // Web 端只拿得到文件名：命中口径按文件名兜底
+                    uriString = matchedBook?.uriString,
+                    fileName = fileName,
+                    compareFileName = true
                 )
-            }
+            )
+        }
+    }
+
+    /**
+     * 书架删书后的统一收敛。
+     *
+     * 命中当前打开的书时必须取消待落盘进度并关闭会话：删书事务已清掉书架条目与位置键，
+     * 迟到的 savePosition 会经 mergeBookEntry 把已删书重新写回书架；只清 UI 字段而不关会话，
+     * 章节缓存与书源还会继续滞留。落点与字段清空口径与关书一致，但不落盘进度——
+     * 这本书已经不存在，写回它正是错误。
+     */
+    private suspend fun applyShelfRemoval(shelf: List<BookItem>, target: ShelfRemoval.RemovalTarget) {
+        val state = _uiState.value
+        if (!ShelfRemoval.hits(target, state.currentUri?.toString(), state.fileName)) {
+            _uiState.update { it.copy(bookshelf = shelf) }
+            return
+        }
+        chapters.cancelPendingSave()
+        progressStore.clearPosition()
+        search.reset()
+        reading.close()
+        _uiState.update {
+            it.copy(
+                bookshelf = shelf,
+                currentUri = null,
+                fileName = "",
+                chapters = emptyList(),
+                currentChapterIndex = 0,
+                currentChapterContent = null,
+                screen = Screen.Home
+            )
         }
     }
 

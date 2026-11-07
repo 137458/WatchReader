@@ -8,6 +8,7 @@
 - 圆屏界面改用官方 Wear Compose Material 3 组件树：新增依赖 `androidx.wear.compose:compose-material3:1.7.1`，界面主题改为标准 Material 3 与 Wear Material 3 双层嵌套，共用同一套配色、字号与形状令牌；按钮、卡片、进度指示与列表骨架改由官方件承担，圆屏安全区壳、弧形扇带操作条、弧形章节头与弧形寻道仍自持。显式声明同版本 `androidx.wear.compose:compose-foundation:1.7.1`，避免传递依赖漂移。
 
 ### 修复
+- 修复书架删书（含 Web 端删除当前在读的书）只清界面字段、不关闭阅读会话的问题：命中当前书时统一取消待落盘进度、清理上次阅读位置、停止书内搜索并关闭会话，落点与字段清空口径与关书一致；原先章节缓存与书源继续滞留，迟到的进度落盘还会经 `mergeBookEntry` 把已删书重新写回书架。命中判定抽为纯函数 `ShelfRemoval`（书架页按 SAF uri、Web 端按文件名忽略大小写），新增 5 例单测。
 - 修复阅读页与速读页共享常亮标志互相误清的问题：速读退出时无条件 `clearFlags`，会把下层阅读页（自动滚屏永久常亮）的旗一并清掉；阅读页 5 分钟无交互超时在速读期间触发，也会清掉速读仍需要的旗。常亮改按持有者令牌计数（`WindowKeepScreenOn`），重复触发不叠加持份，只有最后一个持有者放手才真正清旗。
 - 修复切换系统语言后表盘弧形时间与书签时间戳仍按旧 locale 渲染的问题：新增 `LocaleFormats`，按调用瞬间的 `Locale.getDefault()` 重格式化；侧栏时钟广播补监听 `ACTION_LOCALE_CHANGED`，数字系统不同的 locale（英文 <-> 阿拉伯语等）立即跟随。原先把 `SimpleDateFormat` 缓存为字段或 `remember` 值，构造时捕获的 locale 在进程存活期间不会更新。
 - 清理两处无障碍误报：行按压反馈与自绘阅读面板的 `setOnTouchListener` 只做视觉/手势、不消费点击，补 `performClick` 会重复触发翻页与行点击，改为显式标注 `@Suppress("ClickableViewAccessibility")` 并注明原因。
