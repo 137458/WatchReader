@@ -3,7 +3,6 @@ package com.watchreader
 import android.os.Handler
 import android.os.Looper
 import android.view.Window
-import android.view.WindowManager
 import android.widget.ScrollView
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
@@ -412,16 +411,17 @@ private fun rememberReaderPaneScreenAwake(
 ): () -> Unit {
     val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
 
+    // 常亮按持有者令牌登记（WindowKeepScreenOn）：速读页压顶/退出只动自己那份，
+    // 本页超时或退出也只释放本页持份，互不误清
+    val keepScreenOnOwner = remember { Any() }
+
     val resetInactivityKeepScreenOn = remember(window, isAutoScrolling) {
         val timeoutMs = ReaderPaneLogic.KEEP_SCREEN_ON_TIMEOUT_MS // 5 分钟无交互超时
         val timeoutRunnable = Runnable {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            WindowKeepScreenOn.release(window, keepScreenOnOwner)
         }
         val trigger: () -> Unit = {
-            val flags = window?.attributes?.flags ?: 0
-            if ((flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) == 0) {
-                window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            }
+            WindowKeepScreenOn.acquire(window, keepScreenOnOwner)
             keepScreenOnHandler.removeCallbacks(timeoutRunnable)
             if (ReaderPaneLogic.shouldArmKeepScreenOnTimeout(isAutoScrolling)) {
                 keepScreenOnHandler.postDelayed(timeoutRunnable, timeoutMs)
@@ -456,13 +456,13 @@ private fun rememberReaderPaneScreenAwake(
     DisposableEffect(isAutoScrolling, covered) {
         if (covered) {
             keepScreenOnHandler.removeCallbacksAndMessages(null)
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            WindowKeepScreenOn.release(window, keepScreenOnOwner)
         } else {
             resetInactivityKeepScreenOn()
         }
         onDispose {
             keepScreenOnHandler.removeCallbacksAndMessages(null)
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            WindowKeepScreenOn.release(window, keepScreenOnOwner)
         }
     }
 

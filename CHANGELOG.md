@@ -8,6 +8,7 @@
 - 圆屏界面改用官方 Wear Compose Material 3 组件树：新增依赖 `androidx.wear.compose:compose-material3:1.7.1`，界面主题改为标准 Material 3 与 Wear Material 3 双层嵌套，共用同一套配色、字号与形状令牌；按钮、卡片、进度指示与列表骨架改由官方件承担，圆屏安全区壳、弧形扇带操作条、弧形章节头与弧形寻道仍自持。显式声明同版本 `androidx.wear.compose:compose-foundation:1.7.1`，避免传递依赖漂移。
 
 ### 修复
+- 修复阅读页与速读页共享常亮标志互相误清的问题：速读退出时无条件 `clearFlags`，会把下层阅读页（自动滚屏永久常亮）的旗一并清掉；阅读页 5 分钟无交互超时在速读期间触发，也会清掉速读仍需要的旗。常亮改按持有者令牌计数（`WindowKeepScreenOn`），重复触发不叠加持份，只有最后一个持有者放手才真正清旗。
 - 修复切换系统语言后表盘弧形时间与书签时间戳仍按旧 locale 渲染的问题：新增 `LocaleFormats`，按调用瞬间的 `Locale.getDefault()` 重格式化；侧栏时钟广播补监听 `ACTION_LOCALE_CHANGED`，数字系统不同的 locale（英文 <-> 阿拉伯语等）立即跟随。原先把 `SimpleDateFormat` 缓存为字段或 `remember` 值，构造时捕获的 locale 在进程存活期间不会更新。
 - 清理两处无障碍误报：行按压反馈与自绘阅读面板的 `setOnTouchListener` 只做视觉/手势、不消费点击，补 `performClick` 会重复触发翻页与行点击，改为显式标注 `@Suppress("ClickableViewAccessibility")` 并注明原因。
 - 修复跳章或从菜单返回后阅读进度冻结的问题：`ReadingPosition` 改为与阅读页同生命周期（不再按初始偏移重建实例），跳转时经 `LaunchedEffect` 显式写回同一实例，滚动监听、进度指示与换排版定位重新共用同一个所有者。

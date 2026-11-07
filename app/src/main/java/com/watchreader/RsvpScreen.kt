@@ -1,6 +1,5 @@
 package com.watchreader
 
-import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.clickable
@@ -54,11 +53,13 @@ fun RsvpScreen(
     // LocalActivity 能透过 ContextWrapper 找到真实 Activity；直接 as? Activity 在被包装时会静默失效
     val window = LocalActivity.current?.window
 
-    // 闪读模式屏幕常亮
+    // 闪读模式屏幕常亮：按持有者令牌登记，退出只释放自己那份；
+    // 无条件 clearFlags 会把下层阅读页（自动滚屏永久常亮）的旗一并清掉
+    val keepScreenOnOwner = remember { Any() }
     DisposableEffect(window) {
-        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        WindowKeepScreenOn.acquire(window, keepScreenOnOwner)
         onDispose {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            WindowKeepScreenOn.release(window, keepScreenOnOwner)
         }
     }
 
