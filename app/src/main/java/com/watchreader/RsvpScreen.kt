@@ -1,8 +1,8 @@
 package com.watchreader
 
-import android.app.Activity
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -23,7 +23,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
@@ -52,7 +51,8 @@ fun RsvpScreen(
 ) {
     BackHandler(onBack = onBack)
 
-    val window = (LocalContext.current as? Activity)?.window
+    // LocalActivity 能透过 ContextWrapper 找到真实 Activity；直接 as? Activity 在被包装时会静默失效
+    val window = LocalActivity.current?.window
 
     // 闪读模式屏幕常亮
     DisposableEffect(Unit) {

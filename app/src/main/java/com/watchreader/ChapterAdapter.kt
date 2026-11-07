@@ -32,10 +32,13 @@ internal fun applyListViewBg(view: View, color: Int) {
     }
 }
 
-/**
- * 原生 View 行按压反馈：按下轻陷（alpha 0.65）、抬起/取消恢复。
+/** 原生 View 行按压反馈：按下轻陷（alpha 0.65）、抬起/取消恢复。
  * 不消费事件，项点击回调不受影响 —— 与 Compose 侧 pressScale 对齐的"点了有动静"底线
+ *
+ * 这里不调用 performClick：本监听器只做视觉反馈并返回 false，无障碍激活仍由 View 自身的
+ * onClick 处理；在 ACTION_UP 里补 performClick 反而会让点击回调触发两次。
  */
+@Suppress("ClickableViewAccessibility")
 internal fun applyPressFeedback(view: View) {
     view.setOnTouchListener { v, ev ->
         when (ev.actionMasked) {

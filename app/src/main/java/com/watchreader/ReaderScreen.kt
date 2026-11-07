@@ -1,12 +1,12 @@
 package com.watchreader
 
-import android.app.Activity
 import android.os.Handler
 import android.os.Looper
 import android.view.Window
 import android.view.WindowManager
 import android.widget.ScrollView
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,7 +18,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -102,8 +101,9 @@ private fun ReaderPane(
     // 被覆盖时让出返回键：由上层覆盖页的 BackHandler 接管
     BackHandler(enabled = !covered, onBack = onBack)
 
-    val context = LocalContext.current
-    val window = (context as? Activity)?.window
+    // LocalActivity 会透过 ContextWrapper（如主题包装）找到真实 Activity；
+    // 直接 as? Activity 在被包装时会得到 null，常亮会静默失效
+    val window = LocalActivity.current?.window
     val keepScreenOnHandler = remember { Handler(Looper.getMainLooper()) }
 
     var isScrolling by remember { mutableStateOf(false) }
