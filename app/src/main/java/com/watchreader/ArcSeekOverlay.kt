@@ -16,6 +16,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,8 +41,8 @@ import kotlin.math.sin
  */
 class ArcSeekUiState {
     var isSeeking by mutableStateOf(false)
-    var touchAngle by mutableStateOf(0f)
-    var targetIndex by mutableStateOf(0)
+    var touchAngle by mutableFloatStateOf(0f)
+    var targetIndex by mutableIntStateOf(0)
 }
 
 /**

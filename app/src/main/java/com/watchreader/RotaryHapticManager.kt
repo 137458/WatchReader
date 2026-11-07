@@ -200,7 +200,7 @@ object RotaryHapticManager {
                         VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK),
                         touchAudioAttributes
                     )
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                } else {
                     vibrator.vibrate(
                         VibrationEffect.createOneShot(8, 120),
                         touchAudioAttributes
@@ -232,14 +232,9 @@ object RotaryHapticManager {
         try {
             val vibrator = getVibratorFast(context)
             if (vibrator != null && vibrator.hasVibrator()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    val timings = longArrayOf(0, 30, 60, 45)
-                    val amplitudes = intArrayOf(0, 200, 0, 255)
-                    vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1), touchAudioAttributes)
-                } else {
-                    @Suppress("DEPRECATION")
-                    vibrator.vibrate(longArrayOf(0, 30, 60, 45), -1)
-                }
+                val timings = longArrayOf(0, 30, 60, 45)
+                val amplitudes = intArrayOf(0, 200, 0, 255)
+                vibrator.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1), touchAudioAttributes)
             }
         } catch (_: Throwable) {}
     }

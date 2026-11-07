@@ -3,6 +3,7 @@
 ## [未发布]
 
 ### 变更
+- 对齐 Compose 状态与 API 推荐用法：`Int` / `Float` 高频状态由 `mutableStateOf` 改为 `mutableIntStateOf` / `mutableFloatStateOf`（12 处，避免装箱），并清理恒为真的 SDK 分支与空的 `super.onCleared()` 调用。
 - 界面 chrome 统一到官方 Wear Material 3：页面壳接入 `AppScaffold` + `TimeText`；底部弧形扇带操作条改为官方 `Button` / `FilledTonalButton` / `OutlinedButton` 按钮行；目录页签改为官方 `FilledTonalButton` / `OutlinedButton`；目录与书签行统一 20dp 大圆角、52dp 行高与胶囊标签；删除手绘弧形几何（`ArcButtonGeometry`）及其单测。阅读页原生正文、弧形章节头与侧栏时钟保持不变。
 - 圆屏界面改用官方 Wear Compose Material 3 组件树：新增依赖 `androidx.wear.compose:compose-material3:1.7.1`，界面主题改为标准 Material 3 与 Wear Material 3 双层嵌套，共用同一套配色、字号与形状令牌；按钮、卡片、进度指示与列表骨架改由官方件承担，圆屏安全区壳、弧形扇带操作条、弧形章节头与弧形寻道仍自持。显式声明同版本 `androidx.wear.compose:compose-foundation:1.7.1`，避免传递依赖漂移。
 

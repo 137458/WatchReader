@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,7 +45,7 @@ fun ChapterListScreen(
     onAddBookmark: () -> Unit = {},
     onBack: () -> Unit
 ) {
-    var selectedTab by remember { mutableStateOf(if (openBookmarkTab) 1 else 0) } // 0: 目录, 1: 书签
+    var selectedTab by remember { mutableIntStateOf(if (openBookmarkTab) 1 else 0) } // 0: 目录, 1: 书签
     var showRangePicker by remember { mutableStateOf(false) }
 
     BackHandler(onBack = {

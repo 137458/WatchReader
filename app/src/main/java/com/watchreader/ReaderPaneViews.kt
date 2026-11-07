@@ -225,7 +225,7 @@ internal fun createReaderViewHolder(
         setPadding(0, 0, 0, (16 * density).toInt())
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             justificationMode = android.graphics.text.LineBreaker.JUSTIFICATION_MODE_INTER_WORD
-        } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        } else {
             @Suppress("DEPRECATION")
             justificationMode = android.text.Layout.JUSTIFICATION_MODE_INTER_WORD
         }

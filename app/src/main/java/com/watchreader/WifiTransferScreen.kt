@@ -17,6 +17,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -89,7 +90,7 @@ fun WifiTransferScreen(
     // 表冠焦点轮选：页面无可滚动内容，复刻系统设置「对齐模式」——单事件钳 ±79px、
     // 累积满 120px 焦点移动一格并给一次 302 齿轮微振
     val focusCount = if (isServerRunning) 1 else 2
-    var focusedIndex by remember { mutableStateOf(0) }
+    var focusedIndex by remember { mutableIntStateOf(0) }
     val focusStepper = remember { CrownFocusStepper(scrollFactorPxPerUnit = CrownScrollHelper.scrollFactorPxPerUnit) }
     rememberCrownScrollTarget(Unit) { delta ->
         val step = focusStepper.feed(delta)

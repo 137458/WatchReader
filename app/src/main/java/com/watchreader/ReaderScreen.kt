@@ -120,16 +120,16 @@ private fun ReaderPane(
     // 三项渲染状态聚合于单个状态容器：高频 MOVE 写入经叠加层绘制阶段延迟读取，寻道全程零重组
     val seekRecognizer = remember { ArcSeekGestureRecognizer() }
     val seekState = remember { ArcSeekUiState() }
-    val latestChapterIndex = remember { mutableStateOf(currentChapterIndex) }
-    val latestChapterCount = remember { mutableStateOf(chapters.size) }
-    latestChapterIndex.value = currentChapterIndex
-    latestChapterCount.value = chapters.size
+    val latestChapterIndex = remember { mutableIntStateOf(currentChapterIndex) }
+    val latestChapterCount = remember { mutableIntStateOf(chapters.size) }
+    latestChapterIndex.intValue = currentChapterIndex
+    latestChapterCount.intValue = chapters.size
     // 手势闭包在只执行一次的 factory 中按值捕获会固化首帧参数（自动滚屏点按暂停失效、
     // 热区切换不生效的根因），与章节数同以状态持有，事件期读取最新值
     val latestIsAutoScrolling = remember { mutableStateOf(isAutoScrolling) }
-    val latestTapPageArea = remember { mutableStateOf(tapPageArea) }
+    val latestTapPageArea = remember { mutableIntStateOf(tapPageArea) }
     latestIsAutoScrolling.value = isAutoScrolling
-    latestTapPageArea.value = tapPageArea
+    latestTapPageArea.intValue = tapPageArea
 
     val scrollDebounceHandler = remember { Handler(Looper.getMainLooper()) }
     val resetScrollingRunnable = remember {
@@ -236,10 +236,10 @@ private fun ReaderPane(
                     autoEngine = holder.autoScrollEngine,
                     seekRecognizer = seekRecognizer,
                     seekState = seekState,
-                    chapterIndex = { latestChapterIndex.value },
-                    chapterCount = { latestChapterCount.value },
+                    chapterIndex = { latestChapterIndex.intValue },
+                    chapterCount = { latestChapterCount.intValue },
                     isAutoScrolling = { latestIsAutoScrolling.value },
-                    tapPageArea = { latestTapPageArea.value },
+                    tapPageArea = { latestTapPageArea.intValue },
                     keepScreenOnTrigger = resetInactivityKeepScreenOn,
                     onScrollActivity = notifyScrollActivity,
                     onAutoScrollToggle = onAutoScrollToggle,

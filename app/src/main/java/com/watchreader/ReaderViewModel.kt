@@ -693,6 +693,5 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         readingTimerJob?.cancel()
         transferController.close()
         RotaryHapticManager.shutdown()
-        super.onCleared()
     }
 }

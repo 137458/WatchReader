@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -93,7 +94,7 @@ fun RsvpScreen(
 
     // 找到初始 Token 索引
     var currentIndex by remember(tokens, initialCharOffset) {
-        mutableStateOf(
+        mutableIntStateOf(
             if (tokens.isEmpty()) 0 else {
                 val idx = tokens.indexOfFirst { bodyToBookOffset(it.charOffset) >= initialCharOffset }
                 if (idx >= 0) idx else 0

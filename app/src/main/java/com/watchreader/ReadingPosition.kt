@@ -1,6 +1,6 @@
 package com.watchreader
 
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 
 /**
  * 当前阅读位置的唯一所有者。
@@ -13,13 +13,13 @@ import androidx.compose.runtime.mutableStateOf
  */
 class ReadingPosition(initial: Int) {
 
-    private val state = mutableStateOf(initial)
+    private val state = mutableIntStateOf(initial)
 
     @Volatile
     private var latest: Int = initial
 
     /** 组合读：值变化会触发读取方重组 */
-    val current: Int get() = state.value
+    val current: Int get() = state.intValue
 
     /** 事件路径读：最近一次写入值，不订阅快照 */
     val latestValue: Int get() = latest
@@ -27,6 +27,6 @@ class ReadingPosition(initial: Int) {
     /** 唯一写入点：先更新事件路径值再推给组合，保证两侧永不分叉 */
     fun update(offset: Int) {
         latest = offset
-        if (state.value != offset) state.value = offset
+        if (state.intValue != offset) state.intValue = offset
     }
 }

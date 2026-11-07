@@ -24,7 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -157,7 +157,7 @@ class MainActivity : ComponentActivity() {
                     // 与浮层外点击被拦截的强制二选一语义一致（侧滑绝不等于确认）。
                     // 退出动画期 pendingRestoreCount 已置空，故留存最后一次书目数供离场渲染。
                     val restoreCount = uiState.pendingRestoreCount
-                    var lastRestoreCount by remember { mutableStateOf(0) }
+                    var lastRestoreCount by remember { mutableIntStateOf(0) }
                     if (restoreCount != null) lastRestoreCount = restoreCount
                     AnimatedVisibility(
                         visible = restoreCount != null,
